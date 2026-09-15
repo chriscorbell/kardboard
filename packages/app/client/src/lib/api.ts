@@ -165,6 +165,20 @@ export function useApproveCard(slug: string) {
   });
 }
 
+// A refused retry can still have changed the Card: a moved pull request voids the Approval.
+export function useRetryMerge(slug: string) {
+  const qc = useQueryClient();
+  const refresh = (id: string) => {
+    void qc.invalidateQueries({ queryKey: keys.card(id) });
+    void qc.invalidateQueries({ queryKey: keys.board(slug) });
+  };
+  return useMutation({
+    mutationFn: (id: string) => request(`/cards/${id}/retry-merge`, { method: "POST" }),
+    onSuccess: (_r, id) => refresh(id),
+    onError: (_e, id) => refresh(id),
+  });
+}
+
 export function useCreateComment(cardId: string) {
   const qc = useQueryClient();
   // What a failed attempt already posted, so pressing Post again finishes it instead of duplicating it.

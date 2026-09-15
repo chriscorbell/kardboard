@@ -213,6 +213,16 @@ export interface Approval {
   headSha: string | null;
   createdAt: string;
   invalidatedAt: string | null;
+  // Why GitHub last refused to merge on this Approval, for a refusal the Approval survives.
+  mergeError: string | null;
+}
+
+/**
+ * The Approval waiting on a merge that GitHub refused for a reason the Approval survives, so the
+ * Card offers a retry rather than asking for a second sign-off. Newest first, as the server lists.
+ */
+export function approvalAwaitingRetry(approvals: Approval[]): Approval | null {
+  return approvals.find((a) => !a.invalidatedAt && a.mergeError) ?? null;
 }
 
 export interface Notification {
