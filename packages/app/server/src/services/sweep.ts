@@ -15,7 +15,7 @@ const ACTIVE = ["queued", "starting", "running"] as const;
 
 // Nightly hygiene sweep: one sweep Session per Board at SWEEP_HOUR local time. It waits up to an
 // hour for card Sessions on that Board to finish, then runs regardless. Counts against the global
-// cap only. Nothing runs in noop mode.
+// cap only. Nothing runs in noop mode, or on a paused Board.
 export function startSweepScheduler(): void {
   if (runner.mode === "noop") return;
   setInterval(() => void sweepTick().catch((err) => console.error("[sweep] tick failed", err)), 60_000);
@@ -39,6 +39,9 @@ export async function sweepTick(now = new Date()): Promise<void> {
   opened.setHours(SWEEP_HOUR, 0, 0, 0);
   const boards = await db.select().from(schema.boards);
   for (const board of boards) {
+    // A paused Board starts no Session of any kind. Its sweep is skipped, not owed: resuming the
+    // Board mid-window sweeps it that night, and otherwise the next night's window does.
+    if (board.paused) continue;
     if (await sweptSince(board.id, opened)) continue;
     const busy = await db
       .select({ n: sql<number>`count(*)` })

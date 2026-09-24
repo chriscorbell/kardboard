@@ -15,8 +15,14 @@ import { providerAfterFailure, providerForDispatch } from "./fallback.js";
 import { readProviderLimits, type LimitSnapshot } from "./provider-limits.js";
 import { removePreviewForCard } from "./previews.js";
 import { byDispatchOrder } from "./children.js";
+import { batchClosesAt, coalesceDelay, inStartBackoff } from "./waiting.js";
 
 const ACTIVE = ["queued", "starting", "running"] as const;
+const ENDED = ["succeeded", "failed", "cancelled", "timed_out"] as const;
+
+// How often the periodic pump looks for Cards that are owed a Session and that nothing else will
+// dispatch: after a failed start, a slot that opened with no Session ending, or a restart.
+const PUMP_INTERVAL_MS = 2 * 60_000;
 
 // The wait before each retry of something the runner could not do: starting a Session, or listing
 // its containers at boot. Doubling from ten seconds outlasts a routine Watchtower restart of the
@@ -100,11 +106,16 @@ async function publishCard(cardId: string) {
   if (card) publish(card.boardId, { type: "card.upserted", card });
 }
 
+/**
+ * Records a Trigger and plans the Card's dispatch. `promptly` skips the batching window, for a
+ * Trigger that is itself the whole request, such as Try again.
+ */
 export async function enqueueTrigger(input: {
   card: Card;
   kind: TriggerKind;
   actorUserId: string | null;
   payload: Record<string, unknown>;
+  promptly?: boolean;
 }): Promise<void> {
   await db.insert(schema.triggers).values({
     id: newId(),
@@ -120,7 +131,25 @@ export async function enqueueTrigger(input: {
     await publishCard(input.card.id);
     return;
   }
-  scheduleDispatch(input.card.id, env.triggerCoalesceMs);
+  scheduleDispatch(input.card.id, input.promptly ? 0 : await batchDelay(input.card.id));
+  // The Card now shows what it is waiting for, from the moment the person made the change.
+  await publishCard(input.card.id);
+}
+
+// The batching window restarts with this Trigger, but closes no later than the cap after the
+// oldest Trigger still waiting on the Card.
+async function batchDelay(cardId: string): Promise<number> {
+  const oldest = await db
+    .select({ at: sql<string | null>`min(${schema.triggers.createdAt})` })
+    .from(schema.triggers)
+    .where(and(eq(schema.triggers.cardId, cardId), eq(schema.triggers.status, "pending")))
+    .get();
+  return coalesceDelay({ nowMs: Date.now(), oldestPendingAt: oldest?.at ?? null, windowMs: env.triggerCoalesceMs, capMs: env.triggerCoalesceMaxMs });
+}
+
+/** Whether a dispatch timer is set for the Card: its batching window, or a retry already planned. */
+export function dispatchPlanned(cardId: string): boolean {
+  return coalesceTimers.has(cardId);
 }
 
 export function scheduleDispatch(cardId: string, delayMs: number): void {
@@ -137,39 +166,128 @@ export function scheduleDispatch(cardId: string, delayMs: number): void {
 }
 
 /**
- * A Session ended, so a slot may have opened. Cards waiting for one are taken in the Board's own
- * reading order rather than whichever retry timer happens to fire first: a split request creates
- * its children at once, and they should start in the order a person would have started them.
+ * Every Card with Triggers pending, one entry each with its oldest and newest, in the order they
+ * should start: the Board's own reading order rather than whichever retry timer happens to fire
+ * first. A split request creates its children at once, and they should start in the order a person
+ * would have started them.
  */
-async function pumpWaiting(skipCardId: string | null = null): Promise<void> {
+async function cardsOwedASession(boardId?: string) {
+  const pending = eq(schema.triggers.status, "pending");
   const rows = await db
     .select({
       id: schema.cards.id,
+      boardId: schema.cards.boardId,
       priority: schema.cards.priority,
       position: schema.cards.position,
       createdAt: schema.cards.createdAt,
-      triggeredAt: schema.triggers.createdAt,
+      paused: schema.boards.paused,
+      oldest: sql<string>`min(${schema.triggers.createdAt})`,
+      newest: sql<string>`max(${schema.triggers.createdAt})`,
     })
     .from(schema.triggers)
     .innerJoin(schema.cards, eq(schema.triggers.cardId, schema.cards.id))
-    .where(eq(schema.triggers.status, "pending"));
-  // One entry per Card, carrying its newest pending Trigger.
-  const newest = new Map<string, (typeof rows)[number]>();
-  for (const r of rows) {
-    const seen = newest.get(r.id);
-    if (!seen || r.triggeredAt > seen.triggeredAt) newest.set(r.id, r);
-  }
-  const windowStart = new Date(Date.now() - env.triggerCoalesceMs).toISOString();
-  for (const card of [...newest.values()].sort(byDispatchOrder)) {
-    if (card.id === skipCardId) continue;
+    .innerJoin(schema.boards, eq(schema.cards.boardId, schema.boards.id))
+    .where(boardId ? and(pending, eq(schema.cards.boardId, boardId)) : pending)
+    .groupBy(schema.cards.id);
+  return rows.sort(byDispatchOrder);
+}
+
+/** The newest Session on this Card that has ended. */
+async function lastEndedSession(cardId: string) {
+  return db
+    .select()
+    .from(schema.sessions)
+    .where(and(eq(schema.sessions.cardId, cardId), inArray(schema.sessions.status, [...ENDED])))
+    .orderBy(sql`${schema.sessions.createdAt} desc`)
+    .limit(1)
+    .get();
+}
+
+/** The newest ended Session of each of these Cards, keyed by Card. */
+export async function latestEndedSessions(cardIds: string[]): Promise<Map<string, SessionSummary>> {
+  if (cardIds.length === 0) return new Map();
+  // SQLite takes the bare columns of a max() aggregate from the row that holds the max, so `id` is
+  // the newest ended Session of each Card.
+  const newest = await db
+    .select({ id: schema.sessions.id, at: sql<string>`max(${schema.sessions.createdAt})` })
+    .from(schema.sessions)
+    .where(and(inArray(schema.sessions.cardId, cardIds), inArray(schema.sessions.status, [...ENDED])))
+    .groupBy(schema.sessions.cardId);
+  if (newest.length === 0) return new Map();
+  const rows = await db.select().from(schema.sessions).where(inArray(schema.sessions.id, newest.map((n) => n.id)));
+  return new Map(rows.map((r) => [r.cardId!, summary(r)]));
+}
+
+/**
+ * A Session ended, so a slot may have opened. The longest-waiting Card takes it, unless its Board
+ * is paused, its batch is still collecting, or its last Session could not start a moment ago.
+ */
+async function pumpWaiting(): Promise<void> {
+  const now = Date.now();
+  for (const card of await cardsOwedASession()) {
+    if (card.paused) continue;
     // Still collecting its batch: its own timer dispatches it when the window closes, and taking it
     // now would start a Session on half of what the person is still writing.
-    if (card.triggeredAt > windowStart) continue;
+    const closes = batchClosesAt({ oldestMs: Date.parse(card.oldest), newestMs: Date.parse(card.newest), windowMs: env.triggerCoalesceMs, capMs: env.triggerCoalesceMaxMs });
+    if (closes > now) continue;
     if (await activeSessionForCard(card.id)) continue;
+    // A Card whose start just failed would only fail the same way at once; the periodic pump tries
+    // it again once its backoff has passed.
+    if (inStartBackoff((await lastEndedSession(card.id)) ?? null, now)) continue;
     // `dispatch` re-checks the caps; one Card per freed slot, and the next end pumps again.
     scheduleDispatch(card.id, 250);
     return;
   }
+}
+
+/**
+ * The periodic pump. A Card can be owed a Session with nothing left to dispatch it: its start
+ * failed and its Triggers went back to pending, or a slot opened without a Session ending, as when
+ * the Admin raises a cap. This finds those Cards, leaving alone any a timer will already dispatch,
+ * and starts as many as there are free slots, in dispatch order. Returns how many it dispatched.
+ */
+export async function pumpStranded(opts: { boardId?: string } = {}): Promise<number> {
+  const now = Date.now();
+  const settings = await getSettings();
+  let globalFree = settings.globalMaxConcurrentSessions - (await activeCount());
+  const boardFree = new Map<string, number>();
+  let dispatched = 0;
+  for (const card of await cardsOwedASession(opts.boardId)) {
+    if (globalFree <= 0) break;
+    if (card.paused || coalesceTimers.has(card.id)) continue;
+    if (await activeSessionForCard(card.id)) continue;
+    if (inStartBackoff((await lastEndedSession(card.id)) ?? null, now)) continue;
+    if (!boardFree.has(card.boardId)) {
+      const board = await db.select({ max: schema.boards.maxConcurrentSessions }).from(schema.boards).where(eq(schema.boards.id, card.boardId)).get();
+      boardFree.set(card.boardId, (board?.max ?? 0) - (await activeCount(card.boardId)));
+    }
+    if (boardFree.get(card.boardId)! <= 0) continue;
+    boardFree.set(card.boardId, boardFree.get(card.boardId)! - 1);
+    globalFree--;
+    scheduleDispatch(card.id, 0);
+    dispatched++;
+  }
+  return dispatched;
+}
+
+/** Starts the periodic pump. Returns a function that stops it. */
+export function startDispatchPump(): () => void {
+  const t = setInterval(() => void pumpStranded().catch((err) => console.error("[orchestrator] periodic pump failed", err)), PUMP_INTERVAL_MS);
+  // Like the dispatch timers, this need not hold the process open.
+  t.unref();
+  return () => clearInterval(t);
+}
+
+/**
+ * The Admin paused or resumed a Board. Pausing starts nothing and stops nothing: Sessions already
+ * running finish, and every Trigger waits. Resuming dispatches what waited, within the caps. Either
+ * way each waiting Card is published again, since what it is waiting for has changed.
+ */
+export async function boardPauseChanged(boardId: string, paused: boolean, actor: Actor): Promise<void> {
+  await recordEvent({ boardId, actor, type: paused ? "board.paused" : "board.resumed" });
+  const waiting = await cardsOwedASession(boardId);
+  if (!paused) await pumpStranded({ boardId });
+  for (const card of waiting) await publishCard(card.id);
 }
 
 async function dispatch(cardId: string): Promise<void> {
@@ -177,7 +295,11 @@ async function dispatch(cardId: string): Promise<void> {
   // decides whether this Card may start, only which Provider it starts on.
   const limits = await readProviderLimits();
   const claim = await underClaimLock(() => claimCard(cardId, limits));
-  if (!claim) return;
+  if (!claim) {
+    // Held back by a full cap or a paused Board, the Card shows that instead of its batching window.
+    await publishCard(cardId);
+    return;
+  }
   const { board, card, pending, settings, sessionId, token, branch, chosen } = claim;
 
   if (chosen.switched) {
@@ -225,10 +347,11 @@ async function dispatch(cardId: string): Promise<void> {
 }
 
 /**
- * Takes the Claim on a Card when it may start now: it has pending Triggers, no Session holds it, and
- * both caps have room. Runs under the claim lock. The Session row, the Triggers it consumes, and the
- * Card's cleared re-run flag are written in one batch, which libsql runs as a single transaction, so
- * a crash cannot leave a Claim that consumed nothing or Triggers consumed by no Session.
+ * Takes the Claim on a Card when it may start now: it has pending Triggers, no Session holds it, its
+ * Board is not paused, and both caps have room. Runs under the claim lock. The Session row, the
+ * Triggers it consumes, and the Card's cleared re-run flag are written in one batch, which libsql
+ * runs as a single transaction, so a crash cannot leave a Claim that consumed nothing or Triggers
+ * consumed by no Session.
  */
 async function claimCard(cardId: string, limits: LimitSnapshot) {
   const card = await db.select().from(schema.cards).where(eq(schema.cards.id, cardId)).get();
@@ -243,6 +366,8 @@ async function claimCard(cardId: string, limits: LimitSnapshot) {
     return null;
   }
   const board = (await db.select().from(schema.boards).where(eq(schema.boards.id, card.boardId)).get())!;
+  // The Triggers stay pending, and resuming the Board dispatches them.
+  if (board.paused) return null;
   const settings = await getSettings();
   if ((await activeCount(board.id)) >= board.maxConcurrentSessions || (await activeCount()) >= settings.globalMaxConcurrentSessions) {
     // The retry is the safety net; `pumpWaiting` is what usually picks this Card up, in order,
@@ -341,7 +466,9 @@ async function markRunning(sessionId: string, containerId: string, wallClockMinu
 function armWallClock(sessionId: string, minutes: number, delayMs = minutes * 60_000) {
   const existing = wallClockTimers.get(sessionId);
   if (existing) clearTimeout(existing);
-  const t = setTimeout(() => void endSession(sessionId, "timed_out", `Exceeded the ${minutes}-minute wall clock.`), delayMs);
+  // Worded for the Card's people as well as the Admin: a timed-out Session's summary is what the
+  // Card's notice tells them.
+  const t = setTimeout(() => void endSession(sessionId, "timed_out", `It hit its ${minutes}-minute time limit.`), delayMs);
   // Like a dispatch timer, this need not hold the process open: `recoverOnBoot` arms it again.
   t.unref();
   wallClockTimers.set(sessionId, t);
@@ -430,13 +557,20 @@ export async function endSession(
     if (!rerunning && card?.pendingRerun) {
       await db.update(schema.cards).set({ pendingRerun: false }).where(eq(schema.cards.id, row.cardId));
     }
+    // A run that stopped short consumed its Triggers, so without a word here the request would be
+    // dropped silently. Not when it falls back, which picks the same work up at once on the other
+    // Provider, and not when it never started, whose Triggers went back to pending and are retried.
+    if (fallbackTo === null && !opts.requeue && (status === "failed" || status === "timed_out")) {
+      const { tellPeopleSessionStopped } = await import("./session-end.js");
+      await tellPeopleSessionStopped({ cardId: row.cardId, status, outcomeSummary, rerunning }).catch((err) => console.error("[orchestrator] could not report the stopped session", err));
+    }
     await publishCard(row.cardId);
     if (rerunning) scheduleDispatch(row.cardId, 1_000);
   }
   // The slot this Session freed goes to its own Card's re-run when there is one. Otherwise the
-  // longest-waiting Card takes it, but not the Card of a Session that could not start: it would only
-  // fail the same way at once, and its Triggers wait for the next dispatch instead.
-  if (!rerunning) await pumpWaiting(opts.requeue ? row.cardId : null).catch((err) => console.error("[orchestrator] pump failed", err));
+  // longest-waiting Card takes it; a Card whose start just failed, this one included, waits out its
+  // backoff instead.
+  if (!rerunning) await pumpWaiting().catch((err) => console.error("[orchestrator] pump failed", err));
 }
 
 /** Whether this ended Session should be picked up again on the other Provider, and which that is. */
@@ -571,7 +705,7 @@ async function reconcileWithRunner(sessionIds: string[]): Promise<void> {
     }
     if (item?.state === "exited" || item?.state === "dead") continue;
     if (s.status === "running") {
-      await endSession(s.id, "failed", "The app restarted and the session's container was gone; its exit was not reported.");
+      await endSession(s.id, "failed", "It was interrupted when kardboard restarted, and its result was lost.");
       continue;
     }
     if (item) await runner.stop(item.containerId).catch((err) => console.error("[orchestrator] stop failed", err));

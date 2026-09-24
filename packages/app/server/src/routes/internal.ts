@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { env } from "../env.js";
-import { endSession } from "../services/orchestrator.js";
+import { endSessionOnExit } from "../services/session-end.js";
 import { applyPreviewState, exchangePreviewCode, PreviewError, previewRoutes } from "../services/previews.js";
 
 // Called by the runner when a container exits, and by the preview router for its routing table and
@@ -48,8 +48,8 @@ internal.post("/previews/exchange", zValidator("json", z.object({ code: z.string
   }
 });
 
-internal.post("/sessions/:id/exit", zValidator("json", z.object({ exitCode: z.number().int(), reason: z.string().optional() })), async (c) => {
-  const { exitCode, reason } = c.req.valid("json");
-  await endSession(c.req.param("id"), exitCode === 0 ? "succeeded" : "failed", reason ?? (exitCode === 0 ? "Container exited cleanly." : `Container exited with code ${exitCode}.`));
+// `oomKilled` is Docker's word that the container hit its memory limit; an older runner leaves it out.
+internal.post("/sessions/:id/exit", zValidator("json", z.object({ exitCode: z.number().int(), reason: z.string().optional(), oomKilled: z.boolean().optional() })), async (c) => {
+  await endSessionOnExit(c.req.param("id"), c.req.valid("json"));
   return c.json({ ok: true });
 });

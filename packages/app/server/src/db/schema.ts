@@ -29,6 +29,9 @@ export const boards = sqliteTable("boards", {
   agentImage: text("agent_image"),
   maxConcurrentSessions: integer("max_concurrent_sessions").notNull().default(3),
   promptAppend: text("prompt_append").notNull().default(""),
+  // The Admin's pause switch. A paused Board starts no Session and skips the nightly sweep; its
+  // Triggers stay pending and are dispatched when it is resumed.
+  paused: integer("paused", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(now),
 });
 
@@ -198,7 +201,7 @@ export const notifications = sqliteTable(
     userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     boardId: text("board_id").notNull().references(() => boards.id, { onDelete: "cascade" }),
     cardId: text("card_id").notNull().references(() => cards.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["mention", "card_moved"] }).notNull(),
+    kind: text("kind", { enum: ["mention", "card_moved", "session_failed"] }).notNull(),
     title: text("title").notNull(),
     body: text("body").notNull().default(""),
     actorName: text("actor_name").notNull(),

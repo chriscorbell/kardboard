@@ -11,7 +11,7 @@ import { runMigrations } from "./db/index.js";
 import { api } from "./routes/api.js";
 import { mcp } from "./routes/mcp.js";
 import { internal } from "./routes/internal.js";
-import { recoverOnBoot } from "./services/orchestrator.js";
+import { recoverOnBoot, startDispatchPump } from "./services/orchestrator.js";
 import { startSweepScheduler } from "./services/sweep.js";
 import { startBackupScheduler } from "./services/backup.js";
 import { startPreviewReaper } from "./services/previews.js";
@@ -64,6 +64,7 @@ app.onError((err, c) => {
 await runMigrations();
 await ensureSeed();
 await recoverOnBoot();
+startDispatchPump();
 startSweepScheduler();
 startBackupScheduler();
 startPreviewReaper();

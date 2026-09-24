@@ -66,6 +66,12 @@ describe("the nightly sweep", () => {
     assert.equal(rows[0]!.status, "running");
   });
 
+  it("skips a paused Board", async () => {
+    await db.update(schema.boards).set({ paused: true }).where(eq(schema.boards.id, BOARD));
+    await sweepTick(night(1, 3, 5));
+    assert.deepEqual(await sweeps(), []);
+  });
+
   it("does not sweep again after a restart inside the window", async () => {
     await insertSweep("before-the-restart", night(1, 3, 10));
     await sweepTick(night(1, 3, 30));

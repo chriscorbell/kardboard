@@ -26,14 +26,14 @@ import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { refreshFromClerk, requireAdmin, requireUser, type AuthVariables } from "../auth.js";
-import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardsForUser, listMembers, setMembers, updateBoard } from "../services/boards.js";
-import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, updateCard } from "../services/cards.js";
+import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardsForUser, listMembers, setBoardPaused, setMembers, updateBoard } from "../services/boards.js";
+import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, retryCard, RetryRefused, updateCard } from "../services/cards.js";
 import { addAttachment, createComment, getAttachment, getComment, listComments, updateComment } from "../services/comments.js";
 import { getAgentProfile, getSettings, updateSettings } from "../services/settings.js";
 import { getUser, inviteUser, listUsers, setUserStatus } from "../services/users.js";
 import { sendInvitation } from "../services/email.js";
 import { subscribe } from "../services/realtime.js";
-import { cancelSession, getSession, listAllSessions, listBoardSessions } from "../services/orchestrator.js";
+import { boardPauseChanged, cancelSession, getSession, listAllSessions, listBoardSessions } from "../services/orchestrator.js";
 import { runner } from "../services/runner-client.js";
 import { parseTranscript } from "../services/transcript.js";
 import { ApprovalError, approveCard, listApprovals, retryMerge } from "../services/approvals.js";
@@ -215,6 +215,20 @@ api.post("/cards/:id/retry-merge", async (c) => {
   }
 });
 
+// Try again, after a Session failed or ran out of time. Any User who can open the Board may ask.
+api.post("/cards/:id/retry", async (c) => {
+  const card = await getCard(c.req.param("id"));
+  if (!card) return c.json({ error: "not_found" }, 404);
+  const access = await boardForUser(c as never, card.boardId);
+  if ("error" in access) return access.error;
+  try {
+    return c.json(await retryCard(card.id, actorOf(c)), 201);
+  } catch (err) {
+    if (err instanceof RetryRefused) return c.json({ error: err.message }, err.status);
+    throw err;
+  }
+});
+
 api.post("/cards/:id/comments", json(createCommentSchema), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
@@ -353,7 +367,19 @@ admin.post("/boards", json(upsertBoardSchema), async (c) => {
 admin.patch("/boards/:id", json(upsertBoardSchema), async (c) => {
   const existing = await getBoardBySlug(c.req.valid("json").slug);
   if (existing && existing.id !== c.req.param("id")) return c.json({ error: "slug already in use" }, 409);
-  return c.json(await updateBoard(c.req.param("id"), c.req.valid("json")));
+  const before = await getBoardById(c.req.param("id"));
+  if (!before) return c.json({ error: "not_found" }, 404);
+  const board = await updateBoard(before.id, c.req.valid("json"));
+  if (board.paused !== before.paused) await boardPauseChanged(board.id, board.paused, actorOf(c));
+  return c.json(board);
+});
+// The pause switch alone, for the Board page.
+admin.post("/boards/:id/pause", json(z.object({ paused: z.boolean() })), async (c) => {
+  const before = await getBoardById(c.req.param("id"));
+  if (!before) return c.json({ error: "not_found" }, 404);
+  const board = (await setBoardPaused(before.id, c.req.valid("json").paused))!;
+  if (board.paused !== before.paused) await boardPauseChanged(board.id, board.paused, actorOf(c));
+  return c.json(board);
 });
 admin.get("/boards/:id/github", async (c) => {
   const board = await getBoardById(c.req.param("id"));

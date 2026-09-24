@@ -57,6 +57,13 @@
       "when": 1790255144886,
       "tag": "0007_approval-merge-error",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790259018416,
+      "tag": "0008_board-paused",
+      "breakpoints": true
     }
   ]
 }

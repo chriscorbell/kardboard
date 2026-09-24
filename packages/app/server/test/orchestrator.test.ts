@@ -286,7 +286,7 @@ describe("recovering after a restart", () => {
 
     assert.equal(fake.inventoryCalls, 3, "two refusals, then an answer");
     assert.equal((await sessionRow("session-kept")).status, "running", "its container is still working");
-    assert.match((await sessionRow("session-lost")).outcomeSummary ?? "", /exit was not reported/);
+    assert.match((await sessionRow("session-lost")).outcomeSummary ?? "", /interrupted when kardboard restarted/);
     const trigger = (await db.select().from(schema.triggers).where(eq(schema.triggers.id, owed)).get())!;
     assert.equal(trigger.status, "pending", "a session that never started still owes its Card the request");
   });

@@ -1,10 +1,12 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { Card, Column, Priority, SessionSummary } from "@kardboard/shared";
+import type { Card, CardWaiting, Column, Priority, SessionSummary } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
 import { recordEvent, type Actor } from "./events.js";
-import { enqueueTrigger, closeCardWork } from "./orchestrator.js";
+import { activeCount, closeCardWork, dispatchPlanned, enqueueTrigger, latestEndedSessions } from "./orchestrator.js";
+import { getAgentProfile, getSettings } from "./settings.js";
+import { waitingState } from "./waiting.js";
 import { notifyCardMoved } from "./notifications.js";
 import { outcomeOnDone, startsItsOwnSession, wakeParentIfSettled } from "./children.js";
 
@@ -44,6 +46,8 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
       ),
     );
   const activeMap = new Map(active.map((s) => [s.cardId!, toSessionSummary(s)]));
+  const lastMap = await latestEndedSessions(ids);
+  const waitingMap = await waitingFor(rows, activeMap, lastMap);
   return rows.map((r) => ({
     id: r.id,
     boardId: r.boardId,
@@ -64,10 +68,52 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     previewUrl: r.previewUrl,
     commentCount: countMap.get(r.id) ?? 0,
     activeSession: activeMap.get(r.id) ?? null,
+    lastSession: lastMap.get(r.id) ?? null,
+    waiting: waitingMap.get(r.id) ?? null,
     pendingRerun: r.pendingRerun,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   }));
+}
+
+/**
+ * What each of these Cards is waiting for, for those with Triggers pending and no Session. The caps
+ * and pause switches are read only when some Card is waiting, which on most reads none is.
+ */
+async function waitingFor(
+  rows: (typeof schema.cards.$inferSelect)[],
+  activeMap: Map<string, SessionSummary>,
+  lastMap: Map<string, SessionSummary>,
+): Promise<Map<string, CardWaiting>> {
+  const out = new Map<string, CardWaiting>();
+  const idle = rows.filter((r) => !activeMap.has(r.id)).map((r) => r.id);
+  if (idle.length === 0) return out;
+  const pending = await db
+    .select({ cardId: schema.triggers.cardId, oldest: sql<string>`min(${schema.triggers.createdAt})` })
+    .from(schema.triggers)
+    .where(and(inArray(schema.triggers.cardId, idle), eq(schema.triggers.status, "pending")))
+    .groupBy(schema.triggers.cardId);
+  if (pending.length === 0) return out;
+  const oldest = new Map(pending.map((p) => [p.cardId, p.oldest]));
+  const boardIds = [...new Set(rows.filter((r) => oldest.has(r.id)).map((r) => r.boardId))];
+  const boards = await db.select().from(schema.boards).where(inArray(schema.boards.id, boardIds));
+  const settings = await getSettings();
+  const globalFull = (await activeCount()) >= settings.globalMaxConcurrentSessions;
+  const full = new Map<string, boolean>();
+  for (const b of boards) full.set(b.id, globalFull || (await activeCount(b.id)) >= b.maxConcurrentSessions);
+  const paused = new Map(boards.map((b) => [b.id, b.paused]));
+  for (const r of rows) {
+    const state = waitingState({
+      oldestPendingAt: oldest.get(r.id) ?? null,
+      active: activeMap.has(r.id),
+      paused: paused.get(r.boardId) ?? false,
+      slotsFull: full.get(r.boardId) ?? false,
+      dispatchPlanned: dispatchPlanned(r.id),
+      lastSession: lastMap.get(r.id) ?? null,
+    });
+    if (state) out.set(r.id, state);
+  }
+  return out;
 }
 
 export async function listCards(boardId: string): Promise<Card[]> {
@@ -257,6 +303,30 @@ export async function moveCard(
     });
   }
   return card;
+}
+
+export class RetryRefused extends Error {
+  status = 409 as const;
+}
+
+/**
+ * Try again: a `retry_requested` Trigger that starts a Session at once rather than after the
+ * batching window, since pressing the button is the whole request. Refused while a Session holds
+ * the Card, which would make it a pending re-run nobody asked for, and in Done, where a Comment is
+ * how a closed Card is reopened. The Trigger carries the Session it follows, so the next one can
+ * read what went wrong.
+ */
+export async function retryCard(id: string, actor: Actor): Promise<Card> {
+  const card = await getCard(id);
+  if (!card) throw new Error("card not found");
+  const agent = await getAgentProfile();
+  if (card.activeSession) throw new RetryRefused(`${agent.name} is already working on this card.`);
+  if (card.column === "done") throw new RetryRefused("This card is done. Add a comment to reopen it.");
+  const last = card.lastSession;
+  const payload = last ? { sessionId: last.id, status: last.status, outcomeSummary: last.outcomeSummary } : {};
+  await recordEvent({ boardId: card.boardId, cardId: card.id, actor, type: "card.retry_requested", payload });
+  await enqueueTrigger({ card, kind: "retry_requested", actorUserId: actor.id, payload, promptly: true });
+  return (await getCard(id))!;
 }
 
 export async function setCardWorkState(
