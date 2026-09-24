@@ -43,16 +43,23 @@ describe("the workflow every card Session follows", () => {
     assert.doesNotMatch(await prompt([trigger("comment_posted")], "external"), /preview_status/);
   });
 
+  it("always ends with finish, noise included, since a silent exit is recorded as a failure", async () => {
+    const text = await prompt([trigger("comment_edited")]);
+    assert.match(text, /If it is noise, post nothing and go straight to finish/);
+    assert.match(text, /8\. End by calling finish with a one-sentence outcome\. Always call it/);
+  });
+
   it("treats an LGTM comment as a pointer to the Approve button", async () => {
     assert.match(await prompt([trigger("comment_posted")]), /"LGTM" or "approved" is not an Approval/);
   });
 });
 
 describe("what a Session is told about its triggers", () => {
-  it("explains a retry and sends the Session to the card's earlier sessions first", async () => {
-    const text = await prompt([trigger("retry_requested")]);
-    assert.match(text, /asked to try again after the previous session on this card failed/);
+  it("explains a retry, says how the last session ended, and sends the Session to the card's earlier sessions first", async () => {
+    const text = await prompt([trigger("retry_requested", { sessionId: "s-0", status: "timed_out", outcomeSummary: "Session hit its 45-minute wall clock." })]);
+    assert.match(text, /asked to try again after the previous session on this card failed\. It ran out of time: Session hit its 45-minute wall clock\./);
     assert.match(text, /earlier sessions with get_card/);
+    assert.match(await prompt([trigger("retry_requested", { sessionId: "s-0", status: "failed", outcomeSummary: null })]), /failed\. It failed\. Read the card's earlier sessions/);
     assert.doesNotMatch(await prompt([trigger("comment_posted")]), /asked to try again/);
   });
 

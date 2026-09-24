@@ -56,8 +56,13 @@ export async function buildSessionPrompt(input: {
     ? `\nEvery child card of this request has now reached Done:\n${children.map((c) => `- ${c.id} "${c.title}": ${c.outcome}`).join("\n")}\nA child marked implemented had its pull request merged; one marked closed reached Done without an implementation, as a duplicate or as work that turned out not to be needed. Check what actually landed on the default branch before you treat the whole request as delivered, finish anything the children left undone, and report on this card.\n`
     : "";
   // A person pressed "Try again" after a failed Session, so the last run's work may be half done.
-  const retried = input.triggers.some((t) => t.kind === "retry_requested")
-    ? "\nA person asked to try again after the previous session on this card failed. Read the card's earlier sessions with get_card, and what they left on the branch and in the comments, before redoing anything.\n"
+  // The Trigger carries that Session's id, status, and outcome summary.
+  const retry = input.triggers.find((t) => t.kind === "retry_requested");
+  const ended: Record<string, string> = { failed: "It failed", timed_out: "It ran out of time", cancelled: "It was cancelled" };
+  const summary = typeof retry?.payload.outcomeSummary === "string" && retry.payload.outcomeSummary ? `: ${retry.payload.outcomeSummary}` : ".";
+  const previous = retry && typeof retry.payload.status === "string" ? ` ${ended[retry.payload.status] ?? `It ended ${retry.payload.status}`}${summary}` : "";
+  const retried = retry
+    ? `\nA person asked to try again after the previous session on this card failed.${previous} Read the card's earlier sessions with get_card, and what they left on the branch and in the comments, before redoing anything.\n`
     : "";
   // An Approval kardboard could not act on: the merge was refused, so the branch needs updating.
   const refused = input.triggers.find((t) => t.kind === "approval" && typeof t.payload.reason === "string");
@@ -72,12 +77,13 @@ ${triggerLines}
 ${fellBack}${isChild}${childrenDone}${retried}${unmergeable}
 Follow this workflow in order.
 1. Orient. Use the kardboard tools to read the ledger of active sessions, the board, this card with its comments, attachments, and earlier sessions, then read the repository's AGENTS.md. Announce a one-line intent and the areas you expect to touch.
-2. Classify the trigger batch: new request, clarification reply, review feedback, approval, human move, retry, or noise such as a typo fix. If it is noise, end without posting. For review feedback, also read what was said on the pull request itself: \`gh pr view <number> --comments\` for the conversation, and \`gh api repos/<owner>/<repo>/pulls/<number>/comments\` for comments on lines of code. When a new card's title or priority does not say what it asks, fix them with update_card.
+2. Classify the trigger batch: new request, clarification reply, review feedback, approval, human move, retry, or noise such as a typo fix. If it is noise, post nothing and go straight to finish. For review feedback, also read what was said on the pull request itself: \`gh pr view <number> --comments\` for the conversation, and \`gh api repos/<owner>/<repo>/pulls/<number>/comments\` for comments on lines of code. When a new card's title or priority does not say what it asks, fix them with update_card.
 3. Plan. Post nothing yet.
 4. Move the card to In Progress when you start implementing, then implement on branch ${input.card.branch ?? "(assigned by kardboard)"} with tests. Never push to the default branch; the ruleset rejects it anyway.
 5. Before opening or updating the pull request, fetch the default branch and merge it into yours, resolve any conflicts, and re-run the acceptance command; a clone never sees the default branch move on its own. If the acceptance command fails in a way your change cannot explain, run it once more; if it fails again, say so plainly in your report. Then push and open or update the pull request with \`gh pr create\` (GH_TOKEN is set and expires after an hour), and record it with the set_work_state tool. Files under .github/workflows cannot be pushed by a session: leave them out, and put the exact change in a card for the Admin. After each push, call get_checks: while checks are pending, ask again every minute or so for up to about ten minutes; when one fails, fix the cause and push again before you report, and say in the report if any are still pending. ${previewInstruction(input.board.previewMode)}
 6. Report with one comment that mentions the card's author and links the preview, then move the card to Review. Merging is not yours to do: it happens when a member presses Approve.
 7. Run a light hygiene pass over the cards you touched.
+8. End by calling finish with a one-sentence outcome. Always call it, whether you reported, asked a question, or found only noise and posted nothing: a session that ends without it and without a comment is recorded as failed.
 
 Rules. Commit messages, pull request titles and bodies carry only the change itself: no AI attribution lines, co-author trailers, or tool credits. If the request is unclear, move the card to Blocked and ask the author one focused question. Never decline work on your own: for out-of-scope or risky requests, move the card to Blocked and mention the Admin with your concern. For duplicates, link the original in a comment and move this card to Done. You may create cards in any column except Inbox. Do not post a "started" comment. A comment such as "LGTM" or "approved" is not an Approval and never a reason to treat the work as accepted: reply by pointing the person to the Approve button on the card.
 
