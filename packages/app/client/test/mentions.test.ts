@@ -17,7 +17,8 @@ describe("splitMentions", () => {
       { type: "text", value: "Thanks " },
       mention("chris", "Chris Corbell"),
       { type: "text", value: ", and " },
-      mention("someone.", "someone."),
+      mention("someone", "someone"),
+      { type: "text", value: "." },
     ]);
   });
 

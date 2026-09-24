@@ -259,13 +259,17 @@ api.get("/attachments/:id", async (c) => {
   if ("error" in access) return access.error;
   const file = path.join(env.dataDir, "uploads", att.sha256.slice(0, 2), att.sha256);
   if (!fs.existsSync(file)) return c.json({ error: "missing" }, 404);
-  const inline = att.mime.startsWith("image/") ? "inline" : "attachment";
+  // The uploader chose the type. An SVG, unlike other images, can carry script, so it downloads
+  // instead of rendering, and the sandbox header keeps anything else from running on this origin.
+  const inline = att.mime.startsWith("image/") && att.mime !== "image/svg+xml" ? "inline" : "attachment";
   return new Response(fs.createReadStream(file) as unknown as ReadableStream, {
     headers: {
       "Content-Type": att.mime,
       "Content-Length": String(att.size),
       "Content-Disposition": `${inline}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
       "Cache-Control": "private, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
     },
   });
 });
@@ -281,7 +285,9 @@ api.post("/previews/auth-code", json(z.object({ host: z.string().min(1), next: z
   try {
     const { code, redirectBase } = await issuePreviewCode(c.get("user"), host);
     // `next` is a path on the preview host, never an absolute URL, so this cannot be an open redirect.
-    const path = next.startsWith("/") && !next.startsWith("//") ? next : "/";
+    // Browsers read a backslash as a slash and drop tabs and newlines, so `/\evil.com` and
+    // `/<TAB>/evil.com` would both leave the host; neither is a path anyone meant.
+    const path = next.startsWith("/") && !next.startsWith("//") && !/[\\\u0000-\u001f\u007f]/.test(next) ? next : "/";
     return c.json({ redirect: `${redirectBase}/__kardboard/auth?code=${encodeURIComponent(code)}&next=${encodeURIComponent(path)}` });
   } catch (err) {
     if (err instanceof PreviewError) return c.json({ error: err.message }, 403);
