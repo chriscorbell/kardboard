@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { describe, it } from "node:test";
-import { COOKIE_NAME, cookieHeader, forwardHeaders, holdingPage, readCookie, safeNext, signInRedirect, verifyCookie, type PreviewCookie, type Route } from "../src/preview.js";
+import {
+  COOKIE_NAME,
+  cookieHeader,
+  forwardHeaders,
+  holdingPage,
+  readCookies,
+  responseHeaders,
+  safeNext,
+  signInRedirect,
+  verifyCookie,
+  type PreviewCookie,
+  type Route,
+} from "../src/preview.js";
 
 const secret = "test-secret";
 const host = "k6u39mjg.kardboard.cc";
@@ -47,8 +59,28 @@ describe("the preview cookie", () => {
   });
 
   it("is read out of a header that carries other cookies too", () => {
-    assert.equal(readCookie(`other=1; ${COOKIE_NAME}=abc; third=2`), "abc");
-    assert.equal(readCookie("other=1"), undefined);
+    assert.deepEqual(readCookies(`other=1; ${COOKIE_NAME}=abc; third=2`), ["abc"]);
+    assert.deepEqual(readCookies("other=1"), []);
+  });
+
+  it("is found behind a same-named cookie another Preview planted for the whole domain", () => {
+    const values = readCookies(`${COOKIE_NAME}=junk; ${COOKIE_NAME}=${cookie({})}`);
+    assert.equal(values.length, 2);
+    assert.equal(values.some((v) => verifyCookie(v, host, route, secret)), true);
+  });
+});
+
+describe("what a Preview's response may set", () => {
+  it("keeps a Preview's cookies on its own host", () => {
+    const out = responseHeaders({ "set-cookie": ["theme=dark; Path=/; Domain=kardboard.cc; HttpOnly", "a=1; domain=.kardboard.cc"], "content-type": "text/html" });
+    assert.deepEqual(out["set-cookie"], ["theme=dark; Path=/; HttpOnly", "a=1"]);
+    assert.equal(out["content-type"], "text/html");
+  });
+
+  it("never passes on a cookie named like the router's own", () => {
+    const out = responseHeaders({ "set-cookie": [`${COOKIE_NAME}=junk; Domain=kardboard.cc`, `=${COOKIE_NAME}=junk`, "ok=1"] });
+    assert.deepEqual(out["set-cookie"], ["ok=1"]);
+    assert.equal("set-cookie" in responseHeaders({ "set-cookie": [`${COOKIE_NAME}=junk`] }), false);
   });
 });
 
@@ -75,10 +107,22 @@ describe("the sign-in redirect", () => {
   });
 
   it("only ever returns to a path on the preview host", () => {
-    assert.equal(safeNext("/deep/link"), "/deep/link");
-    assert.equal(safeNext("//evil.example.com"), "/");
-    assert.equal(safeNext("https://evil.example.com"), "/");
-    assert.equal(safeNext(null), "/");
+    assert.equal(safeNext("/deep/link?tab=1#top", host), "/deep/link?tab=1#top");
+    assert.equal(safeNext("/caf%C3%A9", host), "/caf%C3%A9");
+    assert.equal(safeNext("//evil.example.com", host), "/");
+    assert.equal(safeNext("https://evil.example.com", host), "/");
+    assert.equal(safeNext(null, host), "/");
+  });
+
+  it("refuses the paths a browser turns into another host", () => {
+    assert.equal(safeNext("/\\evil.example.com", host), "/", "a backslash reads as a slash");
+    assert.equal(safeNext("/\t/evil.example.com", host), "/", "a tab is dropped, leaving //");
+    assert.equal(safeNext("/\n/evil.example.com", host), "/");
+  });
+
+  it("refuses anything that would break the Location header", () => {
+    assert.equal(safeNext("/a\r\nSet-Cookie: x=1", host), "/");
+    assert.equal(safeNext("/中", host), "/");
   });
 });
 
