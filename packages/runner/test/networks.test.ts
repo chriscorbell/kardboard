@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type Docker from "dockerode";
 import {
   createSessionNetwork,
+  PEER_GW_PRIORITY,
   peerAliases,
   pruneSessionNetworks,
   removeSessionNetwork,
@@ -54,8 +55,8 @@ function fakeDocker(containers: FakeContainer[], networks: FakeNetwork[]) {
         if (!net) throw new Error(`no such network ${name}`);
         return { Name: net.Name, Labels: net.Labels ?? {}, Containers: Object.fromEntries(net.containers.map((id) => [id, { Name: id }])) };
       },
-      connect: async (opts: { Container: string; EndpointConfig?: { Aliases?: string[] } }) => {
-        calls.push(`connect ${name} ${opts.Container} [${(opts.EndpointConfig?.Aliases ?? []).join(",")}]`);
+      connect: async (opts: { Container: string; EndpointConfig?: { Aliases?: string[]; GwPriority?: number } }) => {
+        calls.push(`connect ${name} ${opts.Container} [${(opts.EndpointConfig?.Aliases ?? []).join(",")}] gw=${opts.EndpointConfig?.GwPriority ?? 0}`);
         byName(name)?.containers.push(opts.Container);
       },
       disconnect: async (opts: { Container: string }) => {
@@ -138,9 +139,18 @@ describe("creating a Session's network", () => {
     assert.equal(name, "kardboard-session-s1");
     assert.deepEqual(docker.calls, [
       `create kardboard-session-s1 bridge=${sessionBridgeName("s1")}`,
-      `connect kardboard-session-s1 ${"a".repeat(64)} [app]`,
-      `connect kardboard-session-s1 ${"e".repeat(64)} [egress]`,
+      `connect kardboard-session-s1 ${"a".repeat(64)} [app] gw=-1`,
+      `connect kardboard-session-s1 ${"e".repeat(64)} [egress] gw=-1`,
     ]);
+  });
+
+  it("never becomes a peer's default gateway, which would carry the app's own traffic and published port", async () => {
+    const docker = fakeDocker(stack(), [{ Name: WORKLOAD, containers: stack().map((c) => c.Id) }]);
+    await createSessionNetwork(docker, "s1", "kardboard", WORKLOAD);
+    const connects = docker.calls.filter((c) => c.startsWith("connect "));
+    assert.equal(connects.length, 2);
+    assert.ok(connects.every((c) => c.endsWith(` gw=${PEER_GW_PRIORITY}`)), connects.join("\n"));
+    assert.ok(PEER_GW_PRIORITY < 0, "below the default of 0 that every compose network gets");
   });
 
   it("reuses the network on a retried start instead of failing on the duplicate", async () => {

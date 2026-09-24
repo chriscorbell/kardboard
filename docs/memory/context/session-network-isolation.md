@@ -1,15 +1,16 @@
 # Session and Preview network isolation
 
 Read when: changing which containers a Session may reach, adding a service to `kardboard_workload`,
-naming a Docker bridge, or explaining why a Session failed with "could not create the session
-network".
+naming a Docker bridge, connecting a compose service to a runner-made network, or explaining why a
+Session failed with "could not create the session network".
 Status: verified
 Scope: component, `packages/runner`, `deploy/compose.yaml`, minicore host firewall
 Verified: 2026-09-24
 Source: [network isolation runbook](../runbooks/network-isolation.md),
 [packages/runner/src/networks.ts](../../../packages/runner/src/networks.ts)
 Recheck when: the runner stops reading `kardboard_workload` membership to decide a Session's peers,
-the `cbn` bridge prefix changes, or the `kardboard-lan-isolation` unit is removed from minicore
+the `cbn` bridge prefix changes, the `kardboard-lan-isolation` unit is removed from minicore, or a
+peer is connected to a runner-made network without `peerEndpoint`
 
 Two facts that are not visible from either file on its own.
 
@@ -21,6 +22,13 @@ starts the Session there. A service a Session should reach is still added by put
 to *find* it must carry a compose service name or a network alias, because that alias is what gets
 copied. The runner refuses the start rather than falling back to the shared network, so a
 misconfigured `workload` fails every Session on the Board with a message on the Card.
+
+**Joining a network can move a long-lived container's default gateway.** Docker picks a
+multi-network container's gateway by `GwPriority`, then by network name, and
+`kardboard-session-<id>` sorts before `kardboard_control`. Connected at the default priority, the
+app's default route and published-port endpoint moved onto a test Session bridge on 2026-09-24.
+The runner now connects every peer at `GwPriority: -1` (`peerEndpoint` in `networks.ts`); anything
+that connects a compose service to a runner-made network must do the same.
 
 **The `cbn` bridge prefix is a contract with the host firewall, not a label.** The runner sets
 `com.docker.network.bridge.name` to `cbn<32-bit FNV-1a of the session id>` and `deploy/compose.yaml`

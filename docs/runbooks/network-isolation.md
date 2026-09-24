@@ -12,6 +12,13 @@ A Session container no longer joins `kardboard_workload`. The runner creates
 `DOCKER-ISOLATION-STAGE-*` chains keep one bridge away from another, so a Session can no longer
 reach a concurrent Session's ports, and the runner remains on `control` only.
 
+The peers are connected with `GwPriority: -1`. Docker gives a container on several networks the
+default gateway of the one with the highest priority and breaks ties by network name, and
+`kardboard-session-<id>` sorts before `kardboard_control`. At the default priority of 0 the app's
+default route, and with it the endpoint behind its published port, moved onto a test Session's
+bridge as soon as it was connected on 2026-09-24. At -1 a Session network is never a peer's gateway.
+`GwPriority` needs Docker API 1.48 (Engine 28); minicore runs 29.8.
+
 `kardboard_workload` still exists and is still the definition of "a Session may reach this": the
 runner reads its membership at every start. Adding a service a Session should reach means putting
 it on `workload` in `deploy/compose.yaml`, nothing else.
@@ -64,10 +71,11 @@ one `INPUT` drop for new connections from a `cbn*` bridge to any of the host's o
 covers sshd and every published port behind each bridge gateway.
 
 Only new connections are dropped, because replies must pass. While a Session runs, the app and the
-egress proxy are also on its bridge, and Docker can route their outbound traffic through it. On
-2026-09-24 the app's default route moved to a test Session bridge as soon as it was connected. If
-the rule dropped every packet, the app's replies to cloudflared, on another private bridge, would
-be dropped, and kardboard.cc would go dark whenever a Session ran.
+egress proxy are also on its bridge. The gateway priority above keeps their outbound traffic off it,
+but before that change the app's default route moved to a test Session bridge on 2026-09-24, and a
+rule that dropped every packet would then have dropped the app's replies to cloudflared, on another
+private bridge, and taken kardboard.cc dark whenever a Session ran. Matching only new connections
+keeps that failure impossible even if a peer is ever connected without the priority again.
 
 Applying it needs the preview network recreated once, because a bridge name cannot be changed in
 place: `docker compose down && docker compose up -d`. Session networks are created fresh by the
@@ -94,7 +102,17 @@ getent hosts kardboard-session-<other id>
 ```
 
 `docker network inspect kardboard-session-<id>` should list exactly three containers: the Session,
-the app, and the egress proxy.
+the app, and the egress proxy. While it runs, the app's default route must still leave through
+`control`:
+
+```bash
+docker exec kardboard-app-1 ip route show default   # the gateway is on kardboard_control's subnet
+docker inspect kardboard-app-1 --format '{{range $n, $e := .NetworkSettings.Networks}}{{$n}} {{$e.GwPriority}}{{println}}{{end}}'
+```
+
+The second command should show `-1` against every `kardboard-session-*` network. A Session network
+created by a runner from before 2026-09-24 connected its peers at 0 and keeps doing so until that
+Session ends.
 
 Last verified on minicore on 2026-09-24: the rules and the systemd unit were installed, the stack
 was recreated so the preview bridge is `cbnprev`, and a throwaway container on a `cbn` bridge

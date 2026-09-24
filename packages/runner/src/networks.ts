@@ -7,7 +7,8 @@ import type Docker from "dockerode";
 // then keeps one Session's bridge away from another's, and the runner stays off all of them.
 //
 // The bridge is named rather than left to Docker so a host firewall rule can match every Session
-// and Preview bridge by prefix; see `deploy/network-isolation.sh`.
+// and Preview bridge by prefix; see `deploy/network-isolation.sh`. The Session container itself
+// has only its own network, so that bridge is its gateway and it needs no priority of its own.
 
 export const SESSION_BRIDGE_PREFIX = "cbn";
 
@@ -70,6 +71,17 @@ export async function workloadPeers(docker: Docker, workloadNetwork: string): Pr
   return peers;
 }
 
+// Docker gives a container with several networks the default gateway of the one with the highest
+// `GwPriority`, breaking ties by network name, and `kardboard-session-*` sorts before
+// `kardboard_control`. Connected at the default priority, a peer's outbound traffic and its
+// published port moved onto whichever Session bridge it joined last; that was seen on minicore on
+// 2026-09-24. Below the default, a Session network is never a peer's gateway. Needs Docker API 1.48.
+export const PEER_GW_PRIORITY = -1;
+
+export function peerEndpoint(aliases: string[]): Docker.EndpointSettings & { GwPriority: number } {
+  return { Aliases: aliases, GwPriority: PEER_GW_PRIORITY };
+}
+
 // Creating the network is idempotent, so a retried start reuses it, and so is each connect: Docker
 // reports an existing endpoint as an error and there is nothing to undo about it.
 export async function createSessionNetwork(docker: Docker, sessionId: string, boardSlug: string, workloadNetwork: string): Promise<string> {
@@ -81,7 +93,7 @@ export async function createSessionNetwork(docker: Docker, sessionId: string, bo
   const peers = await workloadPeers(docker, workloadNetwork);
   if (peers.length === 0) throw new Error(`no container on ${workloadNetwork} for a Session to reach`);
   for (const peer of peers) {
-    await network.connect({ Container: peer.id, EndpointConfig: { Aliases: peer.aliases } }).catch((err: Error) => {
+    await network.connect({ Container: peer.id, EndpointConfig: peerEndpoint(peer.aliases) }).catch((err: Error) => {
       if (!/already exists|already attached/i.test(err.message)) throw err;
     });
   }

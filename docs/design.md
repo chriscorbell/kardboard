@@ -106,9 +106,9 @@ kardboard runs on minicore as one compose stack named `kardboard` in `chriscorbe
 
 | Service | Role | Network |
 | --- | --- | --- |
-| `app` | Web, REST API, MCP server, orchestrator, SQLite | Host port 3070; `control`, `workload`, and each live Session's network |
+| `app` | Web, REST API, MCP server, orchestrator, SQLite | Host port 3070; `control`, `workload`, and each live Session's network, never as its gateway |
 | `runner` | Owns the Docker socket; creates, logs, stops, and removes Session and Preview containers | `control` only |
-| `egress` | Credential-injecting proxy for provider traffic | `control`, `workload`, and each live Session's network |
+| `egress` | Credential-injecting proxy for provider traffic | `control`, `workload`, and each live Session's network, never as its gateway |
 | `preview-router` | Routes preview hostnames and enforces the signed cookie | Host port behind the tunnel; `control`, `preview` |
 
 Three user-defined networks separate the three kinds of traffic. `control` carries app, runner, and egress. `workload` names the services a Session may reach — the MCP server and the egress proxy, never the runner — but no Session joins it: the runner creates one `kardboard-session-<id>` network per Session and connects those same services to it under the aliases they already answer to, so two Sessions on the same Board cannot reach each other. Preview containers join `preview` alone, reached only by the preview router: branch-controlled code gets the internet through NAT and nothing else on this stack. Preview containers also run with no bind mounts, no Docker socket, dropped capabilities, `no-new-privileges`, and memory, CPU, and PID limits.
