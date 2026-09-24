@@ -1,33 +1,55 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { useReducedMotion } from "motion/react";
 import { Paperclip, Send, X } from "lucide-react";
-import type { AgentProfile, User } from "@kardboard/shared";
+import type { AgentProfile, Person } from "@kardboard/shared";
 import { Avatar, Button, cx, IconButton, Textarea } from "../../components/ui";
+import type { UploadProgress } from "../../lib/api";
+import { filesFromPaste } from "../../lib/fileInput";
+import { partitionBySize, tooLargeMessage } from "../../lib/files";
+import { fileSize } from "../../lib/format";
+import { useCoarsePointer } from "../../lib/pointer";
 import { composerKeyAction } from "./composerKeys";
 
 type Props = {
-  members: User[];
+  /** Who the @ list offers: people who can open the Board now. */
+  members: Person[];
   agent: AgentProfile;
-  onSubmit: (body: string, files: File[]) => Promise<void>;
+  onSubmit: (body: string, files: File[], onProgress: UploadProgress) => Promise<void>;
   initialBody?: string;
   submitLabel?: string;
   onCancel?: () => void;
   allowFiles?: boolean;
   autoFocus?: boolean;
   placeholder?: string;
-  /** Lets the card sheet focus the composer, as Request changes does. */
-  inputRef?: RefObject<HTMLTextAreaElement | null>;
 };
 
+// What the card sheet can do to the composer from outside it: bring it into view for a reply, and
+// hand it files dropped anywhere on the sheet.
+export type ComposerHandle = { focus: () => void; addFiles: (files: File[]) => void };
+
+// Files alone make a Comment too; the server needs words, so these stand in for them.
+export function attachmentOnlyBody(count: number): string {
+  return count === 1 ? "Attached a file." : "Attached files.";
+}
+
 // A textarea with @mention completion. Typing "@" opens a list of Board members filtered by what follows.
-export function Composer({ members, agent, onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus, placeholder, inputRef }: Props) {
+export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
+  { members, agent, onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus, placeholder },
+  handle,
+) {
   const [body, setBody] = useState(initialBody);
   const [files, setFiles] = useState<File[]>([]);
+  const [progress, setProgress] = useState<ReadonlyMap<File, number>>(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Something left out of the last pick, paste, or drop, said once rather than dropped silently.
+  const [notice, setNotice] = useState<string | null>(null);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [highlight, setHighlight] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const touch = useCoarsePointer();
+  const reduce = useReducedMotion();
 
   const candidates = useMemo(() => {
     const all = [{ handle: agent.name.toLowerCase(), name: agent.name, avatarUrl: agent.avatarUrl, agent: true }, ...members.map((m) => ({ handle: m.handle, name: m.name, avatarUrl: m.avatarUrl, agent: false }))];
@@ -39,6 +61,26 @@ export function Composer({ members, agent, onSubmit, initialBody = "", submitLab
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
+
+  const addFiles = (picked: File[]) => {
+    if (!allowFiles || picked.length === 0) return;
+    const { accepted, tooLarge } = partitionBySize(picked);
+    setFiles((fs) => [...fs, ...accepted]);
+    setNotice(tooLargeMessage(tooLarge.map((f) => f.name)));
+  };
+
+  useImperativeHandle(handle, () => ({
+    focus: () => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+    },
+    addFiles: (picked) => {
+      addFiles(picked);
+      ref.current?.focus({ preventScroll: true });
+    },
+  }));
 
   const detectMention = (value: string, caret: number) => {
     const before = value.slice(0, caret);
@@ -62,14 +104,18 @@ export function Composer({ members, agent, onSubmit, initialBody = "", submitLab
     });
   };
 
+  const canPost = Boolean(body.trim()) || files.length > 0;
+
   const submit = async () => {
-    if (!body.trim() || busy) return;
+    if (!canPost || busy) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await onSubmit(body.trim(), files);
+      await onSubmit(body.trim() || attachmentOnlyBody(files.length), files, (file, fraction) => setProgress((p) => new Map(p).set(file, fraction)));
       setBody("");
       setFiles([]);
+      setProgress(new Map());
     } catch (err) {
       setError((err as Error).message || "Could not post.");
     } finally {
@@ -80,10 +126,7 @@ export function Composer({ members, agent, onSubmit, initialBody = "", submitLab
   return (
     <div className="relative">
       <Textarea
-        ref={(el) => {
-          ref.current = el;
-          if (inputRef) inputRef.current = el;
-        }}
+        ref={ref}
         value={body}
         rows={3}
         placeholder={placeholder ?? "Write a comment. Use @ to mention someone."}
@@ -91,10 +134,17 @@ export function Composer({ members, agent, onSubmit, initialBody = "", submitLab
           setBody(e.target.value);
           detectMention(e.target.value, e.target.selectionStart);
         }}
+        onPaste={(e) => {
+          if (!allowFiles) return;
+          const pasted = filesFromPaste(e);
+          if (!pasted) return;
+          e.preventDefault();
+          addFiles(pasted);
+        }}
         onKeyDown={(e) => {
           const handled = composerKeyAction(
             { key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, isComposing: e.nativeEvent.isComposing },
-            { mentionOpen: mention !== null && candidates.length > 0, canCancel: Boolean(onCancel) },
+            { mentionOpen: mention !== null && candidates.length > 0, canCancel: Boolean(onCancel), touch },
           );
           if (!handled) return;
           if (handled.preventDefault) e.preventDefault();
@@ -143,23 +193,17 @@ export function Composer({ members, agent, onSubmit, initialBody = "", submitLab
           ))}
         </ul>
       ) : null}
-      {files.length > 0 ? (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {files.map((f, i) => (
-            <li key={`${f.name}-${i}`} className="inline-flex h-6 items-center gap-1 rounded-full border border-line bg-surface pl-2 pr-1 text-[12px] text-ink-muted">
-              <span className="max-w-40 truncate">{f.name}</span>
-              <button type="button" aria-label={`Remove ${f.name}`} className="rounded-full p-0.5 hover:bg-overlay" onClick={() => setFiles((fs) => fs.filter((_, j) => j !== i))}>
-                <X className="size-3" strokeWidth={2} />
-              </button>
-            </li>
-          ))}
-        </ul>
+      {files.length > 0 ? <FileChips files={files} progress={busy ? progress : null} onRemove={busy ? undefined : (i) => setFiles((fs) => fs.filter((_, j) => j !== i))} /> : null}
+      {notice ? (
+        <p role="status" className="mt-2 text-[12px] text-warn">
+          {notice}
+        </p>
       ) : null}
       {error ? <p className="mt-2 text-[12px] text-danger">{error}</p> : null}
       <div className="mt-2 flex items-center gap-1">
         {allowFiles ? (
           <>
-            <IconButton label="Attach files" onClick={() => fileRef.current?.click()}>
+            <IconButton label="Attach files" onClick={() => fileRef.current?.click()} disabled={busy}>
               <Paperclip className="size-4" strokeWidth={1.75} />
             </IconButton>
             <input
@@ -168,25 +212,53 @@ export function Composer({ members, agent, onSubmit, initialBody = "", submitLab
               multiple
               className="hidden"
               onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []).filter((f) => f.size <= 25 * 1024 * 1024);
-                setFiles((fs) => [...fs, ...picked]);
+                addFiles(Array.from(e.target.files ?? []));
                 e.target.value = "";
               }}
             />
           </>
         ) : null}
         <span className="ml-auto flex items-center gap-2">
-          <span className="hidden text-[11px] text-ink-faint sm:inline">Enter to {submitLabel.toLowerCase()}, Shift+Enter for a new line</span>
+          {touch ? null : <span className="hidden text-[11px] text-ink-faint sm:inline">Enter to {submitLabel.toLowerCase()}, Shift+Enter for a new line</span>}
           {onCancel ? (
             <Button size="sm" variant="ghost" onClick={onCancel}>
               Cancel
             </Button>
           ) : null}
-          <Button size="sm" variant="primary" onClick={() => void submit()} loading={busy} disabled={!body.trim()} icon={<Send className="size-3.5" strokeWidth={2} />}>
-            {submitLabel}
+          <Button size="sm" variant="primary" onClick={() => void submit()} loading={busy} disabled={!canPost} icon={<Send className="size-3.5" strokeWidth={2} />}>
+            {busy && files.length > 0 ? "Uploading" : submitLabel}
           </Button>
         </span>
       </div>
     </div>
+  );
+});
+
+// The files waiting to go with a Comment. While they upload each one fills from the left as its
+// bytes leave, so a large file on a slow connection is visibly moving rather than stuck.
+export function FileChips({ files, progress, onRemove }: { files: File[]; progress: ReadonlyMap<File, number> | null; onRemove?: (index: number) => void }) {
+  return (
+    <ul className="mt-2 flex flex-wrap gap-1.5">
+      {files.map((f, i) => {
+        const fraction = progress ? (progress.get(f) ?? 0) : null;
+        return (
+          <li
+            key={`${f.name}-${f.size}-${i}`}
+            className={cx("relative inline-flex h-6 items-center gap-1.5 overflow-hidden rounded-full border border-line bg-surface pl-2 text-[12px] text-ink-muted", onRemove ? "pr-1" : "pr-2")}
+          >
+            {fraction !== null ? (
+              <span aria-hidden="true" className="absolute inset-0 origin-left bg-accent-soft transition-transform duration-200 ease-out-expo" style={{ transform: `scaleX(${fraction})` }} />
+            ) : null}
+            <span className="relative max-w-40 truncate">{f.name}</span>
+            <span className="relative font-mono text-[10.5px] text-ink-faint">{fraction !== null ? `${Math.round(fraction * 100)}%` : fileSize(f.size)}</span>
+            {onRemove ? (
+              <button type="button" aria-label={`Remove ${f.name}`} className="relative rounded-full p-0.5 hover:bg-overlay" onClick={() => onRemove(i)}>
+                <X className="size-3" strokeWidth={2} />
+              </button>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

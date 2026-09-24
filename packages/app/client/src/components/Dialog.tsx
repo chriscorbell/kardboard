@@ -12,11 +12,18 @@ export function Dialog({ open, onClose, title, children, width = 520 }: { open: 
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useModalFocus(panel, open);
+  // Captured on the document and stopped there, so a dialog opened from the card sheet closes on
+  // Escape without the sheet closing underneath it. A Popover inside the dialog captures on window,
+  // which comes first, so its Escape still closes only the Popover.
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && isInnermostModal(panel) && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !isInnermostModal(panel)) return;
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
   return createPortal(
     <AnimatePresence>

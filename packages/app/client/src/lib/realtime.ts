@@ -5,7 +5,7 @@ import { keys, upsertCardInBoard, upsertSessionInBoard } from "./api";
 import { useAuth } from "./auth";
 import { reconnectDelay } from "./backoff";
 
-const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "session.updated", "board.updated"] as const;
+const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comment.removed", "session.updated", "board.updated"] as const;
 
 // Server-sent events keep the board query fresh without polling. Clerk mode cannot set headers on
 // EventSource, so it falls back to a token query parameter over the same origin.
@@ -38,6 +38,10 @@ export function useBoardEvents(slug: string | undefined) {
           break;
         case "comment.upserted":
           void qc.invalidateQueries({ queryKey: keys.card(event.comment.cardId) });
+          break;
+        // Dropped from the open sheet at once: a deleted Comment is often one nobody should keep reading.
+        case "comment.removed":
+          qc.setQueryData<CardDetail>(keys.card(event.cardId), (d) => (d ? { ...d, comments: d.comments.filter((c) => c.id !== event.commentId) } : d));
           break;
         case "session.updated":
           upsertSessionInBoard(qc, slug, event.session);

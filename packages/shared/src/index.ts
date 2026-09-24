@@ -405,6 +405,7 @@ export const updateMeSchema = z.object({
   emailPreference: z.enum(EMAIL_PREFERENCES).optional(),
   onboarded: z.boolean().optional(),
 });
+export type UpdateMeInput = z.infer<typeof updateMeSchema>;
 
 export const inviteUserSchema = z.object({
   email: z.string().email(),

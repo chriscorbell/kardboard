@@ -29,7 +29,9 @@ export function Notifications() {
   return (
     <Popover
       align="right"
-      className="w-[min(22rem,calc(100vw-1.5rem))]"
+      // The bell is not the rightmost control, so on a phone the panel is pinned to the screen's
+      // edges instead of the bell's, which would push it off the left side.
+      className="w-[min(22rem,calc(100vw-1.5rem))] max-sm:fixed max-sm:inset-x-3 max-sm:top-14 max-sm:w-auto"
       onOpen={() => void notifications.refetch()}
       trigger={
         <button
