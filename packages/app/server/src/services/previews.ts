@@ -7,6 +7,7 @@ import { newId } from "../ids.js";
 import { canAccessBoard } from "./boards.js";
 import { mintInstallationToken, parseRepoUrl } from "./github.js";
 import { toUser } from "./users.js";
+import { publish } from "./realtime.js";
 import { runner } from "./runner-client.js";
 
 // Runner-hosted Previews. The app owns the registry: which Card has a Preview, at which hostname,
@@ -50,7 +51,8 @@ export async function startPreview(cardId: string): Promise<PreviewRow> {
   const nowIso = new Date().toISOString();
   if (existing) {
     // A rebuild is fresh work to review, so the idle window starts again; otherwise a Preview
-    // nobody had opened for a week would be reaped within the hour of being rebuilt.
+    // nobody had opened for a week would be reaped within the hour of being rebuilt. The target and
+    // the built commit stay: the previous container keeps serving until the new one replaces it.
     await db
       .update(schema.previews)
       .set({ host, status: "building", branch: card.branch, error: null, lastAccessAt: nowIso, updatedAt: nowIso })
@@ -82,23 +84,65 @@ export async function startPreview(cardId: string): Promise<PreviewRow> {
   return (await db.select().from(schema.previews).where(eq(schema.previews.id, id)).get())!;
 }
 
-// Reported by the runner when the build finishes, one way or the other.
+// Reported by the runner when the build finishes, one way or the other, with the commit it built.
+// A failed rebuild leaves the previous container running, so a failure keeps the last target: the
+// router shows the failure, but a later rebuild can serve the old container while it runs.
 export async function applyPreviewState(
   previewId: string,
-  state: { status: "running" | "failed"; containerId?: string | null; target?: string | null; error?: string | null },
+  state: { status: "running" | "failed"; containerId?: string | null; target?: string | null; error?: string | null; sha?: string | null },
 ): Promise<void> {
   const row = await db.select().from(schema.previews).where(eq(schema.previews.id, previewId)).get();
   if (!row) return;
+  const failed = state.status === "failed";
   await db
     .update(schema.previews)
     .set({
       status: state.status,
-      containerId: state.containerId ?? null,
-      target: state.target ?? null,
+      containerId: state.containerId ?? (failed ? row.containerId : null),
+      target: state.target ?? (failed ? row.target : null),
       error: state.error ?? null,
+      sha: state.sha ?? (failed ? row.sha : null),
       updatedAt: new Date().toISOString(),
     })
     .where(eq(schema.previews.id, previewId));
+  await publishCard(row.cardId);
+}
+
+// The Card carries its Preview's status, so a change here is a change to the Card on every open
+// board. Lazy: cards.ts reaches this module through the orchestrator.
+async function publishCard(cardId: string): Promise<void> {
+  const { getCard } = await import("./cards.js");
+  const card = await getCard(cardId);
+  if (card) publish(card.boardId, { type: "card.upserted", card });
+}
+
+export const INTERRUPTED_BUILD = "The build was interrupted before it finished, so there is nothing new to show. Request the preview again.";
+
+// A build lives only in the runner's memory, and every deploy restarts the runner, so a build in
+// flight then is lost without a report. The runner says so when it comes back (below); this is the
+// backstop for when that report never arrives. Past the runner's own build limit, plus the minute
+// its report can spend retrying and some slack, a Preview still marked building is not building.
+const BUILD_SLACK_MS = 5 * 60_000;
+
+async function failBuildsRequestedBefore(cutoffIso: string): Promise<number> {
+  const stuck = await db
+    .update(schema.previews)
+    .set({ status: "failed", error: INTERRUPTED_BUILD, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.previews.status, "building"), lt(schema.previews.updatedAt, cutoffIso)))
+    .returning({ cardId: schema.previews.cardId });
+  for (const row of stuck) await publishCard(row.cardId);
+  return stuck.length;
+}
+
+export function failStuckBuilds(nowMs = Date.now()): Promise<number> {
+  return failBuildsRequestedBefore(new Date(nowMs - env.previewBuildTimeoutMinutes * 60_000 - BUILD_SLACK_MS).toISOString());
+}
+
+// The runner reports the moment it started, and every build requested before then went to the
+// process that is gone. A build requested in the instant the new runner came up can be caught too;
+// its own report still arrives when it finishes and puts the row right.
+export function failBuildsInterruptedBy(runnerStartedAt: string): Promise<number> {
+  return failBuildsRequestedBefore(runnerStartedAt);
 }
 
 export async function getPreviewForCard(cardId: string): Promise<PreviewRow | undefined> {
@@ -110,6 +154,16 @@ export async function removePreviewForCard(cardId: string): Promise<void> {
   if (!row) return;
   await runner.stopPreview(row.id).catch((err) => console.error(`[preview] could not remove ${row.id}`, err));
   await db.delete(schema.previews).where(eq(schema.previews.id, row.id));
+  await publishCard(cardId);
+}
+
+// The end of a build's log, for a Session fixing a failed build: the error the runner reports is
+// only the step that failed, while the compiler's own output is in the log above it.
+export async function previewLogTail(previewId: string, lines = 60): Promise<string | null> {
+  const slice = await runner.previewLog(previewId).catch(() => null);
+  if (!slice?.exists) return null;
+  const tail = slice.text.trimEnd().split("\n").slice(-lines).join("\n");
+  return tail.length > 8_000 ? tail.slice(-8_000) : tail;
 }
 
 // What the preview router polls. `epoch` travels with the route so the router can reject cookies
@@ -233,6 +287,13 @@ export function startPreviewReaper(): void {
   const tick = () => void reapPreviews().catch((err) => console.error("[preview] reap failed", err));
   setInterval(tick, 3_600_000).unref?.();
   setTimeout(tick, 30_000).unref?.();
+  // Every few minutes rather than hourly, and once now: a Session may be waiting on the build.
+  const unstick = () =>
+    void failStuckBuilds()
+      .then((n) => n && console.log(`[preview] marked ${n} lost build(s) failed`))
+      .catch((err) => console.error("[preview] stuck build check failed", err));
+  unstick();
+  setInterval(unstick, 5 * 60_000).unref?.();
 }
 
 export async function listPreviews(): Promise<PreviewRow[]> {

@@ -66,8 +66,9 @@ describe("the Preview container", () => {
     assert.equal(spec.HostConfig?.NetworkMode, "kardboard_preview_pv1");
   });
 
-  it("carries no host path and no credential", () => {
+  it("carries no host path, no Board cache, and no credential", () => {
     assert.deepEqual(spec.HostConfig?.Binds, []);
+    assert.equal(spec.HostConfig?.Mounts, undefined);
     const envNames = (spec.Env ?? []).map((e) => e.split("=")[0]);
     assert.deepEqual(envNames.sort(), ["KARDBOARD_PREVIEW", "NODE_ENV", "PORT"]);
     assert.ok((spec.Env ?? []).includes("PORT=3000"));
@@ -205,6 +206,7 @@ const hang = (signal: AbortSignal) => {
 
 describe("building and running a Preview", () => {
   let repo: string;
+  let head: string;
   let branchReq: PreviewRequest;
 
   before(() => {
@@ -214,6 +216,7 @@ describe("building and running a Preview", () => {
     fs.writeFileSync(path.join(repo, "Dockerfile"), "FROM scratch\n");
     git("add", ".");
     git("commit", "-q", "-m", "init");
+    head = git("rev-parse", "HEAD").toString().trim();
     branchReq = { ...req, repoUrl: `file://${repo}`, branch: "main", githubToken: null };
   });
   after(() => fs.rmSync(repo, { recursive: true, force: true }));
@@ -221,7 +224,7 @@ describe("building and running a Preview", () => {
   it("builds on the Preview's own network, swaps the container, and drops the image it replaced", async () => {
     const docker = fakeDocker({ image: "sha256:old", container: true });
     const result = await buildAndRunPreview(docker, branchReq, limits, () => {});
-    assert.deepEqual(result, { containerId: "c-new", target: "http://kardboard-preview-pv1:3000" });
+    assert.deepEqual(result, { containerId: "c-new", target: "http://kardboard-preview-pv1:3000", sha: head });
     assert.deepEqual(docker.calls, [
       `network create kardboard_preview_pv1 ${previewBridgeName("pv1")}`,
       "network connect kardboard_preview_pv1 router gw=-1",
@@ -270,8 +273,19 @@ describe("building and running a Preview", () => {
       return stream;
     };
     const docker = fakeDocker({ image: "sha256:old", container: true, build: failing });
-    await assert.rejects(() => buildAndRunPreview(docker, branchReq, limits, () => {}), /build failed: RUN pnpm build: exit 1/);
+    let cloned: string | null = null;
+    await assert.rejects(() => buildAndRunPreview(docker, branchReq, limits, () => {}, (sha) => (cloned = sha)), /build failed: RUN pnpm build: exit 1/);
     assert.ok(!docker.calls.includes("network remove kardboard_preview_pv1"));
     assert.ok(!docker.calls.includes("container remove kardboard-preview-pv1"), "the previous Preview keeps serving");
+    assert.equal(cloned, head, "the failure can still say which commit failed to build");
+  });
+
+  it("has no commit to report when the branch cannot be cloned", async () => {
+    let cloned: string | null = null;
+    await assert.rejects(
+      () => buildAndRunPreview(fakeDocker({}), { ...branchReq, branch: "no-such-branch" }, limits, () => {}, (sha) => (cloned = sha)),
+      /clone failed/,
+    );
+    assert.equal(cloned, null);
   });
 });

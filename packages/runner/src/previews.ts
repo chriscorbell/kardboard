@@ -117,11 +117,17 @@ export class PreviewError extends Error {}
 // was removed. Nothing is reported for it: whatever replaced it reports instead.
 export class PreviewCancelled extends Error {}
 
-async function cloneBranch(req: PreviewRequest, dir: string, signal: AbortSignal): Promise<void> {
+// Returns the commit it checked out: the branch head at the moment of the clone, which is what the
+// app compares with the pull request head a Member is about to approve.
+async function cloneBranch(req: PreviewRequest, dir: string, signal: AbortSignal): Promise<string> {
   const res = await run("git", ["clone", "--depth", "1", "--single-branch", "--branch", req.branch, cloneUrl(req.repoUrl, req.githubToken), dir], { signal });
   signal.throwIfAborted();
   if (res.code !== 0) throw new PreviewError(`clone failed: ${redact(res.output, req.githubToken).trim().slice(-500)}`);
+  const head = await run("git", ["rev-parse", "HEAD"], { cwd: dir, signal });
+  signal.throwIfAborted();
+  if (head.code !== 0) throw new PreviewError(`could not read the cloned commit: ${head.output.trim().slice(-200)}`);
   fs.rmSync(path.join(dir, ".git"), { recursive: true, force: true });
+  return head.output.trim();
 }
 
 // Tar is the build context format the Docker daemon wants. BusyBox tar ships in the image, which
@@ -179,12 +185,15 @@ export function cancelPreviewBuild(previewId: string, reason: string): boolean {
   return true;
 }
 
+// `onCloned` hears the commit as soon as it is known, so a build that fails after the clone can
+// still say which commit it failed on.
 export async function buildAndRunPreview(
   docker: Docker,
   req: PreviewRequest,
   limits: PreviewLimits,
   onLog: (line: string) => void,
-): Promise<{ containerId: string; target: string }> {
+  onCloned: (sha: string) => void = () => {},
+): Promise<{ containerId: string; target: string; sha: string }> {
   if (cancelPreviewBuild(req.previewId, "a newer build of this preview replaced it")) onLog("[preview] stopped the build already in flight; this one replaces it");
   const controller = new AbortController();
   building.set(req.previewId, controller);
@@ -194,7 +203,9 @@ export async function buildAndRunPreview(
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `preview-${req.previewId}-`));
   try {
     onLog(`[preview] cloning ${req.repoUrl} at ${req.branch}`);
-    await cloneBranch(req, dir, signal);
+    const sha = await cloneBranch(req, dir, signal);
+    onLog(`[preview] building commit ${sha}`);
+    onCloned(sha);
     if (!fs.existsSync(path.join(dir, req.dockerfile))) {
       throw new PreviewError(`${req.dockerfile} is not in the branch, so there is nothing to build. Runner previews need a Dockerfile at the repository root.`);
     }
@@ -215,7 +226,7 @@ export async function buildAndRunPreview(
     if (previous && previous !== (await imageId(docker, previewImageTag(req.previewId)))) {
       await docker.getImage(previous).remove().catch(() => {});
     }
-    return { containerId: container.id, target: `http://${previewContainerName(req.previewId)}:${req.port}` };
+    return { containerId: container.id, target: `http://${previewContainerName(req.previewId)}:${req.port}`, sha };
   } catch (err) {
     const failure = signal.aborted ? signal.reason : err;
     // A failed first build leaves a network holding only the router. A failed rebuild leaves the

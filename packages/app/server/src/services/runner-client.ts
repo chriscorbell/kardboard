@@ -56,6 +56,8 @@ export interface RunnerClient {
   // The runner accepts a Preview build and reports the outcome later on /api/internal/previews.
   startPreview(req: StartPreviewRequest): Promise<void>;
   stopPreview(previewId: string): Promise<void>;
+  // The newest part of a Preview's build log, at most the runner's slice size.
+  previewLog(previewId: string): Promise<RunnerLogSlice>;
 }
 
 const NO_LOG: RunnerLogSlice = { exists: false, size: 0, offset: 0, nextOffset: 0, text: "", skipped: false };
@@ -105,6 +107,13 @@ class HttpRunner implements RunnerClient {
     const res = await fetch(`${this.baseUrl}/previews/${encodeURIComponent(previewId)}`, { method: "DELETE", headers: this.headers() });
     if (!res.ok && res.status !== 404) throw new Error(`runner preview removal failed: ${res.status}`);
   }
+  async previewLog(previewId: string): Promise<RunnerLogSlice> {
+    // Offset 0 of a log larger than one slice returns its newest slice, which is the part wanted.
+    const res = await fetch(`${this.baseUrl}/previews/${encodeURIComponent(previewId)}/log?offset=0`, { headers: this.headers() });
+    if (res.status === 404) return NO_LOG;
+    if (!res.ok) throw new Error(`runner preview log failed: ${res.status}`);
+    return (await res.json()) as RunnerLogSlice;
+  }
 }
 
 // Used when no runner is configured: the Session is recorded and shown, but nothing runs.
@@ -122,6 +131,9 @@ class NoopRunner implements RunnerClient {
   }
   async startPreview(): Promise<void> {}
   async stopPreview(): Promise<void> {}
+  async previewLog(): Promise<RunnerLogSlice> {
+    return NO_LOG;
+  }
 }
 
 export const runner: RunnerClient = env.runnerUrl

@@ -145,6 +145,8 @@ export interface Card {
   /** CI on the pull request, as kardboard last read it from GitHub. */
   checks: ChecksSummary | null;
   previewUrl: string | null;
+  /** A runner-hosted Preview's build, or null in external preview mode and before one is requested. */
+  preview: CardPreview | null;
   commentCount: number;
   activeSession: SessionSummary | null;
   /** The most recent card Session on this Card that has ended, whatever its outcome. */
@@ -187,6 +189,17 @@ export function describeChecks(summary: Pick<ChecksSummary, "state" | "total" | 
     case "unknown":
       return "GitHub did not say how the checks went";
   }
+}
+
+export const PREVIEW_STATUSES = ["building", "running", "failed"] as const;
+export type PreviewStatus = (typeof PREVIEW_STATUSES)[number];
+
+export interface CardPreview {
+  status: PreviewStatus;
+  error: string | null;
+  /** The commit the Preview was built from. While a rebuild runs it is still the one being served. */
+  sha: string | null;
+  updatedAt: string;
 }
 
 export interface SessionSummary {

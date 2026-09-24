@@ -75,14 +75,22 @@ export function createRouter(config: RouterConfig): http.RequestListener {
       return;
     }
 
-    if (route.status !== "running" || !route.target) {
+    const hold = () => {
       const { status, body } = holdingPage(route, host);
       res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
       res.end(body);
+    };
+
+    // A rebuild leaves the previous container serving until its replacement starts, so a Member
+    // keeps a working Preview in the meantime and the Card says it is rebuilding. The holding page
+    // is for when there is nothing to serve: a first build, or a failed one, whose error it shows.
+    const serving = route.status === "failed" ? null : route.target;
+    if (!serving) {
+      hold();
       return;
     }
 
-    const target = new URL(route.target);
+    const target = new URL(serving);
     const upstream = http.request(
       { hostname: target.hostname, port: target.port, path, method: req.method, headers: forwardHeaders(req.headers, target.host) },
       (up) => {
@@ -98,7 +106,12 @@ export function createRouter(config: RouterConfig): http.RequestListener {
         up.pipe(res);
       },
     );
-    upstream.on("error", () => fail(res, 502, "Preview is not responding."));
+    // The one moment a rebuild has nothing to serve is the swap, between removing the old container
+    // and starting the new one; a visitor then gets the holding page rather than an error.
+    upstream.on("error", () => {
+      if (route.status === "building" && !res.headersSent) hold();
+      else fail(res, 502, "Preview is not responding.");
+    });
     req.on("error", () => upstream.destroy());
     res.on("close", () => {
       if (!res.writableFinished) upstream.destroy();
