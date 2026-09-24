@@ -464,18 +464,30 @@ export type Settings = {
 };
 
 // A SQLite snapshot on the data bind mount, written with VACUUM INTO and verified before it counts.
+// `pre_migrate` ones are taken at boot before a new image changes the schema, and pruned apart
+// from the daily ones so a run of deploys cannot push those out.
 export interface BackupSnapshot {
   name: string;
   bytes: number;
   takenAt: string;
+  kind: "regular" | "pre_migrate";
 }
 
-// The most recent snapshot attempt since the app started, scheduled or on demand. A failure is
+// The most recent snapshot attempt, scheduled or on demand, kept across restarts. A failure is
 // retried on the next tick, so `error` stays set until one succeeds.
 export interface BackupAttempt {
   at: string;
   ok: boolean;
   error: string | null;
+}
+
+// The most recent copy of a snapshot, and of new attachments, to the off-disk directory.
+export interface BackupCopy {
+  at: string;
+  ok: boolean;
+  error: string | null;
+  snapshot: string | null;
+  uploadsCopied: number;
 }
 
 export interface BackupsView {
@@ -485,6 +497,76 @@ export interface BackupsView {
   databaseBytes: number;
   snapshots: BackupSnapshot[];
   lastAttempt: BackupAttempt | null;
+  /** Where each snapshot and `uploads/` are copied off the disk, or null when that is not set up. */
+  copyDir: string | null;
+  lastCopy: BackupCopy | null;
+}
+
+// ---- admin: sessions, usage, providers ----
+
+// What Claude Code's final `result` event says a Session used. Codex prints no such event, so a
+// Codex Session has none.
+export interface SessionUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number | null;
+  numTurns: number | null;
+  durationMs: number | null;
+}
+
+// A Session as the Admin's Sessions tab lists it. Usage stays out of `SessionSummary`, which
+// Members receive with their Board.
+export interface AdminSessionSummary extends SessionSummary {
+  boardId: string;
+  cardTitle: string | null;
+  usage: SessionUsage | null;
+}
+
+export const ADMIN_SESSIONS_PAGE = 50;
+
+export interface AdminSessionsPage {
+  sessions: AdminSessionSummary[];
+  /** Pass back as `before` for the next, older page; null when there is none. */
+  nextCursor: string | null;
+}
+
+export interface BoardUsageTotal {
+  boardId: string;
+  /** Sessions created in the window, and how many of them reported usage. */
+  sessions: number;
+  measured: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number;
+}
+
+export interface UsageTotalsView {
+  days: number;
+  since: string;
+  boards: BoardUsageTotal[];
+}
+
+// What the egress proxy last saw of each Provider. Only the proxy sees a provider's own answers.
+export interface ProviderStatus {
+  provider: Provider;
+  /** Whether the proxy holds a credential for it; null when the proxy did not say. */
+  credentialLoaded: boolean | null;
+  /** The last refusal for want of usage, and when the provider said the window reopens. */
+  limit: { at: string; until: string | null } | null;
+  /** The provider rejecting the credential. Cleared by the next turn it accepts. */
+  authFailure: { at: string; status: number | null; reason: string } | null;
+}
+
+export interface ProvidersView {
+  egress: "unconfigured" | "reachable" | "unreachable";
+  checkedAt: string;
+  providers: ProviderStatus[];
+  /** Calls a Session made that are not on the proxy's allowlist, since the proxy started. */
+  refusals: { count: number; last: { at: string; provider: Provider; method: string; path: string } | null };
 }
 
 // ---- realtime ----

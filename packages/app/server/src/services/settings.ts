@@ -68,3 +68,10 @@ export async function getSettingValue(key: string): Promise<string | null> {
   const row = await db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
   return row?.value ?? null;
 }
+
+// Small operational state that has to outlive a restart, such as the last backup attempt or when an
+// alert was last sent, kept in the same table under a namespaced key. `getSettings` ignores keys it
+// does not know and the settings route accepts only its own, so these cannot collide.
+export async function setSettingValue(key: string, value: string): Promise<void> {
+  await db.insert(schema.settings).values({ key, value }).onConflictDoUpdate({ target: schema.settings.key, set: { value } });
+}
