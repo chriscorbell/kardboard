@@ -12,7 +12,7 @@ import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { findSessionByToken, endSession, listBoardSessions } from "../services/orchestrator.js";
 import { getBoardById } from "../services/boards.js";
-import { createCard, getCard, listCards, moveCard, setCardWorkState, toSessionSummary } from "../services/cards.js";
+import { ConflictError, createCard, getCard, listCards, moveCard, setCardWorkState, toSessionSummary } from "../services/cards.js";
 import { createComment, getAttachment, listComments } from "../services/comments.js";
 import { getUsersByIds } from "../services/users.js";
 import { recordEvent } from "../services/events.js";
@@ -56,19 +56,19 @@ function buildServer(session: SessionRow): McpServer {
 
   server.registerTool(
     "get_board",
-    { description: "The board's settings and every card on it, grouped by column, with creator names.", inputSchema: {} },
+    { description: "The board's settings and every card on it, grouped by column, with creator names and each card's revision.", inputSchema: {} },
     async () => {
       const board = await getBoardById(session.boardId);
       const cards = await listCards(session.boardId);
       const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
-      const grouped = Object.fromEntries(COLUMNS.map((col) => [col, cards.filter((c) => c.column === col).map((c) => ({ id: c.id, title: c.title, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt }))]));
+      const grouped = Object.fromEntries(COLUMNS.map((col) => [col, cards.filter((c) => c.column === col).map((c) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt }))]));
       return { content: [{ type: "text", text: JSON.stringify({ board: { name: board?.name, repoUrl: board?.repoUrl, previewMode: board?.previewMode }, columns: COLUMN_LABELS, cards: grouped }, null, 2) }] };
     },
   );
 
   server.registerTool(
     "get_card",
-    { description: "Full detail for one card: description, comments with author handles, attachments, and work state. Omit card_id for your own card.", inputSchema: { card_id: z.string().optional() } },
+    { description: "Full detail for one card: description, comments with author handles, attachments, work state, and the revision to pass to move_card. Omit card_id for your own card.", inputSchema: { card_id: z.string().optional() } },
     async ({ card_id }) => {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
@@ -111,15 +111,27 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // The revision is the one the agent read, not the Card's current one: a move decided on an old
+  // view of the Card, such as a report on a Card a person has since closed, must be refused.
   server.registerTool(
     "move_card",
-    { description: "Move a card to a column. Explain any move of someone else's card in a comment.", inputSchema: { card_id: z.string().optional(), column: z.enum(COLUMNS) } },
-    async ({ card_id, column }) => {
+    {
+      description: "Move a card to a column. Pass the revision from your latest get_card or get_board for that card: if the card has changed since, the move is refused, and you should read it again and decide whether the move still makes sense. Explain any move of someone else's card in a comment.",
+      inputSchema: { card_id: z.string().optional(), column: z.enum(COLUMNS), revision: z.number().int().nonnegative() },
+    },
+    async ({ card_id, column, revision }) => {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
       const card = await assertBoardCard(id);
-      await moveCard(id, { column, position: card.position, revision: card.revision, actor });
-      return { content: [{ type: "text", text: "ok" }] };
+      let moved;
+      try {
+        moved = await moveCard(id, { column, position: card.position, revision, actor });
+      } catch (err) {
+        if (!(err instanceof ConflictError)) throw err;
+        const now = (await getCard(id))!;
+        throw new Error(`card ${id} changed after revision ${revision}: it is now at revision ${now.revision} in ${COLUMN_LABELS[now.column]}. Read it again with get_card before deciding whether to move it.`);
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ column: moved.column, revision: moved.revision }) }] };
     },
   );
 

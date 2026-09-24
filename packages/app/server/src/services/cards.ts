@@ -170,10 +170,14 @@ export async function updateCard(
     changed.description = input.description;
   if (input.priority !== undefined && input.priority !== current.priority) changed.priority = input.priority;
   if (Object.keys(changed).length === 0) return current;
-  await db
+  // The revision is checked by the statement that writes, not only by the read above, so two edits
+  // made from the same revision cannot both land.
+  const written = await db
     .update(schema.cards)
     .set({ ...changed, revision: current.revision + 1, updatedAt: new Date().toISOString() })
-    .where(eq(schema.cards.id, id));
+    .where(and(eq(schema.cards.id, id), eq(schema.cards.revision, input.revision)))
+    .returning({ id: schema.cards.id });
+  if (written.length === 0) throw new ConflictError("card changed since you loaded it");
   const card = (await getCard(id))!;
   await recordEvent({
     boardId: card.boardId,
@@ -206,7 +210,8 @@ export async function moveCard(
   const columnChanged = current.column !== input.column;
   const enteringDone = columnChanged && input.column === "done";
   const leavingDone = columnChanged && current.column === "done";
-  await db
+  // As in updateCard: of two moves made from the same revision, only the first is written.
+  const written = await db
     .update(schema.cards)
     .set({
       column: input.column,
@@ -216,7 +221,9 @@ export async function moveCard(
       // What the Card came to is recorded as it closes, and forgotten when it is reopened.
       ...(enteringDone ? { outcome: await outcomeOnDone(id) } : leavingDone ? { outcome: null } : {}),
     })
-    .where(eq(schema.cards.id, id));
+    .where(and(eq(schema.cards.id, id), eq(schema.cards.revision, input.revision)))
+    .returning({ id: schema.cards.id });
+  if (written.length === 0) throw new ConflictError("card changed since you loaded it");
   let card = (await getCard(id))!;
   if (columnChanged) {
     await recordEvent({
