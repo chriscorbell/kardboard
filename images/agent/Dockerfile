@@ -52,7 +52,9 @@ ENV npm_config_cache=/cache/npm \
     UV_CACHE_DIR=/cache/uv \
     UV_LINK_MODE=copy \
     PIP_CACHE_DIR=/cache/pip
-COPY --chmod=644 images/agent/codex-config.sh /usr/local/lib/kardboard/codex-config.sh
+# 755, not 644, though it is only sourced: --chmod also sets the mode of the directory COPY creates
+# for it, and a 644 directory cannot be entered, by the agent user or by root without capabilities.
+COPY --chmod=755 images/agent/codex-config.sh /usr/local/lib/kardboard/codex-config.sh
 COPY --chmod=755 images/agent/clis.sh /usr/local/bin/kardboard-clis
 COPY --chmod=755 images/agent/entrypoint.sh /usr/local/bin/kardboard-session
 USER agent
