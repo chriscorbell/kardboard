@@ -8,6 +8,7 @@ import { codexWiring } from "./codex.js";
 import { readLogSlice } from "./logs.js";
 import { createSessionNetwork, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
 import { buildAndRunPreview, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
+import { resumeLogFrom, runningSessions } from "./reattach.js";
 
 // The runner is the only process with the Docker socket. It knows how to do exactly two things:
 // run a Session container from an approved image with fixed limits, and stop or remove one.
@@ -98,12 +99,25 @@ async function ensureImage(image: string): Promise<void> {
   }
 }
 
-// Session containers that exited while the runner was down never got their post-exit cleanup.
+// Session containers that exited while the runner was down never had their exit reported or got
+// their post-exit cleanup. The exit code is still on the container until it is removed.
 async function pruneExitedSessions(): Promise<void> {
   const list = await docker.listContainers({ all: true, filters: { label: ["kardboard.session"], status: ["exited", "dead"] } });
   for (const c of list) {
-    await docker.getContainer(c.Id).remove({ force: true }).catch(() => {});
+    const container = docker.getContainer(c.Id);
+    const sessionId = c.Labels["kardboard.session"];
+    const info = await container.inspect().catch(() => null);
+    if (sessionId && info) await reportExit(sessionId, info.State.ExitCode);
+    await container.remove({ force: true }).catch(() => {});
     console.log(`[runner] removed exited ${c.Names[0] ?? c.Id}`);
+  }
+}
+
+// See reattach.ts: after a restart, nothing is waiting on the Session containers still running.
+async function reattachRunningSessions(): Promise<void> {
+  for (const s of await runningSessions(docker)) {
+    watchContainer(s.sessionId, docker.getContainer(s.containerId), resumeLogFrom(path.join(env.logDir, `${s.sessionId}.log`)));
+    console.log(`[runner] re-attached to ${s.name}`);
   }
 }
 
@@ -119,10 +133,17 @@ async function reportExit(sessionId: string, exitCode: number, reason?: string) 
   }
 }
 
-function watchContainer(sessionId: string, container: Docker.Container) {
+// Sessions whose container this process is already waiting on, so a start and the boot-time
+// re-attach cannot both watch one container and write its log twice.
+const watching = new Set<string>();
+
+// `since` resumes a log this runner was following before it restarted.
+function watchContainer(sessionId: string, container: Docker.Container, since?: string) {
+  if (watching.has(sessionId)) return;
+  watching.add(sessionId);
   const logPath = path.join(env.logDir, `${sessionId}.log`);
   const out = fs.createWriteStream(logPath, { flags: "a" });
-  void container.logs({ follow: true, stdout: true, stderr: true, timestamps: true }).then((stream) => {
+  void container.logs({ follow: true, stdout: true, stderr: true, timestamps: true, ...(since ? { since } : {}) }).then((stream) => {
     container.modem.demuxStream(stream, out, out);
     stream.on("end", () => out.end());
   });
@@ -133,7 +154,8 @@ function watchContainer(sessionId: string, container: Docker.Container) {
       await container.remove({ force: true }).catch(() => {});
       await removeSessionNetwork(docker, sessionId).catch(() => {});
     })
-    .catch((err) => console.error(`[runner] wait failed for ${sessionId}`, err));
+    .catch((err) => console.error(`[runner] wait failed for ${sessionId}`, err))
+    .finally(() => watching.delete(sessionId));
 }
 
 app.post("/sessions", async (c) => {
@@ -337,6 +359,7 @@ function pruneLogs() {
 }
 pruneLogs();
 setInterval(pruneLogs, 6 * 3_600_000);
+void reattachRunningSessions().catch((err) => console.error("[runner] re-attach failed", err));
 void pruneExitedSessions()
   .then(() => pruneSessionNetworks(docker))
   .then((removed) => removed.length && console.log(`[runner] removed ${removed.length} orphaned session network(s)`))

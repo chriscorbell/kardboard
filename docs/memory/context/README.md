@@ -11,5 +11,5 @@ Threshold: 12 entries. Past it, the bounded review in [maintenance](../maintenan
 - [Testing client code](client-side-tests.md): read when a change in `packages/app/client` needs a test; there is no DOM harness.
 - [Runner previews on the kardboard board](kardboard-runner-previews.md): read when requesting a preview, especially from a branch created before the root Dockerfile was added.
 - [A provider's usage limit is only visible in the egress proxy](provider-usage-limits-are-seen-in-the-proxy.md): read when changing Provider fallback, touching `/limits`, or explaining why a Card did or did not switch Providers.
-- [Testing server code that enqueues Triggers](testing-trigger-paths.md): read when a server test calls `createCard`, `moveCard`, or anything else that reaches `enqueueTrigger`.
+- [Testing server code that enqueues Triggers](testing-trigger-paths.md): read when a server test calls `createCard`, `moveCard`, or anything else that reaches `enqueueTrigger`, or has to run a Session against a fake runner.
 - [Session and Preview network isolation](session-network-isolation.md): read when changing which containers a Session may reach, adding a service to `kardboard_workload`, or naming a Docker bridge.
