@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
 import { App } from "./App";
 import { DevAuthProvider, clerkPublishableKey } from "./lib/auth";
+import { guardStrayFileDrops } from "./lib/fileInput";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -22,6 +23,8 @@ function AuthRoot({ children }: { children: ReactNode }) {
   }
   return <DevAuthProvider>{children}</DevAuthProvider>;
 }
+
+guardStrayFileDrops();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -228,6 +228,8 @@ export const notifications = sqliteTable(
     body: text("body").notNull().default(""),
     actorName: text("actor_name").notNull(),
     actorAvatarUrl: text("actor_avatar_url"),
+    // The Comment a Mention came from, so deleting the Comment takes its notifications with it.
+    commentId: text("comment_id"),
     readAt: text("read_at"),
     createdAt: text("created_at").notNull().$defaultFn(now),
   },
@@ -280,6 +282,8 @@ export const settings = sqliteTable("settings", {
 export const outboundEmails = sqliteTable("outbound_emails", {
   id: text("id").primaryKey(),
   toUserId: text("to_user_id").notNull(),
+  // The Comment whose words the email carries, so deleting the Comment can remove them here too.
+  commentId: text("comment_id"),
   subject: text("subject").notNull(),
   html: text("html").notNull(),
   status: text("status", { enum: ["pending", "sent", "failed", "logged"] }).notNull().default("pending"),

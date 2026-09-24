@@ -51,3 +51,23 @@ export function filesFromPaste(e: ClipboardEvent): File[] | null {
     return name === f.name ? f : new File([f], name, { type: f.type, lastModified: f.lastModified });
   });
 }
+
+// A file dropped anywhere that is not a drop surface would otherwise make the browser open it in
+// place of the app, taking a half-written Card or Comment with it. Installed once for the page.
+export function guardStrayFileDrops(): () => void {
+  const hasFiles = (e: globalThis.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  const onDragOver = (e: globalThis.DragEvent) => {
+    if (!hasFiles(e) || e.defaultPrevented) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+  };
+  const onDrop = (e: globalThis.DragEvent) => {
+    if (hasFiles(e) && !e.defaultPrevented) e.preventDefault();
+  };
+  window.addEventListener("dragover", onDragOver);
+  window.addEventListener("drop", onDrop);
+  return () => {
+    window.removeEventListener("dragover", onDragOver);
+    window.removeEventListener("drop", onDrop);
+  };
+}

@@ -470,11 +470,18 @@ function CommentList({
     setDeleting(null);
     deleteComment.reset();
   };
+  // The Delete button the dialog would hand focus back to is gone with its comment, so focus lands
+  // on the list instead of falling to the page.
+  const list = useRef<HTMLOListElement>(null);
+  const deleted = () => {
+    closeDelete();
+    requestAnimationFrame(() => list.current?.focus({ preventScroll: true }));
+  };
   const control = "text-ink-faint opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 [li:hover_&]:opacity-100 [@media(hover:none)]:opacity-100";
   return (
     <>
       {comments.length === 0 ? <p className="text-[13px] text-ink-faint">No comments yet.</p> : null}
-      <ol className="flex flex-col gap-5">
+      <ol ref={list} tabIndex={-1} aria-label="Comments" className="flex flex-col gap-5 outline-none">
         {comments.map((c) => {
           // A kardboard notice, such as a Session that stopped short, is signed by kardboard itself.
           const author = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? people.get(c.authorId) : undefined;
@@ -552,7 +559,7 @@ function CommentList({
           <Button variant="ghost" onClick={closeDelete}>
             Cancel
           </Button>
-          <Button variant="danger" loading={deleteComment.isPending} icon={<Trash2 className="size-4" strokeWidth={1.75} />} onClick={() => deleting && deleteComment.mutate(deleting.id, { onSuccess: closeDelete })}>
+          <Button variant="danger" loading={deleteComment.isPending} icon={<Trash2 className="size-4" strokeWidth={1.75} />} onClick={() => deleting && deleteComment.mutate(deleting.id, { onSuccess: deleted })}>
             Delete
           </Button>
         </div>

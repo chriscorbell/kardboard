@@ -17,7 +17,7 @@ import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
 import { columnHint } from "./board/columns";
 import { dropPlacement } from "./board/dropPlacement";
-import { filterActive, foldDone, matchesFilter, readFilter, waitsOn, writeFilter, type BoardFilter } from "./board/boardFilter";
+import { filterActive, foldDone, matchesFilter, readFilter, waitsOn, writeFilter, type BoardFilter, type Viewer } from "./board/boardFilter";
 import { BoardSearch, FilterChips } from "./board/BoardFilters";
 import { HowItWorks } from "./board/HowItWorks";
 
@@ -27,7 +27,7 @@ const SCREEN_READER_INSTRUCTIONS = {
   draggable: "To open a card, press Enter. To move it, press Space to pick it up, use the arrow keys to move it within or between columns, then press Space again to drop it, or Escape to cancel.",
 };
 
-function SortableCard({ card, creator, agent, onOpen }: { card: Card; creator: Person | undefined; agent: AgentProfile; onOpen: () => void }) {
+function SortableCard({ card, creator, agent, questionIsMine, onOpen }: { card: Card; creator: Person | undefined; agent: AgentProfile; questionIsMine: boolean; onOpen: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { column: card.column } });
   return (
     <CardTile
@@ -35,6 +35,7 @@ function SortableCard({ card, creator, agent, onOpen }: { card: Card; creator: P
       card={card}
       creator={creator}
       agent={agent}
+      questionIsMine={questionIsMine}
       dragging={isDragging}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className="cursor-grab touch-manipulation active:cursor-grabbing"
@@ -59,6 +60,7 @@ function ColumnLane({
   cards,
   people,
   agent,
+  viewer,
   onOpen,
   onNew,
   canAdd,
@@ -69,6 +71,7 @@ function ColumnLane({
   cards: Card[];
   people: Map<string, Person>;
   agent: AgentProfile;
+  viewer: Viewer;
   onOpen: (id: string) => void;
   onNew: () => void;
   canAdd: boolean;
@@ -96,7 +99,7 @@ function ColumnLane({
           <AnimatePresence initial={false}>
             {cards.map((card) => (
               <motion.div key={card.id} layout={!reduce} initial={reduce ? false : { opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}>
-                <SortableCard card={card} creator={card.creatorId ? people.get(card.creatorId) : undefined} agent={agent} onOpen={() => onOpen(card.id)} />
+                <SortableCard card={card} creator={card.creatorId ? people.get(card.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(card, viewer)} onOpen={() => onOpen(card.id)} />
               </motion.div>
             ))}
           </AnimatePresence>
@@ -203,12 +206,15 @@ export function BoardPage() {
       const overId = String(over.id);
       const onColumn = overId.startsWith("col:");
       const targetColumn = onColumn ? (overId.slice(4) as Column) : (board.data.cards.find((c) => c.id === overId)?.column ?? card.column);
-      const placed = dropPlacement(byColumn[targetColumn], card.id, onColumn ? null : overId);
+      // Placed among every Card in the column, not only those the filter or the folded Done shows:
+      // a position worked out from the visible ones alone can land on a hidden Card's.
+      const whole = board.data.cards.filter((c) => c.column === targetColumn).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
+      const placed = dropPlacement(whole, card.id, onColumn ? null : overId);
       if (!placed) return;
       // The card springs back on a refusal, which says nothing about why without this.
       move.mutate({ id: card.id, column: targetColumn, position: placed.position, revision: card.revision }, { onError: (err) => toast(`“${card.title}” was not moved. ${err.message}`) });
     },
-    [board.data, byColumn, move],
+    [board.data, move],
   );
 
   if (board.isPending) {
@@ -307,6 +313,7 @@ export function BoardPage() {
               cards={byColumn[column]}
               people={people}
               agent={agent}
+              viewer={viewer}
               onOpen={openCard}
               onNew={() => setCreating(true)}
               canAdd={column === "inbox"}
@@ -316,7 +323,7 @@ export function BoardPage() {
           ))}
         </div>
         <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}>
-          {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} overlay className="w-[284px]" /> : null}
+          {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay className="w-[284px]" /> : null}
         </DragOverlay>
       </DndContext>
       <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} onCreated={openCard} />

@@ -66,6 +66,7 @@ async function notify(input: {
   actor: { name: string; avatarUrl: string | null };
   emailSubject: string;
   emailHeading: string;
+  commentId?: string;
 }): Promise<void> {
   const user = await getUser(input.userId);
   if (!user || !(await canBeNotified(user, input.board.id))) return;
@@ -79,6 +80,7 @@ async function notify(input: {
     body: input.body.slice(0, PREVIEW_CHARS),
     actorName: input.actor.name,
     actorAvatarUrl: input.actor.avatarUrl,
+    commentId: input.commentId ?? null,
   });
   const { emailPreference } = await getPreferences(input.userId);
   if (!emailWanted(emailPreference, { kind: input.kind, column: input.card.column })) return;
@@ -89,6 +91,7 @@ async function notify(input: {
     body: input.body,
     linkUrl: `${env.publicUrl}/b/${input.board.slug}/c/${input.card.id}`,
     linkLabel: "Open the card",
+    commentId: input.commentId,
   });
 }
 
@@ -159,6 +162,7 @@ export async function notifyMentions(card: Card, comment: Comment, userIds: stri
       actor: who,
       emailSubject: `${who.name} mentioned you on "${card.title}"`,
       emailHeading: `${who.name} mentioned you on ${card.title}`,
+      commentId: comment.id,
     });
   }
   await db
@@ -167,16 +171,23 @@ export async function notifyMentions(card: Card, comment: Comment, userIds: stri
     .where(and(eq(schema.mentions.commentId, comment.id), inArray(schema.mentions.userId, userIds)));
 }
 
-// A deleted Comment's words also sit in the notifications that quoted it. A notification does not
-// record which Comment it came from, so it is matched by Card and by the preview it kept of any
-// version of the Comment's body.
-export async function forgetMentionNotifications(cardId: string, bodies: string[]): Promise<void> {
+// A deleted Comment's words also sit in the notifications and emails that quoted it. Both record
+// the Comment they came from; notifications written before that was recorded are matched by Card
+// and by the preview they kept of any version of the Comment's body. An email already sent keeps a
+// note in place of the words, so the record of what went out stays; one still waiting is not sent.
+export async function forgetCommentTraces(commentId: string, cardId: string, bodies: string[]): Promise<void> {
+  await db.delete(schema.notifications).where(eq(schema.notifications.commentId, commentId));
   const previews = [...new Set(bodies.map((b) => b.slice(0, PREVIEW_CHARS)))];
-  if (previews.length === 0) return;
-  await db
-    .delete(schema.notifications)
-    .where(and(eq(schema.notifications.cardId, cardId), eq(schema.notifications.kind, "mention"), inArray(schema.notifications.body, previews)));
+  if (previews.length > 0) {
+    await db
+      .delete(schema.notifications)
+      .where(and(eq(schema.notifications.cardId, cardId), eq(schema.notifications.kind, "mention"), isNull(schema.notifications.commentId), inArray(schema.notifications.body, previews)));
+  }
+  await db.delete(schema.outboundEmails).where(and(eq(schema.outboundEmails.commentId, commentId), eq(schema.outboundEmails.status, "pending")));
+  await db.update(schema.outboundEmails).set({ html: DELETED_EMAIL_HTML }).where(eq(schema.outboundEmails.commentId, commentId));
 }
+
+const DELETED_EMAIL_HTML = "<p>This email quoted a comment that has since been deleted.</p>";
 
 // A user who has lost access to a board must stop seeing its cards, including in the bell.
 async function visibleBoardIds(user: User): Promise<string[] | null> {

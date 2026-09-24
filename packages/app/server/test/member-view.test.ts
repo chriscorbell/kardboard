@@ -88,7 +88,7 @@ describe("deleting a comment", () => {
     const comment = await post(MEMBER, card.id, "the password is hunter2, @grace");
     assert.equal((await call(MEMBER, "PATCH", `/comments/${comment.id}`, { body: "the password is hunter3, @grace" })).status, 200);
     assert.equal((await upload(MEMBER, comment.id, "secret.txt", "hunter2")).status, 201);
-    const before = await triggerKinds(card.id);
+    assert.deepEqual(await triggerKinds(card.id), ["card_created", "comment_edited", "comment_posted"]);
 
     const res = await call(MEMBER, "DELETE", `/comments/${comment.id}`);
 
@@ -101,7 +101,9 @@ describe("deleting a comment", () => {
     assert.deepEqual(deleted.payload, { commentId: comment.id, authorKind: "user", authorId: "ada" });
     assert.equal(deleted.actorId, "ada");
     assert.equal(JSON.stringify(deleted.payload).includes("hunter"), false);
-    assert.deepEqual(await triggerKinds(card.id), before, "taking a comment back is not a request for work");
+    // Taking a comment back is not a request for work, and a Session not yet started for it has
+    // nothing left to read.
+    assert.deepEqual(await triggerKinds(card.id), ["card_created"]);
     assert.equal((await getCard(card.id))!.commentCount, 0);
   });
 
@@ -113,6 +115,31 @@ describe("deleting a comment", () => {
     await call(MEMBER, "DELETE", `/comments/${comment.id}`);
 
     assert.equal((await db.select().from(schema.notifications).where(eq(schema.notifications.userId, "grace"))).length, 0);
+  });
+
+  it("leaves another comment's notification alone, even with the same words", async () => {
+    const card = await newCard();
+    const first = await post(MEMBER, card.id, "@grace can you look?");
+    await post(MEMBER, card.id, "@grace can you look?");
+    assert.equal((await db.select().from(schema.notifications).where(eq(schema.notifications.userId, "grace"))).length, 2);
+
+    await call(MEMBER, "DELETE", `/comments/${first.id}`);
+
+    const left = await db.select().from(schema.notifications).where(eq(schema.notifications.userId, "grace"));
+    assert.equal(left.length, 1);
+    assert.notEqual(left[0]!.commentId, first.id);
+  });
+
+  it("takes its words out of the emails that quoted it", async () => {
+    const card = await newCard();
+    const comment = await post(MEMBER, card.id, "@grace the key is abc123");
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal((await db.select().from(schema.outboundEmails).where(eq(schema.outboundEmails.commentId, comment.id))).some((e) => e.html.includes("abc123")), true);
+
+    await call(MEMBER, "DELETE", `/comments/${comment.id}`);
+
+    const emails = await db.select().from(schema.outboundEmails).where(eq(schema.outboundEmails.commentId, comment.id));
+    assert.equal(emails.some((e) => e.html.includes("abc123")), false);
   });
 
   it("removes an uploaded file only once no other attachment uses it", async () => {

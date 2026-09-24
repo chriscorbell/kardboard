@@ -111,11 +111,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     setBusy(true);
     setError(null);
     setNotice(null);
+    // What goes out now. The box stays usable while a long upload runs, so what is typed, pasted, or
+    // dropped meanwhile is kept for the next post rather than cleared with this one.
+    const sentBody = body;
+    const sentFiles = files;
     try {
-      await onSubmit(body.trim() || attachmentOnlyBody(files.length), files, (file, fraction) => setProgress((p) => new Map(p).set(file, fraction)));
-      setBody("");
-      setFiles([]);
-      setProgress(new Map());
+      await onSubmit(sentBody.trim() || attachmentOnlyBody(sentFiles.length), sentFiles, (file, fraction) => setProgress((p) => new Map(p).set(file, fraction)));
+      setBody((b) => (b === sentBody ? "" : b));
+      setFiles((fs) => fs.filter((f) => !sentFiles.includes(f)));
+      setProgress((p) => new Map([...p].filter(([f]) => !sentFiles.includes(f))));
     } catch (err) {
       setError((err as Error).message || "Could not post.");
     } finally {

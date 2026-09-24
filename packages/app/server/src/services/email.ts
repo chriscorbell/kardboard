@@ -60,6 +60,7 @@ export async function queueEmail(input: {
   linkUrl: string;
   linkLabel: string;
   footer?: string;
+  commentId?: string;
 }): Promise<void> {
   const html = `<!doctype html><html><body style="margin:0;background:#141311;font-family:ui-sans-serif,system-ui,sans-serif;color:#e7e2d9">
 <div style="max-width:560px;margin:0 auto;padding:40px 24px">
@@ -70,7 +71,7 @@ export async function queueEmail(input: {
   <p style="margin:36px 0 0;font-size:12px;color:#6f6960">${escapeHtml(input.footer ?? CARD_FOOTER)}</p>
 </div></body></html>`;
   const id = newId();
-  await db.insert(schema.outboundEmails).values({ id, toUserId: input.toUserId, subject: input.subject, html });
+  await db.insert(schema.outboundEmails).values({ id, toUserId: input.toUserId, subject: input.subject, html, commentId: input.commentId ?? null });
   void deliver(id).catch((err) => console.error("[email] delivery failed", err));
 }
 
