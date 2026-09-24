@@ -5,9 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { codexWiring } from "./codex.js";
-import { readLogSlice } from "./logs.js";
-import { createSessionNetwork, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
-import { buildAndRunPreview, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
+import { pruneSupersededImages } from "./images.js";
+import { ID_PATTERN, readLogSlice } from "./logs.js";
+import { createSessionNetwork, prunePreviewNetworks, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
+import { buildAndRunPreview, PreviewCancelled, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
 import { resumeLogFrom, runningSessions } from "./reattach.js";
 
 // The runner is the only process with the Docker socket. It knows how to do exactly two things:
@@ -26,8 +27,9 @@ const env = {
   // `workload` it is meant to reach, so two Sessions cannot see each other. Set this to `shared`
   // to put Sessions back on `workload` together if the per-session wiring ever has to be backed out.
   perSessionNetwork: (process.env.KARDBOARD_SESSION_NETWORK ?? "per-session") !== "shared",
-  // Previews are branch-controlled code, so they get their own network: the router can reach them
-  // and they can reach the internet, but not the app, the egress proxy, or the runner.
+  // Previews are branch-controlled code, so each gets a network of its own: the router can reach
+  // them and they can reach the internet, but not the app, the egress proxy, the runner, or each
+  // other. This is the network the router lives on, which each Preview's network is peered from.
   previewNetwork: process.env.KARDBOARD_PREVIEW_NETWORK ?? "kardboard_preview",
   logDir: process.env.KARDBOARD_LOG_DIR ?? "/data/logs",
   logRetentionDays: Number(process.env.KARDBOARD_LOG_RETENTION_DAYS ?? "14"),
@@ -37,6 +39,8 @@ const env = {
   previewMemoryBytes: Number(process.env.KARDBOARD_PREVIEW_MEMORY_BYTES ?? String(1024 * 1024 * 1024)),
   previewNanoCpus: Number(process.env.KARDBOARD_PREVIEW_NANO_CPUS ?? String(1e9)),
   previewPidsLimit: Number(process.env.KARDBOARD_PREVIEW_PIDS_LIMIT ?? "512"),
+  previewBuildMemoryBytes: Number(process.env.KARDBOARD_PREVIEW_BUILD_MEMORY_BYTES ?? String(2 * 1024 * 1024 * 1024)),
+  previewBuildTimeoutMinutes: Number(process.env.KARDBOARD_PREVIEW_BUILD_TIMEOUT_MINUTES ?? "15"),
   // A path on the Docker host: the runner never opens it, it only names it in a bind.
   codexAuthFile: process.env.CODEX_AUTH_FILE ?? "",
   codexViaEgress: /^(1|true|yes)$/i.test(process.env.KARDBOARD_CODEX_VIA_EGRESS ?? ""),
@@ -67,7 +71,7 @@ app.get("/healthz", async (c) => {
 });
 
 const startSchema = z.object({
-  sessionId: z.string(),
+  sessionId: z.string().regex(ID_PATTERN),
   boardSlug: z.string(),
   provider: z.enum(["claude", "codex"]),
   model: z.string().nullable().default(null),
@@ -179,6 +183,9 @@ app.post("/sessions", async (c) => {
 
   const image = req.image ?? env.defaultImage;
   await ensureImage(image);
+  void pruneSupersededImages(docker, image)
+    .then((n) => n && console.log(`[runner] pruned ${n} superseded image layer(s) of ${image}`))
+    .catch((err: Error) => console.warn(`[runner] could not prune old copies of ${image}`, err.message));
   const envList = [
     `KARDBOARD_SESSION_ID=${req.sessionId}`,
     `KARDBOARD_TOKEN=${req.token}`,
@@ -214,6 +221,7 @@ app.post("/sessions", async (c) => {
     }
   }
 
+  let created: Docker.Container | null = null;
   try {
     const container = await docker.createContainer({
       Image: image,
@@ -224,10 +232,13 @@ app.post("/sessions", async (c) => {
         "kardboard.session": req.sessionId,
         "kardboard.board": req.boardSlug,
       },
-      // The prompt is delivered on stdin so it never appears in `docker inspect` or process lists.
+      // The prompt is delivered on stdin so it stays out of `docker inspect`. The entrypoint then
+      // hands it to the provider CLI as an argument, so it does show in the container's process list.
       OpenStdin: true,
       StdinOnce: true,
       HostConfig: {
+        // The agent spawns shells, builds, and dev servers; an init as PID 1 reaps what they orphan.
+        Init: true,
         Memory: env.memoryBytes,
         NanoCpus: env.nanoCpus,
         PidsLimit: env.pidsLimit,
@@ -238,6 +249,7 @@ app.post("/sessions", async (c) => {
         ReadonlyRootfs: false,
       },
     });
+    created = container;
     const stdin = await container.attach({ stream: true, stdin: true, stdout: false, stderr: false, hijack: true });
     await container.start();
     stdin.write(req.prompt);
@@ -246,7 +258,9 @@ app.post("/sessions", async (c) => {
     console.log(`[runner] started ${name} (${image}) on ${network}`);
     return c.json({ containerId: container.id });
   } catch (err) {
-    // The network exists only for this container, so it goes when the container never arrives.
+    // A container that was created but never started would make the retry return it as if it were
+    // running, so it goes, and the network that exists only for it goes with it.
+    await created?.remove({ force: true }).catch(() => {});
     if (env.perSessionNetwork) await removeSessionNetwork(docker, req.sessionId).catch(() => {});
     throw err;
   }
@@ -256,12 +270,13 @@ app.delete("/sessions/:id", async (c) => {
   const id = c.req.param("id");
   const container = docker.getContainer(id);
   const info = await container.inspect().catch(() => null);
-  if (!info) return c.json({ ok: true, missing: true }, 404);
-  const sessionId = info.Config?.Labels?.["kardboard.session"];
+  // Only a Session container: the id names any container on the host, the stack's own included.
+  const sessionId = info?.Config?.Labels?.["kardboard.session"];
+  if (!info || !sessionId) return c.json({ ok: true, missing: true }, 404);
   await container.stop({ t: 10 }).catch(() => {});
   await container.remove({ force: true }).catch(() => {});
   // `watchContainer` also does this, but a runner that restarted mid-Session is no longer watching.
-  if (sessionId) await removeSessionNetwork(docker, sessionId).catch(() => {});
+  await removeSessionNetwork(docker, sessionId).catch(() => {});
   return c.json({ ok: true });
 });
 
@@ -278,7 +293,7 @@ app.get("/sessions", async (c) => {
 });
 
 const previewSchema = z.object({
-  previewId: z.string(),
+  previewId: z.string().regex(ID_PATTERN),
   boardSlug: z.string(),
   cardId: z.string(),
   host: z.string(),
@@ -291,11 +306,19 @@ const previewSchema = z.object({
 });
 
 const previewLimits = {
-  network: env.previewNetwork,
+  routerNetwork: env.previewNetwork,
   memoryBytes: env.previewMemoryBytes,
   nanoCpus: env.previewNanoCpus,
   pidsLimit: env.previewPidsLimit,
+  buildMemoryBytes: env.previewBuildMemoryBytes,
+  buildTimeoutMs: env.previewBuildTimeoutMinutes * 60_000,
 };
+
+// A Preview network is removed with its Preview, but a first build the runner died during leaves
+// one holding only the router. No build survives a runner restart, so they can all go now.
+void prunePreviewNetworks(docker)
+  .then((removed) => removed.length && console.log(`[runner] removed ${removed.length} orphaned preview network(s)`))
+  .catch((err) => console.error("[runner] preview network prune failed", err));
 
 async function reportPreview(previewId: string, body: { status: "running" | "failed"; containerId?: string; target?: string; error?: string }) {
   try {
@@ -324,6 +347,8 @@ app.post("/previews", async (c) => {
       await reportPreview(req.previewId, { status: "running", containerId, target });
     })
     .catch(async (err: Error) => {
+      // A newer build or the Preview's removal replaced this one, and reports for itself.
+      if (err instanceof PreviewCancelled) return console.log(`[runner] preview ${req.previewId} build stopped: ${err.message}`);
       const message = err instanceof PreviewError ? err.message : `preview failed: ${err.message}`;
       onLog(message);
       console.error(`[runner] preview ${req.previewId} failed`, message);
@@ -335,6 +360,8 @@ app.post("/previews", async (c) => {
 
 app.delete("/previews/:id", async (c) => {
   const id = c.req.param("id");
+  // The id becomes a file name below and a container, image, and network name inside.
+  if (!ID_PATTERN.test(id)) return c.json({ error: "invalid preview id" }, 400);
   const removed = await removePreview(docker, id);
   fs.rmSync(path.join(env.logDir, `preview-${id}.log`), { force: true });
   return c.json({ ok: true, removed });

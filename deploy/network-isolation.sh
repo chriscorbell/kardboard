@@ -6,9 +6,9 @@
 # internet; it does not accept that a Session reaches the rest of the house. Docker has no per-
 # network egress filter, so the rule lives in the host firewall.
 #
-# Session bridges are named cbn<hash> by the runner and the preview bridge is cbnprev in
-# deploy/compose.yaml, so a single `cbn+` interface match covers both kinds and needs no update
-# when a Session starts. Traffic between a container and the services on its own bridge leaves on
+# Session bridges are named cbn<hash> and Preview bridges cbnp<hash> by the runner, and the preview
+# router's bridge is cbnprev in deploy/compose.yaml, so a single `cbn+` interface match covers every
+# kind and needs no update when a Session or Preview starts. Traffic between a container and the services on its own bridge leaves on
 # a `cbn*` interface too and is exempt; Docker's own DOCKER-ISOLATION chains already keep one
 # bridge away from another.
 #
@@ -30,8 +30,9 @@ PRIVATE="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10"
 ipt() { iptables "$@"; }
 
 # Only new connections are dropped. The app and the egress proxy are joined to every Session
-# network, and Docker may route their replies out through it: a reply to cloudflared, on another
-# private bridge, must still get through or kardboard.cc goes dark while a Session runs.
+# network. The runner connects them below their default gateway priority, so their traffic should
+# never leave through a Session bridge, but if it ever did, a reply to cloudflared on another private
+# bridge must still get through or kardboard.cc goes dark while a Session runs.
 NEW="-m conntrack --ctstate NEW"
 
 # The host itself is reached over INPUT, not FORWARD, so DOCKER-USER never sees it. Every local

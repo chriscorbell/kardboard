@@ -5,8 +5,9 @@
 # Networks: `control` carries app <-> runner <-> egress traffic. `workload` is the list of services
 # a session container may reach — app (MCP) and egress, never the runner — but no session container
 # joins it: the runner gives each session a network of its own and connects those same services to
-# it, so two sessions cannot see each other. `preview` holds only preview containers and the router
-# that fronts them: branch-controlled code reaches the internet and nothing else on this stack.
+# it, so two sessions cannot see each other. `preview` is where the router that fronts previews
+# lives; the runner gives each preview a network of its own and connects the router to it, so
+# branch-controlled code reaches the internet and nothing else on this stack, other previews included.
 #
 # Session and preview bridges are named `cbn*` so one host firewall rule can keep both kinds of
 # container off the LAN; run `deploy/network-isolation.sh apply` on minicore, see

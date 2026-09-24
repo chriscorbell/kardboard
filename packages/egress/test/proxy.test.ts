@@ -3,7 +3,7 @@ import http from "node:http";
 import { after, before, describe, it } from "node:test";
 import { URL } from "node:url";
 import { UsageLimits } from "../src/limits.js";
-import { anthropicHeaders, createProxy, ipAllowed, passThroughHeaders, upstreamPath } from "../src/proxy.js";
+import { anthropicHeaders, callAllowed, createProxy, escapesRoute, ipAllowed, passThroughHeaders, upstreamPath } from "../src/proxy.js";
 
 type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string };
 
@@ -179,6 +179,79 @@ describe("a proxy with no Codex credential", () => {
     assert.equal(res.status, 502);
     assert.deepEqual(await res.json(), { error: "codex_credential_unavailable" });
     assert.equal(seen.length, 0);
+    await proxy.close();
+    await upstream.close();
+  });
+});
+
+/** A request sent exactly as written: `fetch` would resolve `..` and `%2e%2e` before sending. */
+function raw(base: string, method: string, path: string): Promise<{ status: number; body: string }> {
+  const url = new URL(base);
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: url.hostname, port: url.port, method, path }, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+describe("what a Session may ask a provider for", () => {
+  it("lets through the calls Claude Code makes to run a turn", () => {
+    assert.equal(callAllowed("claude", "POST", "/v1/messages?beta=true"), true);
+    assert.equal(callAllowed("claude", "POST", "/v1/messages/count_tokens?beta=true"), true);
+    assert.equal(callAllowed("claude", "GET", "/v1/models"), true);
+    assert.equal(callAllowed("claude", "GET", "/v1/models/claude-opus-4-1"), true);
+    assert.equal(callAllowed("claude", "HEAD", "/api/hello"), true);
+  });
+
+  it("lets through the calls Codex makes to run a turn", () => {
+    assert.equal(callAllowed("codex", "POST", "/responses"), true);
+    assert.equal(callAllowed("codex", "POST", "/responses/compact"), true);
+    assert.equal(callAllowed("codex", "GET", "/models?client_version=0.154.0"), true);
+  });
+
+  it("refuses the rest of what the Admin's credential could reach", () => {
+    assert.equal(callAllowed("claude", "GET", "/api/oauth/usage"), false);
+    assert.equal(callAllowed("claude", "POST", "/v1/files"), false);
+    assert.equal(callAllowed("claude", "GET", "/v1/messages"), false, "the right path with the wrong method");
+    assert.equal(callAllowed("codex", "GET", "/wham/usage"), false);
+    assert.equal(callAllowed("codex", "DELETE", "/responses"), false);
+  });
+
+  it("refuses a path that climbs out of the route, however it is spelled", () => {
+    for (const path of ["/../../conversations", "/%2e%2e/%2e%2e/me", "/responses/../../me", "/responses/%2E%2E", "/responses%2f..%2fme", "/responses/.", "/responses\\..\\me"]) {
+      assert.equal(escapesRoute(path), true, path);
+      assert.equal(callAllowed("codex", "POST", path), false, path);
+    }
+    assert.equal(callAllowed("claude", "GET", "/v1/models/.."), false);
+  });
+
+  it("answers 403 and sends nothing upstream for a call off the list", async () => {
+    const seen: Seen[] = [];
+    const upstream = await upstreamServer(seen);
+    const proxy = await proxyServer(
+      createProxy({
+        claudeToken: "t",
+        anthropicUpstream: upstream.url,
+        codexUpstream: upstream.url,
+        codex: { headers: async () => ({ authorization: "Bearer real", accountId: null }) },
+        allowedNetworks: [],
+      }),
+    );
+    for (const [method, path] of [
+      ["GET", "/openai/../../conversations"],
+      ["GET", "/openai/%2e%2e/%2e%2e/me"],
+      ["GET", "/anthropic/api/oauth/usage"],
+      ["POST", "/anthropic/v1/messages/../../api/oauth/profile"],
+    ] as const) {
+      const res = await raw(proxy.base, method, path);
+      assert.equal(res.status, 403, path);
+      assert.deepEqual(JSON.parse(res.body), { error: "call_not_allowed" });
+    }
+    assert.equal(seen.length, 0, "the credential never left the proxy");
     await proxy.close();
     await upstream.close();
   });

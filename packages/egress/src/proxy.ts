@@ -57,6 +57,45 @@ export function anthropicHeaders(incoming: http.IncomingHttpHeaders, upstream: U
   return headers;
 }
 
+/**
+ * The calls a Session may make on each route, by method and path after the route prefix. The token
+ * attached here is the Admin's own subscription, which also reads and changes the account behind it:
+ * ChatGPT conversations and profile, Anthropic organisation settings and usage. So only what Claude
+ * Code and Codex send to run a turn goes upstream. Observed on 2026-09-24 in Claude Code 2.1 with a
+ * custom base URL, which sends inference, token counts, model lookups, and a fire-and-forget
+ * `HEAD /api/hello`, and in codex-cli's `codex-api` crate, whose named provider sends `responses`,
+ * `models`, and `memories/trace_summarize` under its base URL. A refusal is logged with its path, so
+ * a new call after a CLI upgrade shows up in the egress log rather than as a mystery.
+ */
+export const ALLOWED_CALLS: Record<Provider, { method: string; path: RegExp }[]> = {
+  claude: [
+    { method: "POST", path: /^\/v1\/messages$/ },
+    { method: "POST", path: /^\/v1\/messages\/count_tokens$/ },
+    { method: "GET", path: /^\/v1\/models(\/[A-Za-z0-9._-]+)?$/ },
+    { method: "HEAD", path: /^\/api\/hello$/ },
+  ],
+  codex: [
+    { method: "POST", path: /^\/responses(\/compact)?$/ },
+    { method: "GET", path: /^\/models$/ },
+    { method: "POST", path: /^\/memories\/trace_summarize$/ },
+  ],
+};
+
+/**
+ * A dot segment, or a percent-encoded dot, slash, or backslash, anywhere in the path. The upstream
+ * or anything in front of it may normalise `/openai/%2e%2e/%2e%2e/me` into a path outside the route,
+ * so these are refused before the allowlist is consulted, not left to it.
+ */
+export function escapesRoute(path: string): boolean {
+  return /%2e|%2f|%5c|\\/i.test(path) || path.split("/").some((segment) => segment === "." || segment === "..");
+}
+
+export function callAllowed(provider: Provider, method: string | undefined, targetPath: string): boolean {
+  const path = targetPath.split("?")[0]!;
+  if (escapesRoute(path)) return false;
+  return ALLOWED_CALLS[provider].some((call) => call.method === method && call.path.test(path));
+}
+
 /** Join the upstream's own base path with the path left after the route prefix is removed. */
 export function upstreamPath(upstream: URL, targetPath: string): string {
   return `${upstream.pathname.replace(/\/$/, "")}${targetPath}`;
@@ -99,6 +138,13 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
     req.pipe(proxied);
   }
 
+  function refuse(req: http.IncomingMessage, res: http.ServerResponse, provider: Provider, targetPath: string) {
+    console.warn(`[egress] refused ${provider} ${req.method} ${JSON.stringify(targetPath.split("?")[0]!.slice(0, 200))}: not a call a Session needs`);
+    req.resume();
+    res.writeHead(403, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "call_not_allowed" }));
+  }
+
   return (req, res) => {
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -126,11 +172,15 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
     }
 
     if (req.url?.startsWith("/anthropic/")) {
-      forward(req, res, "claude", config.anthropicUpstream, req.url.slice("/anthropic".length), anthropicHeaders(req.headers, config.anthropicUpstream, config.claudeToken));
+      const targetPath = req.url.slice("/anthropic".length);
+      if (!callAllowed("claude", req.method, targetPath)) return refuse(req, res, "claude", targetPath);
+      forward(req, res, "claude", config.anthropicUpstream, targetPath, anthropicHeaders(req.headers, config.anthropicUpstream, config.claudeToken));
       return;
     }
 
     if (req.url?.startsWith("/openai/")) {
+      const targetPath = req.url.slice("/openai".length);
+      if (!callAllowed("codex", req.method, targetPath)) return refuse(req, res, "codex", targetPath);
       const codex = config.codex;
       if (!codex) {
         res.writeHead(503, { "content-type": "application/json" });
@@ -141,7 +191,6 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
       // Whatever the Session sent as its own identity is dropped; only this proxy's copy is used.
       const headers = passThroughHeaders(req.headers, ["authorization", "chatgpt-account-id"]);
       headers["host"] = config.codexUpstream.host;
-      const targetPath = req.url.slice("/openai".length);
       void codex
         .headers()
         .then(({ authorization, accountId }) => {

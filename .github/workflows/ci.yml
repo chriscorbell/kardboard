@@ -8,9 +8,14 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A newer push to a pull request makes the older run pointless. A run on main is publishing images,
+# and cancelling it halfway would leave some published and some not, so it finishes and the next waits.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:

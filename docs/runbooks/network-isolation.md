@@ -12,6 +12,16 @@ A Session container no longer joins `kardboard_workload`. The runner creates
 `DOCKER-ISOLATION-STAGE-*` chains keep one bridge away from another, so a Session can no longer
 reach a concurrent Session's ports, and the runner remains on `control` only.
 
+The peers are connected with `GwPriority: -1`. Docker gives a container on several networks the
+default gateway of the one with the highest priority and breaks ties by network name, and
+`kardboard-session-<id>` sorts before `kardboard_control`. At the default priority of 0 the app's
+default route, and with it the endpoint behind its published port, moved onto a test Session's
+bridge as soon as it was connected on 2026-09-24. At -1 a Session network is never a peer's gateway.
+`GwPriority` needs Docker API 1.48 (Engine 28); minicore runs 29.8. One gap is unverified: when
+Watchtower recreates the app or the egress proxy mid-Session it reconnects every network the old
+container had, with endpoint settings its own Docker client understands, and a client older than
+API 1.48 would drop the priority until that Session ends. The check under "Verifying it" shows it.
+
 `kardboard_workload` still exists and is still the definition of "a Session may reach this": the
 runner reads its membership at every start. Adding a service a Session should reach means putting
 it on `workload` in `deploy/compose.yaml`, nothing else.
@@ -25,6 +35,27 @@ If the runner cannot create the network or connect the peers it refuses to start
 `could not create the session network: …` rather than fall back to the shared network. A Session
 that quietly lands next to its neighbours is the thing this prevents.
 
+## One network per Preview
+
+Previews used to share `kardboard_preview`, so one Board's branch code could reach every other
+Board's Preview directly. The runner now creates `kardboard_preview_<previewId>` for each Preview,
+bridged as `cbnp<hash of the preview id>`, connects whatever sits on `kardboard_preview` — the
+preview router, and never an older Preview still attached there — at `GwPriority: -1`, and builds
+and runs the Preview on it. `kardboard_preview` is now only where the router lives and the list of
+what a Preview's network is peered with.
+
+The name uses underscores, unlike a Session network, so it sorts after `kardboard_control`: even a
+reconnect that lost the priority, such as Watchtower recreating the router after a merge, leaves the
+router's gateway and published port on `control`.
+
+The network is created before the build, so the build's `RUN` steps use it too. It is removed with
+the Preview, after a first build that failed, and at runner boot for any Preview whose container is
+gone. A failed rebuild keeps it, because the previous container is still serving there. A Preview
+started before this change stays on `kardboard_preview` until its next rebuild moves it.
+
+If the router is not on `kardboard_preview`, the build fails with
+`no preview router on kardboard_preview to reach the Preview`.
+
 ## Keeping both kinds of container off the LAN
 
 [ADR 0003](../adr/0003-unrestricted-agent-egress-in-v1.md) accepts that a Session reaches the public
@@ -34,9 +65,9 @@ firewall.
 
 Every bridge kardboard creates is named with the `cbn` prefix: the runner sets
 `com.docker.network.bridge.name` to `cbn<hash of the session id>` (eleven characters, inside the
-fifteen Linux allows for an interface), and `deploy/compose.yaml` names the preview bridge
-`cbnprev`. One `-i cbn+` match therefore covers every Session and every Preview and needs no update
-when a Session starts.
+fifteen Linux allows for an interface) or `cbnp<hash of the preview id>`, and `deploy/compose.yaml`
+names the router's preview bridge `cbnprev`. One `-i cbn+` match therefore covers every Session,
+every Preview, and every Preview build, and needs no update when either starts.
 
 On minicore the script is installed as `/usr/local/sbin/kardboard-network-isolation`, and
 [`deploy/kardboard-lan-isolation.service`](../../deploy/kardboard-lan-isolation.service) runs it
@@ -64,10 +95,11 @@ one `INPUT` drop for new connections from a `cbn*` bridge to any of the host's o
 covers sshd and every published port behind each bridge gateway.
 
 Only new connections are dropped, because replies must pass. While a Session runs, the app and the
-egress proxy are also on its bridge, and Docker can route their outbound traffic through it. On
-2026-09-24 the app's default route moved to a test Session bridge as soon as it was connected. If
-the rule dropped every packet, the app's replies to cloudflared, on another private bridge, would
-be dropped, and kardboard.cc would go dark whenever a Session ran.
+egress proxy are also on its bridge. The gateway priority above keeps their outbound traffic off it,
+but before that change the app's default route moved to a test Session bridge on 2026-09-24, and a
+rule that dropped every packet would then have dropped the app's replies to cloudflared, on another
+private bridge, and taken kardboard.cc dark whenever a Session ran. Matching only new connections
+keeps that failure impossible even if a peer is ever connected without the priority again.
 
 Applying it needs the preview network recreated once, because a bridge name cannot be changed in
 place: `docker compose down && docker compose up -d`. Session networks are created fresh by the
@@ -94,11 +126,24 @@ getent hosts kardboard-session-<other id>
 ```
 
 `docker network inspect kardboard-session-<id>` should list exactly three containers: the Session,
-the app, and the egress proxy.
+the app, and the egress proxy. While it runs, the app's default route must still leave through
+`control`:
+
+```bash
+docker exec kardboard-app-1 ip route show default   # the gateway is on kardboard_control's subnet
+docker inspect kardboard-app-1 --format '{{range $n, $e := .NetworkSettings.Networks}}{{$n}} {{$e.GwPriority}}{{println}}{{end}}'
+```
+
+The second command should show `-1` against every `kardboard-session-*` network. A Session network
+created by a runner from before 2026-09-24 connected its peers at 0 and keeps doing so until that
+Session ends. The same check against `kardboard-preview-router-1` should show `-1` against every
+`kardboard_preview_*` network, and `docker network inspect kardboard_preview_<id>` should list the
+Preview and the router and nothing else.
 
 Last verified on minicore on 2026-09-24: the rules and the systemd unit were installed, the stack
 was recreated so the preview bridge is `cbnprev`, and a throwaway container on a `cbn` bridge
 resolved DNS and reached the internet and `app` by name, but not 10.0.0.1, the host's LAN address,
 a published port on its own bridge gateway, or the tailnet resolver. kardboard.cc answered
 throughout while the app was joined to that test bridge. A real Session then ran on its own `kardboard-session-<id>` network, and the public
-preview host still answered through the router.
+preview host still answered through the router. The gateway priority and the per-Preview networks
+came after that check and have not yet run on minicore.

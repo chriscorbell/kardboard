@@ -2,9 +2,16 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type Docker from "dockerode";
 import {
+  createPreviewNetwork,
   createSessionNetwork,
+  PEER_GW_PRIORITY,
   peerAliases,
+  previewBridgeName,
+  previewNetworkName,
+  previewNetworkSpec,
+  prunePreviewNetworks,
   pruneSessionNetworks,
+  removePreviewNetwork,
   removeSessionNetwork,
   sessionBridgeName,
   sessionNetworkName,
@@ -54,8 +61,8 @@ function fakeDocker(containers: FakeContainer[], networks: FakeNetwork[]) {
         if (!net) throw new Error(`no such network ${name}`);
         return { Name: net.Name, Labels: net.Labels ?? {}, Containers: Object.fromEntries(net.containers.map((id) => [id, { Name: id }])) };
       },
-      connect: async (opts: { Container: string; EndpointConfig?: { Aliases?: string[] } }) => {
-        calls.push(`connect ${name} ${opts.Container} [${(opts.EndpointConfig?.Aliases ?? []).join(",")}]`);
+      connect: async (opts: { Container: string; EndpointConfig?: { Aliases?: string[]; GwPriority?: number } }) => {
+        calls.push(`connect ${name} ${opts.Container} [${(opts.EndpointConfig?.Aliases ?? []).join(",")}] gw=${opts.EndpointConfig?.GwPriority ?? 0}`);
         byName(name)?.containers.push(opts.Container);
       },
       disconnect: async (opts: { Container: string }) => {
@@ -74,8 +81,9 @@ function fakeDocker(containers: FakeContainer[], networks: FakeNetwork[]) {
       calls.push(`create ${spec.Name} bridge=${spec.Options?.["com.docker.network.bridge.name"]}`);
       networks.push({ Name: spec.Name!, Labels: spec.Labels as Record<string, string>, containers: [] });
     },
-    listNetworks: async () => networks.filter((n) => n.Labels?.["kardboard.session"]),
-    listContainers: async () => containers.filter((c) => c.running && c.labels?.["kardboard.session"]).map((c) => ({ Labels: c.labels })),
+    listNetworks: async (opts: { filters: { label: string[] } }) => networks.filter((n) => n.Labels?.[opts.filters.label[0]!]),
+    listContainers: async (opts: { all?: boolean; filters: { label: string[] } }) =>
+      containers.filter((c) => (opts.all || c.running) && c.labels?.[opts.filters.label[0]!]).map((c) => ({ Labels: c.labels })),
   };
   return docker as unknown as Docker & { calls: string[]; networks: FakeNetwork[] };
 }
@@ -138,9 +146,18 @@ describe("creating a Session's network", () => {
     assert.equal(name, "kardboard-session-s1");
     assert.deepEqual(docker.calls, [
       `create kardboard-session-s1 bridge=${sessionBridgeName("s1")}`,
-      `connect kardboard-session-s1 ${"a".repeat(64)} [app]`,
-      `connect kardboard-session-s1 ${"e".repeat(64)} [egress]`,
+      `connect kardboard-session-s1 ${"a".repeat(64)} [app] gw=-1`,
+      `connect kardboard-session-s1 ${"e".repeat(64)} [egress] gw=-1`,
     ]);
+  });
+
+  it("never becomes a peer's default gateway, which would carry the app's own traffic and published port", async () => {
+    const docker = fakeDocker(stack(), [{ Name: WORKLOAD, containers: stack().map((c) => c.Id) }]);
+    await createSessionNetwork(docker, "s1", "kardboard", WORKLOAD);
+    const connects = docker.calls.filter((c) => c.startsWith("connect "));
+    assert.equal(connects.length, 2);
+    assert.ok(connects.every((c) => c.endsWith(` gw=${PEER_GW_PRIORITY}`)), connects.join("\n"));
+    assert.ok(PEER_GW_PRIORITY < 0, "below the default of 0 that every compose network gets");
   });
 
   it("reuses the network on a retried start instead of failing on the duplicate", async () => {
@@ -184,5 +201,58 @@ describe("removing a Session's network", () => {
     ]);
     assert.deepEqual(await pruneSessionNetworks(docker), ["gone"]);
     assert.deepEqual(docker.networks.map((n) => n.Name), [WORKLOAD, "kardboard-session-live"]);
+  });
+});
+
+const ROUTER_NET = "kardboard_preview";
+const router = (): FakeContainer => ({ Id: "r".repeat(64), Name: "kardboard-preview-router-1", labels: { "com.docker.compose.service": "preview-router" } });
+
+describe("a Preview's own network", () => {
+  it("is bridged under the firewall's prefix, apart from every Session bridge", () => {
+    const bridge = previewBridgeName("pv1");
+    assert.ok(bridge.length <= 15, bridge);
+    assert.match(bridge, /^cbnp[0-9a-f]{8}$/);
+    assert.notEqual(bridge, sessionBridgeName("pv1"));
+    assert.equal(previewNetworkSpec("pv1", "kardboard").Options?.["com.docker.network.bridge.name"], bridge);
+    assert.equal(previewNetworkSpec("pv1", "kardboard").Labels?.["kardboard.preview"], "pv1");
+  });
+
+  it("sorts after control, so the router keeps its gateway even if it loses the priority", () => {
+    assert.ok(previewNetworkName("pv1") > "kardboard_control", previewNetworkName("pv1"));
+  });
+
+  it("connects the router and not the Previews still on the shared network", async () => {
+    const legacy = { Id: "p".repeat(64), Name: "kardboard-preview-old", labels: { "kardboard.preview": "old" } };
+    const docker = fakeDocker([router(), legacy], [{ Name: ROUTER_NET, containers: ["r".repeat(64), "p".repeat(64)] }]);
+    assert.equal(await createPreviewNetwork(docker, "pv1", "kardboard", ROUTER_NET), "kardboard_preview_pv1");
+    assert.deepEqual(docker.calls, [
+      `create kardboard_preview_pv1 bridge=${previewBridgeName("pv1")}`,
+      `connect kardboard_preview_pv1 ${"r".repeat(64)} [preview-router] gw=${PEER_GW_PRIORITY}`,
+    ]);
+  });
+
+  it("refuses when there is no router to reach the Preview", async () => {
+    const docker = fakeDocker([], [{ Name: ROUTER_NET, containers: [] }]);
+    await assert.rejects(() => createPreviewNetwork(docker, "pv1", "kardboard", ROUTER_NET), /no preview router on kardboard_preview/);
+  });
+
+  it("disconnects the router before removing the bridge", async () => {
+    const docker = fakeDocker([router()], [{ Name: "kardboard_preview_pv1", Labels: { "kardboard.preview": "pv1" }, containers: ["r".repeat(64)] }]);
+    assert.equal(await removePreviewNetwork(docker, "pv1"), true);
+    assert.deepEqual(docker.calls, [`disconnect kardboard_preview_pv1 ${"r".repeat(64)}`, "remove kardboard_preview_pv1"]);
+  });
+
+  it("sweeps the networks of Previews whose container is gone, and keeps a stopped one's", async () => {
+    const stopped = { Id: "s".repeat(64), Name: "kardboard-preview-stopped", labels: { "kardboard.preview": "stopped" }, running: false };
+    const docker = fakeDocker(
+      [router(), stopped],
+      [
+        { Name: ROUTER_NET, containers: ["r".repeat(64)] },
+        { Name: "kardboard_preview_stopped", Labels: { "kardboard.preview": "stopped" }, containers: ["s".repeat(64), "r".repeat(64)] },
+        { Name: "kardboard_preview_gone", Labels: { "kardboard.preview": "gone" }, containers: ["r".repeat(64)] },
+      ],
+    );
+    assert.deepEqual(await prunePreviewNetworks(docker), ["gone"]);
+    assert.deepEqual(docker.networks.map((n) => n.Name), [ROUTER_NET, "kardboard_preview_stopped"]);
   });
 });

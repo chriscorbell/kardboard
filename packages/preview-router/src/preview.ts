@@ -22,12 +22,15 @@ export interface PreviewCookie {
 
 export const COOKIE_NAME = "kardboard_preview";
 
-export function readCookie(header: string | undefined, name = COOKIE_NAME): string | undefined {
+// Every value sent under that name, not just the first. Code on one Preview can set a cookie of the
+// same name for the whole parent domain, from a response or from JavaScript, and the browser then
+// sends it to every other Preview beside, or ahead of, the real one. A caller tries each in turn.
+export function readCookies(header: string | undefined, name = COOKIE_NAME): string[] {
   return (header ?? "")
     .split(";")
     .map((s) => s.trim())
-    .find((s) => s.startsWith(`${name}=`))
-    ?.slice(name.length + 1);
+    .filter((s) => s.startsWith(`${name}=`))
+    .map((s) => s.slice(name.length + 1));
 }
 
 export function verifyCookie(value: string | undefined, host: string, route: Route, secret: string, nowMs = Date.now()): boolean {
@@ -56,9 +59,32 @@ export function forwardHeaders(headers: Headers, targetHost: string): Headers {
   return out;
 }
 
-// `next` comes back from the app's redirect, so it is only ever a path on this host.
-export function safeNext(next: string | null): string {
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+// A Preview may set cookies for its own host, but not for the parent domain, where every other
+// Preview would receive them, and never one carrying the router's own cookie name.
+export function responseHeaders(headers: Headers): Headers {
+  const out: Headers = { ...headers };
+  const cookies = headers["set-cookie"];
+  if (!cookies) return out;
+  const kept = (Array.isArray(cookies) ? cookies : [cookies])
+    .filter((cookie) => !cookie.split(";")[0]!.includes(COOKIE_NAME))
+    .map((cookie) => cookie.split(";").filter((part, i) => i === 0 || !/^\s*domain\s*=/i.test(part)).join(";"));
+  if (kept.length > 0) out["set-cookie"] = kept;
+  else delete out["set-cookie"];
+  return out;
+}
+
+// `next` comes back from the app's redirect, so it is only ever a path on this host. Browsers read
+// `\` as `/` and drop tabs and newlines inside a URL, which turns `/\evil.com` and `/<TAB>/evil.com`
+// into `//evil.com`, and a line break would also split the Location header. So only printable
+// ASCII without a backslash is accepted, and it must still resolve to this Preview's own origin.
+export function safeNext(next: string | null, host: string): string {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || !/^[\x21-\x7e]*$/.test(next) || next.includes("\\")) return "/";
+  const origin = `https://${host}`;
+  try {
+    return new URL(next, origin).origin === origin ? next : "/";
+  } catch {
+    return "/";
+  }
 }
 
 export function signInRedirect(publicAppUrl: string, host: string, url: string): string {
