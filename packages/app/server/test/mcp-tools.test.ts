@@ -20,7 +20,7 @@ const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { mcp } = await import("../src/routes/mcp.js");
 const { runner } = await import("../src/services/runner-client.js");
 const { MAX_CHILDREN } = await import("../src/services/children.js");
-const { attachmentContent, looksLikeText } = await import("../src/services/attachment-content.js");
+const { attachmentContent, INLINE_IMAGE_LIMIT, looksLikeText, sniffImage } = await import("../src/services/attachment-content.js");
 
 await runMigrations();
 
@@ -394,6 +394,45 @@ describe("read_attachment", () => {
     const { client } = await sessionOn(CARD);
     const result = await call(client, "read_attachment", { attachment_id: "att-png" });
     assert.equal((result.content as { type: string }[])[0]!.type, "image");
+  });
+
+  it("sends an image under the type its bytes say, not the one it was uploaded as", async () => {
+    await upload("att-jpeg", "photo.png", "image/png", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]));
+    const { client } = await sessionOn(CARD);
+    const [content] = (await call(client, "read_attachment", { attachment_id: "att-jpeg" })).content as { type: string; mimeType?: string }[];
+    assert.deepEqual([content!.type, content!.mimeType], ["image", "image/jpeg"]);
+  });
+});
+
+describe("which attachments go to the model as images", () => {
+  const png = (bytes: number) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(bytes - 8)]);
+
+  it("knows the four vision formats by their first bytes", () => {
+    assert.equal(sniffImage(png(16)), "image/png");
+    assert.equal(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xdb])), "image/jpeg");
+    assert.equal(sniffImage(Buffer.from("GIF89a\x01\x00", "latin1")), "image/gif");
+    assert.equal(sniffImage(Buffer.from("RIFF\x24\x00\x00\x00WEBPVP8 ", "latin1")), "image/webp");
+    assert.equal(sniffImage(Buffer.from("RIFF\x24\x00\x00\x00WAVEfmt ", "latin1")), null, "a RIFF file is not always a WebP");
+    assert.equal(sniffImage(Buffer.from([0x89, 0x50])), null);
+  });
+
+  it("finds a PNG uploaded under a generic type", () => {
+    const content = attachmentContent({ filename: "shot", mime: "application/octet-stream" }, png(16));
+    assert.equal(content.type === "image" && content.mimeType, "image/png");
+  });
+
+  it("describes an image too large for the model rather than sending it", () => {
+    // The model's limit is 5 MB of base64, which is three quarters of that in file size.
+    const largest = (INLINE_IMAGE_LIMIT / 4) * 3;
+    assert.equal(attachmentContent({ filename: "ok.png", mime: "image/png" }, png(largest)).type, "image");
+    const content = attachmentContent({ filename: "full-page.png", mime: "image/png" }, png(largest + 1));
+    assert.equal(content.type, "text");
+    assert.match((content as { text: string }).text, /^full-page\.png: image\/png, 3\.8 MB\. Too large to show/);
+  });
+
+  it("does not send bytes that only claim to be an image", () => {
+    const content = attachmentContent({ filename: "shot.png", mime: "image/png" }, Buffer.from([0x00, 0x01, 0x02, 0x03, 0xfe, 0xff]));
+    assert.deepEqual(content, { type: "text", text: "shot.png: uploaded as image/png, 6 bytes, but its contents are not a PNG, JPEG, GIF, or WebP image. Not shown." });
   });
 });
 

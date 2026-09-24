@@ -125,7 +125,7 @@ function buildServer(session: SessionRow): McpServer {
 
   server.registerTool(
     "read_attachment",
-    { description: "Fetch an attachment by id. PNG, JPEG, GIF, and WebP images come back as images and text files as text; any other file, such as a PDF, comes back as a one-line note of its name, type, and size.", inputSchema: { attachment_id: z.string() } },
+    { description: "Fetch an attachment by id. PNG, JPEG, GIF, and WebP images up to 3.75 MB come back as images and text files as text; any other file, such as a PDF or a larger image, comes back as a one-line note of its name, type, and size.", inputSchema: { attachment_id: z.string() } },
     async ({ attachment_id }) => {
       const att = await getAttachment(attachment_id);
       if (!att) throw new Error("attachment not found");
