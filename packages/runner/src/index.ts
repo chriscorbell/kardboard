@@ -87,6 +87,9 @@ const startSchema = z.object({
   wallClockMinutes: z.number(),
   prompt: z.string(),
   githubToken: z.string().nullable().default(null),
+  // Absent from an app older than this runner, and ignored if unreadable: the Session then runs to
+  // its wall clock as before, rather than failing to start over a timestamp.
+  githubTokenExpiresAt: z.string().nullable().default(null),
   gitName: z.string().default("kardboard"),
   gitEmail: z.string().default("kardboard@users.noreply.github.com"),
 });
@@ -188,6 +191,10 @@ app.post("/sessions", async (c) => {
 
   const image = req.image ?? env.defaultImage;
   await ensureImage(image);
+  // The token was minted before the pull above, and the wall clock starts only once the container
+  // runs, so the entrypoint also stops the agent before the token expires. In Unix seconds, which the
+  // entrypoint compares with `date +%s` in shell arithmetic alone.
+  const tokenExpiry = req.githubToken && req.githubTokenExpiresAt ? Math.floor(Date.parse(req.githubTokenExpiresAt) / 1000) : null;
   void pruneSupersededImages(docker, image)
     .then((n) => n && console.log(`[runner] pruned ${n} superseded image layer(s) of ${image}`))
     .catch((err: Error) => console.warn(`[runner] could not prune old copies of ${image}`, err.message));
@@ -204,6 +211,7 @@ app.post("/sessions", async (c) => {
     `KARDBOARD_GIT_NAME=${req.gitName}`,
     `KARDBOARD_GIT_EMAIL=${req.gitEmail}`,
     ...(req.githubToken ? [`GITHUB_TOKEN=${req.githubToken}`, `GH_TOKEN=${req.githubToken}`] : []),
+    ...(tokenExpiry !== null && Number.isFinite(tokenExpiry) ? [`GITHUB_TOKEN_EXPIRES_AT=${tokenExpiry}`] : []),
     // Claude Code talks to the provider through the egress proxy, which holds the real credential.
     `ANTHROPIC_BASE_URL=${env.egressUrl}/anthropic`,
     `ANTHROPIC_API_KEY=kardboard-egress`,

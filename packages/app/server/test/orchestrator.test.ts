@@ -7,6 +7,8 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, beforeEach, describe, it } from "node:test";
 import { and, eq, inArray } from "drizzle-orm";
+import type { StartSessionRequest } from "../src/services/runner-client.js";
+import { githubAppEnv, installFakeGitHub } from "./fake-github.js";
 
 // The database module opens its file at import time, so point it at a scratch directory first.
 // The coalesce delay is pushed out of the way so no Trigger dispatches on its own; each test starts
@@ -18,6 +20,9 @@ process.env.KARDBOARD_BACKOFF_BASE_MS = "10";
 // Any runner URL puts the client in http mode; every call it would make is replaced below.
 process.env.KARDBOARD_RUNNER_URL = "http://runner.invalid";
 process.env.KARDBOARD_RUNNER_TOKEN = "test-runner-token";
+// A Session on a Board with a repository gets a token from the Sessions app, minted by a fake GitHub.
+githubAppEnv(["SESSIONS"]);
+const github = installFakeGitHub("acme/widgets");
 
 // A stand-in egress proxy that is slow to say nothing is out of usage. A dispatch that checks the
 // Card and the caps before this answer and writes after it leaves a window another dispatch can use.
@@ -38,6 +43,7 @@ const { getCard } = await import("../src/services/cards.js");
 
 await runMigrations();
 after(() => {
+  github.restore();
   egress.closeAllConnections();
   egress.close();
   fs.rmSync(root, { recursive: true, force: true });
@@ -126,6 +132,26 @@ async function running(cardId: string): Promise<string> {
   });
   return id;
 }
+
+describe("the GitHub token a Session starts with", () => {
+  it("travels with the moment it expires, so the container can stop before it does", async () => {
+    await db.update(schema.boards).set({ repoUrl: "https://github.com/acme/widgets" }).where(eq(schema.boards.id, BOARD));
+    const requests: StartSessionRequest[] = [];
+    const original = runner.start;
+    runner.start = async (req) => {
+      requests.push(req);
+      return original(req);
+    };
+    try {
+      await running(await makeCard());
+      assert.equal(requests[0]!.githubToken, "ghs_test");
+      const left = Date.parse(requests[0]!.githubTokenExpiresAt ?? "") - Date.now();
+      assert.ok(left > 55 * 60_000 && left <= 60 * 60_000, `the fake GitHub's hour, not ${left} ms`);
+    } finally {
+      runner.start = original;
+    }
+  });
+});
 
 describe("taking a claim", () => {
   it("starts one Session when two dispatches of the same Card overlap", async () => {

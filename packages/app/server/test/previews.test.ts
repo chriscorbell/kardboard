@@ -15,9 +15,7 @@ process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_PUBLIC_URL = "https://kardboard.cc";
 process.env.KARDBOARD_PREVIEW_SECRET = "test-preview-secret";
 process.env.KARDBOARD_RUNNER_URL = "http://runner.test";
-githubAppEnv();
-process.env.GITHUB_SESSIONS_APP_ID = process.env.GITHUB_MERGE_APP_ID;
-process.env.GITHUB_SESSIONS_APP_PRIVATE_KEY_B64 = process.env.GITHUB_MERGE_APP_PRIVATE_KEY_B64;
+githubAppEnv(["SESSIONS"]);
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const {

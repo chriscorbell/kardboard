@@ -4,13 +4,15 @@ import { generateKeyPairSync } from "node:crypto";
 // installation lookup, the token mint, pull request reads, the merge, the branch delete, and the
 // check runs and commit statuses on a commit. Every other host goes to the real `fetch`.
 //
-// `githubAppEnv` must run before the app's modules are imported, since the merge App is read from
-// the environment at import time. The App's key is real because the app signs its JWT with it.
+// `githubAppEnv` must run before the app's modules are imported, since the Apps are read from the
+// environment at import time. The App's key is real because the app signs its JWT with it.
 
-export function githubAppEnv(): void {
+export function githubAppEnv(apps: ("MERGE" | "SESSIONS")[] = ["MERGE"]): void {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-  process.env.GITHUB_MERGE_APP_ID = "1";
-  process.env.GITHUB_MERGE_APP_PRIVATE_KEY_B64 = Buffer.from(privateKey).toString("base64");
+  for (const app of apps) {
+    process.env[`GITHUB_${app}_APP_ID`] = "1";
+    process.env[`GITHUB_${app}_APP_PRIVATE_KEY_B64`] = Buffer.from(privateKey).toString("base64");
+  }
 }
 
 export interface FakePull {

@@ -339,8 +339,9 @@ async function dispatch(cardId: string): Promise<void> {
     const prompt = await buildSessionPrompt({ board, card, sessionId, triggers: pending });
     const repo = parseRepoUrl(board.repoUrl);
     let githubToken: string | null = null;
+    let githubTokenExpiresAt: string | null = null;
     if (repo && githubConfigured("sessions")) {
-      githubToken = (await mintInstallationToken("sessions", repo.owner, repo.repo)).token;
+      ({ token: githubToken, expiresAt: githubTokenExpiresAt } = await mintInstallationToken("sessions", repo.owner, repo.repo));
     } else if (repo) {
       console.warn(`[orchestrator] GitHub sessions app not configured; session ${sessionId} clones ${board.repoUrl} anonymously`);
     }
@@ -361,6 +362,7 @@ async function dispatch(cardId: string): Promise<void> {
       wallClockMinutes: settings.sessionWallClockMinutes,
       prompt,
       githubToken,
+      githubTokenExpiresAt,
       gitName: bot.name,
       gitEmail: bot.email,
     };
