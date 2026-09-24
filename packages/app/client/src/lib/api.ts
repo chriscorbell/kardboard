@@ -1,5 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AdminSessionSummary,
+  AdminSessionsPage,
   BackupsView,
   Board,
   BoardView,
@@ -10,11 +12,13 @@ import type {
   Me,
   MoveCardInput,
   NotificationsView,
+  ProvidersView,
   SessionSummary,
   SessionTranscript,
   Settings,
   UpdateCardInput,
   UpdateMeInput,
+  UsageTotalsView,
   User,
 } from "@kardboard/shared";
 import { useRef } from "react";
@@ -104,6 +108,8 @@ export const keys = {
   adminBoards: ["admin", "boards"] as const,
   adminSettings: ["admin", "settings"] as const,
   adminSessions: ["admin", "sessions"] as const,
+  adminUsage: ["admin", "usage"] as const,
+  adminLimits: ["admin", "limits"] as const,
   adminBackups: ["admin", "backups"] as const,
 };
 
@@ -351,8 +357,31 @@ export function useAdminBoards() {
 export function useAdminSettings() {
   return useQuery({ queryKey: keys.adminSettings, queryFn: () => request<Settings>("/admin/settings") });
 }
-export function useAdminSessions() {
-  return useQuery({ queryKey: keys.adminSessions, queryFn: () => request<(SessionSummary & { boardId: string })[]>("/admin/sessions"), refetchInterval: 10_000 });
+// Newest first, a page at a time, narrowed by `filters` (board, status, kind; empty means any). Every
+// loaded page is refreshed on the interval, so a running Session's status keeps up.
+export function useAdminSessionPages(filters: Record<string, string>) {
+  return useInfiniteQuery({
+    queryKey: [...keys.adminSessions, "list", filters],
+    queryFn: ({ pageParam }) => {
+      const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== ""));
+      if (pageParam) query.set("before", pageParam);
+      const text = query.toString();
+      return request<AdminSessionsPage>(`/admin/sessions${text ? `?${text}` : ""}`);
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    refetchInterval: 10_000,
+  });
+}
+// A single Session, for a link to one that is not on a loaded page.
+export function useAdminSession(id: string | null) {
+  return useQuery({ queryKey: [...keys.adminSessions, "one", id], queryFn: () => request<AdminSessionSummary>(`/admin/sessions/${id}`), enabled: Boolean(id), refetchInterval: 10_000 });
+}
+export function useAdminUsage() {
+  return useQuery({ queryKey: keys.adminUsage, queryFn: () => request<UsageTotalsView>("/admin/usage"), refetchInterval: 60_000 });
+}
+export function useAdminLimits() {
+  return useQuery({ queryKey: keys.adminLimits, queryFn: () => request<ProvidersView>("/admin/limits"), refetchInterval: 60_000 });
 }
 // Transcripts are tailed by byte offset rather than cached by react-query: each call returns only
 // what the session has written since `offset`, and the caller keeps the running list.

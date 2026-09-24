@@ -21,6 +21,7 @@ import {
   type BoardView,
   type CardDetail,
   type Me,
+  type ProvidersView,
   type SessionTranscript,
   type User,
 } from "@kardboard/shared";
@@ -35,7 +36,10 @@ import { getAgentProfile, getSettings, updateSettings } from "../services/settin
 import { getPreferences, getUser, inviteUser, listUsers, setUserStatus, updatePreferences } from "../services/users.js";
 import { sendInvitation } from "../services/email.js";
 import { subscribe } from "../services/realtime.js";
-import { boardPauseChanged, cancelSession, getSession, listAllSessions, listBoardSessions } from "../services/orchestrator.js";
+import { boardPauseChanged, cancelSession, getSession, listBoardSessions } from "../services/orchestrator.js";
+import { getAdminSession, listAdminSessions, sessionFilters } from "../services/admin-sessions.js";
+import { usageTotals } from "../services/usage.js";
+import { readEgressStatus } from "../services/provider-limits.js";
 import { runner } from "../services/runner-client.js";
 import { parseTranscript } from "../services/transcript.js";
 import { ApprovalError, approveCard, listApprovals, retryMerge } from "../services/approvals.js";
@@ -458,7 +462,29 @@ admin.post("/backups", async (c) => {
   return c.json({ ...backupsView(), snapshot }, 201);
 });
 
-admin.get("/sessions", async (c) => c.json(await listAllSessions()));
+// What the egress proxy last saw of each Provider, read live: usage windows, a rejected credential,
+// and the calls it refused. The app reads the same thing to decide a fallback and to alert.
+admin.get("/limits", async (c) => {
+  const { egress, checkedAt, providers, refusals } = await readEgressStatus();
+  const view: ProvidersView = { egress, checkedAt, providers, refusals };
+  return c.json(view);
+});
+
+// Filters: `board` (id), `status` (a status or `active`), `kind`; `before` is the previous page's
+// `nextCursor`.
+admin.get("/sessions", async (c) => c.json(await listAdminSessions(sessionFilters(c.req.query()))));
+
+// Token and cost totals per Board over the last `days` (30 unless given, at most a year).
+admin.get("/usage", async (c) => {
+  const days = Math.min(365, Math.max(1, Math.floor(Number(c.req.query("days") ?? "30")) || 30));
+  return c.json(await usageTotals(days));
+});
+
+// One Session, for a link straight to it that may be older than the first page.
+admin.get("/sessions/:id", async (c) => {
+  const session = await getAdminSession(c.req.param("id"));
+  return session ? c.json(session) : c.json({ error: "not_found" }, 404);
+});
 
 // The transcript is the Session's container log, tailed by byte offset: pass back `nextOffset` to
 // get only what has been written since. The runner holds the bytes; the app parses them.

@@ -11,9 +11,30 @@ process.env.KARDBOARD_DATA_DIR = path.join(root, "data");
 // Zero would have the prune step remove the snapshot it had just written.
 process.env.KARDBOARD_BACKUP_KEEP = "0";
 
-const { backupsView, lastScheduledTime, listSnapshots, pruneSnapshots, runDueBackup, snapshotFilename, takeSnapshot, verifySnapshot } = await import("../src/services/backup.js");
-const { atLeastOne } = await import("../src/env.js");
+process.env.RESEND_API_KEY = "";
 
+const {
+  backupsView,
+  COPY_TARGET_MARKER,
+  copyOffDisk,
+  copySnapshotOffDisk,
+  lastScheduledTime,
+  listSnapshots,
+  mirrorUploads,
+  pruneSnapshots,
+  restoreBackupState,
+  runDueBackup,
+  snapshotBeforeMigrations,
+  snapshotFilename,
+  takeSnapshot,
+  verifySnapshot,
+} = await import("../src/services/backup.js");
+const { atLeastOne } = await import("../src/env.js");
+const { db, schema, runMigrations } = await import("../src/db/index.js");
+
+// The app's own database, for what the service keeps between restarts and the alerts it sends. The
+// snapshots themselves are taken of throwaway databases below.
+await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 let n = 0;
@@ -41,6 +62,10 @@ describe("snapshot names", () => {
   it("stamps the file with whole UTC seconds", () => {
     assert.equal(snapshotFilename(new Date("2026-09-14T04:00:07.412Z")), "kardboard-20260914T040007Z.db");
     assert.equal(snapshotFilename(new Date("2026-09-14T04:00:07.412Z"), 2), "kardboard-20260914T040007Z-2.db");
+  });
+
+  it("marks a snapshot taken before migrations in its name", () => {
+    assert.equal(snapshotFilename(new Date("2026-09-14T04:00:07.412Z"), 0, "pre_migrate"), "kardboard-pre-migrate-20260914T040007Z.db");
   });
 });
 
@@ -228,5 +253,218 @@ describe("pruneSnapshots", () => {
     const removed = pruneSnapshots(1, dir, now);
     assert.deepEqual(removed, ["kardboard-20260913T040000Z.db", "kardboard-20260914T040000Z-1.db.partial"]);
     assert.deepEqual(fs.readdirSync(dir).sort(), ["kardboard-20260914T035900Z.db.partial", "kardboard-20260914T040000Z.db", "notes.txt"]);
+  });
+
+  it("keeps each kind to the count on its own, so deploys cannot push the daily snapshots out", () => {
+    const dir = fs.mkdtempSync(path.join(root, "prune-kinds-"));
+    for (const name of [
+      "kardboard-20260911T040000Z.db",
+      "kardboard-20260912T040000Z.db",
+      "kardboard-pre-migrate-20260912T120000Z.db",
+      "kardboard-pre-migrate-20260913T120000Z.db",
+      "kardboard-pre-migrate-20260913T180000Z.db",
+    ]) {
+      fs.writeFileSync(path.join(dir, name), "x");
+    }
+    assert.deepEqual(
+      listSnapshots(dir).map((s) => [s.name, s.kind]),
+      [
+        ["kardboard-pre-migrate-20260913T180000Z.db", "pre_migrate"],
+        ["kardboard-pre-migrate-20260913T120000Z.db", "pre_migrate"],
+        ["kardboard-pre-migrate-20260912T120000Z.db", "pre_migrate"],
+        ["kardboard-20260912T040000Z.db", "regular"],
+        ["kardboard-20260911T040000Z.db", "regular"],
+      ],
+    );
+    assert.deepEqual(pruneSnapshots(2, dir).sort(), ["kardboard-pre-migrate-20260912T120000Z.db"]);
+  });
+});
+
+describe("the snapshot before migrations", () => {
+  // A migrations folder whose journal has one entry the database has and one it does not.
+  function journal(entries: number[]): string {
+    const folder = fs.mkdtempSync(path.join(root, "drizzle-"));
+    fs.mkdirSync(path.join(folder, "meta"));
+    fs.writeFileSync(path.join(folder, "meta", "_journal.json"), JSON.stringify({ entries: entries.map((when, idx) => ({ idx, when, tag: `000${idx}` })) }));
+    return folder;
+  }
+
+  async function migratedDb(applied: number[]) {
+    const source = await sourceDb();
+    await source.client.execute("CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)");
+    for (const at of applied) await source.client.execute({ sql: "INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('h', ?)", args: [at] });
+    return source;
+  }
+
+  it("is taken when the journal has migrations the database has not had, and named for it", async () => {
+    const { client, dir } = await migratedDb([1000]);
+    const snapshot = await snapshotBeforeMigrations({ client, dir, folder: journal([1000, 2000, 3000]), at: new Date("2026-09-24T10:00:00.000Z"), copyDir: null });
+    assert.equal(snapshot?.name, "kardboard-pre-migrate-20260924T100000Z.db");
+    assert.equal(snapshot?.kind, "pre_migrate");
+    assert.deepEqual(await titles(path.join(dir, snapshot!.name)), ["before"]);
+    client.close();
+  });
+
+  it("is not taken when every migration is applied, or for a new database with none", async () => {
+    const current = await migratedDb([1000, 2000]);
+    assert.equal(await snapshotBeforeMigrations({ client: current.client, dir: current.dir, folder: journal([1000, 2000]), copyDir: null }), null);
+    const fresh = await sourceDb();
+    assert.equal(await snapshotBeforeMigrations({ client: fresh.client, dir: fresh.dir, folder: journal([1000]), copyDir: null }), null);
+    assert.deepEqual(listSnapshots(current.dir), []);
+    assert.deepEqual(listSnapshots(fresh.dir), []);
+    current.client.close();
+    fresh.client.close();
+  });
+
+  it("does not stand in for the daily snapshot", async () => {
+    const { client, dir } = await migratedDb([1000]);
+    await snapshotBeforeMigrations({ client, dir, folder: journal([1000, 2000]), at: new Date(2026, 8, 14, 9, 0), copyDir: null });
+    const daily = await runDueBackup(new Date(2026, 8, 14, 9, 30), { client, dir, keep: 10, hour: 4, copyDir: null });
+    assert.equal(daily?.kind, "regular", "a pre-migration snapshot after the hour does not count as the day's");
+    client.close();
+  });
+});
+
+describe("copying off the disk", () => {
+  function uploads(files: Record<string, string>): string {
+    const dir = fs.mkdtempSync(path.join(root, "uploads-"));
+    for (const [name, body] of Object.entries(files)) {
+      fs.mkdirSync(path.join(dir, name.slice(0, 2)), { recursive: true });
+      fs.writeFileSync(path.join(dir, name.slice(0, 2), name), body);
+    }
+    return dir;
+  }
+
+  // A directory set up as the runbook says: the marker file is what says the share is there.
+  function target(): string {
+    const dir = path.join(fs.mkdtempSync(path.join(root, "nas-")), "kardboard");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, COPY_TARGET_MARKER), "");
+    return dir;
+  }
+
+  it("copies each snapshot, prunes the copies to the same count, and brings attachments up to date", async () => {
+    const { client, dir } = await sourceDb();
+    const copyDir = target();
+    const uploadsDir = uploads({ aa11: "first", bb22: "second" });
+
+    const first = await takeSnapshot({ client, dir, keep: 2, copyDir, uploadsDir, at: new Date("2026-09-12T04:00:00.000Z") });
+    const firstCopy = await first.copy;
+    assert.deepEqual(firstCopy && [firstCopy.ok, firstCopy.snapshot, firstCopy.uploadsCopied], [true, "kardboard-20260912T040000Z.db", 2]);
+    assert.deepEqual(await titles(path.join(copyDir, "kardboard-20260912T040000Z.db")), ["before"]);
+    assert.equal(fs.readFileSync(path.join(copyDir, "uploads", "aa", "aa11"), "utf8"), "first");
+
+    fs.mkdirSync(path.join(uploadsDir, "cc"));
+    fs.writeFileSync(path.join(uploadsDir, "cc", "cc33"), "third");
+    const second = await takeSnapshot({ client, dir, keep: 2, copyDir, uploadsDir, at: new Date("2026-09-13T04:00:00.000Z") });
+    assert.equal((await second.copy)?.uploadsCopied, 1, "only the attachment the copy did not have");
+    await (await takeSnapshot({ client, dir, keep: 2, copyDir, uploadsDir, at: new Date("2026-09-14T04:00:00.000Z") })).copy;
+
+    assert.deepEqual(
+      listSnapshots(copyDir).map((s) => s.name),
+      ["kardboard-20260914T040000Z.db", "kardboard-20260913T040000Z.db"],
+    );
+    assert.deepEqual(fs.readdirSync(path.join(copyDir, "uploads")).sort(), ["aa", "bb", "cc"]);
+    assert.equal(backupsView().lastCopy?.snapshot, "kardboard-20260914T040000Z.db");
+    client.close();
+  });
+
+  it("answers with the snapshot before the copy has finished", async () => {
+    const { client, dir } = await sourceDb();
+    const copyDir = target();
+    const result = await takeSnapshot({ client, dir, keep: 10, copyDir, uploadsDir: uploads({ ee55: "x" }) });
+    assert.equal(fs.existsSync(path.join(copyDir, result.snapshot.name)), false, "the copy has not run yet");
+    assert.equal((await result.copy)?.ok, true);
+    assert.equal(fs.existsSync(path.join(copyDir, result.snapshot.name)), true);
+    client.close();
+  });
+
+  it("reports a copy that fails without failing the snapshot or touching the ones on disk", async () => {
+    const { client, dir } = await sourceDb();
+    const before = await takeSnapshot({ client, dir, keep: 10, copyDir: null, at: new Date("2026-09-12T04:00:00.000Z") });
+    // Marked, but a file sits where the attachments directory should be, so the copy fails midway.
+    const copyDir = target();
+    fs.writeFileSync(path.join(copyDir, "uploads"), "x");
+
+    const { snapshot, copy } = await takeSnapshot({ client, dir, keep: 10, copyDir, uploadsDir: uploads({ ff66: "x" }) });
+    const result = await copy;
+    assert.equal(result?.ok, false);
+    assert.ok(result?.error);
+    assert.deepEqual(
+      listSnapshots(dir).map((s) => s.name),
+      [snapshot.name, before.snapshot.name],
+    );
+    assert.equal(backupsView().lastCopy?.ok, false);
+    assert.equal(backupsView().lastAttempt?.ok, true, "the snapshot itself succeeded");
+    client.close();
+  });
+
+  it("refuses a directory without the marker, as a share that did not mount would be", async () => {
+    const { client, dir } = await sourceDb();
+    const unmounted = fs.mkdtempSync(path.join(root, "unmounted-"));
+    const { copy } = await takeSnapshot({ client, dir, keep: 10, copyDir: unmounted, uploadsDir: uploads({ gg77: "x" }) });
+    const result = await copy;
+    assert.equal(result?.ok, false);
+    assert.match(result?.error ?? "", /\.kardboard-backup-target/);
+    assert.deepEqual(fs.readdirSync(unmounted), [], "nothing was written to the local disk in its place");
+    client.close();
+  });
+
+  it("skips a snapshot pruned before its copy's turn came", async () => {
+    const { client, dir } = await sourceDb();
+    const { snapshot } = await takeSnapshot({ client, dir, keep: 10, copyDir: null });
+    fs.rmSync(path.join(dir, snapshot.name));
+    assert.equal(await copySnapshotOffDisk(snapshot.name, { dir, copyDir: target(), uploadsDir: uploads({}) }), null);
+    client.close();
+  });
+
+  it("mirrors nothing from an uploads directory that does not exist yet", async () => {
+    const target = fs.mkdtempSync(path.join(root, "mirror-"));
+    assert.equal(await mirrorUploads(path.join(root, "no-uploads-here"), target), 0);
+  });
+
+  it("does not leave a partial copy behind", async () => {
+    const { client, dir } = await sourceDb();
+    const { snapshot } = await takeSnapshot({ client, dir, keep: 10, copyDir: null });
+    const copyDir = target();
+    const copy = await copyOffDisk(path.join(dir, snapshot.name), { copyDir, keep: 10, uploadsDir: uploads({ dd44: "x" }) });
+    assert.equal(copy.ok, true);
+    assert.deepEqual(fs.readdirSync(copyDir).sort(), [COPY_TARGET_MARKER, snapshot.name, "uploads"]);
+    assert.deepEqual(fs.readdirSync(path.join(copyDir, "uploads", "dd")), ["dd44"]);
+    client.close();
+  });
+});
+
+describe("what is kept across a restart", () => {
+  it("writes the last attempt and copy through once restored, and sends the alerts raised before then", async () => {
+    await db.delete(schema.users);
+    await db.insert(schema.users).values({ id: "admin", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active" });
+    // The failed copies above raised an alert before the app's database was declared ready. The read
+    // back fails here, once, and the alert still goes out.
+    const select = db.select.bind(db);
+    let reads = 0;
+    (db as { select: unknown }).select = ((...args: Parameters<typeof select>) => {
+      if (reads++ === 0) throw new Error("database is locked");
+      return select(...args);
+    }) as unknown;
+    try {
+      await assert.rejects(restoreBackupState(), /database is locked/);
+    } finally {
+      (db as { select: unknown }).select = select;
+    }
+    for (let i = 0; i < 50 && (await db.select().from(schema.outboundEmails)).length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    const emails = await db.select().from(schema.outboundEmails);
+    assert.deepEqual(
+      emails.map((e) => e.subject),
+      ["kardboard: A backup could not be copied off the disk"],
+    );
+
+    const { client, dir } = await sourceDb();
+    await takeSnapshot({ client, dir, keep: 10, copyDir: null });
+    const saved = await db.select().from(schema.settings);
+    const attempt = JSON.parse(saved.find((r) => r.key === "backup:lastAttempt")!.value) as { ok: boolean };
+    assert.equal(attempt.ok, true);
+    assert.ok(saved.find((r) => r.key === "backup:lastCopy"), "the last copy is kept too");
+    client.close();
   });
 });

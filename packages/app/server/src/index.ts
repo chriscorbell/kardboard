@@ -7,20 +7,43 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "./env.js";
-import { runMigrations } from "./db/index.js";
+import { client, runMigrations } from "./db/index.js";
 import { api } from "./routes/api.js";
 import { mcp } from "./routes/mcp.js";
 import { internal } from "./routes/internal.js";
 import { recoverOnBoot, startDispatchPump } from "./services/orchestrator.js";
 import { startSweepScheduler } from "./services/sweep.js";
-import { startBackupScheduler } from "./services/backup.js";
+import { copySnapshotOffDisk, snapshotBeforeMigrations, startBackupScheduler } from "./services/backup.js";
 import { startPreviewReaper } from "./services/previews.js";
 import { startPullRequestReconciler } from "./services/reconcile.js";
+import { monitorSnapshot, startMonitor } from "./services/monitor.js";
+import { redactTokens, startLogFile } from "./services/logfile.js";
 import { ensureSeed } from "./seed.js";
 
+// First, so the boot itself, migrations included, is in the kept log.
+startLogFile(env.logDir, env.logKeepDays);
+
 const app = new Hono();
-app.use("*", logger((msg) => console.log(msg)));
-app.get("/healthz", (c) => c.json({ ok: true }));
+// Registered ahead of the request logger, so the container's health check, which calls it every 30
+// seconds, does not fill the log.
+//
+// The app is healthy when it can read its database; that is the one thing it cannot serve without.
+// The runner and the egress proxy are reported as last seen, for a person reading the answer, and
+// never fail the check: restarting the app would not bring either of them back.
+app.get("/healthz", async (c) => {
+  try {
+    await Promise.race([
+      client.execute("SELECT count(*) FROM sqlite_master"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), 2_000).unref()),
+    ]);
+  } catch {
+    return c.json({ ok: false, db: "unavailable", ...monitorSnapshot() }, 503);
+  }
+  return c.json({ ok: true, db: "ok", ...monitorSnapshot() });
+});
+// The board event stream authenticates with `?token=`, a Clerk session token, which must not sit in
+// a log for two weeks. The rest of the query stays: it says which page or offset was asked for.
+app.use("*", logger((msg) => console.log(redactTokens(msg))));
 // Keep bookmarked pages working after a domain move. The destination is deployment config,
 // never a request-supplied origin; API mutations remain on the origin that received them.
 app.use("*", async (c, next) => {
@@ -62,6 +85,8 @@ app.onError((err, c) => {
   return c.json({ error: "internal", message: env.isProduction ? undefined : err.message }, 500);
 });
 
+// A new image with schema changes gets a snapshot of the database as the old image left it.
+const preMigrate = await snapshotBeforeMigrations();
 await runMigrations();
 await ensureSeed();
 await recoverOnBoot();
@@ -70,7 +95,10 @@ startSweepScheduler();
 startBackupScheduler();
 startPreviewReaper();
 startPullRequestReconciler();
+startMonitor();
 
 serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.log(`kardboard app listening on http://localhost:${info.port} (auth=${env.authMode})`);
+  // Only once the app answers: the copy goes to a network share, which can be slow or gone.
+  if (preMigrate) void copySnapshotOffDisk(preMigrate.name);
 });

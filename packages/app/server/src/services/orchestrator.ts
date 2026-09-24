@@ -16,6 +16,7 @@ import { readProviderLimits, type LimitSnapshot } from "./provider-limits.js";
 import { removePreviewForCard } from "./previews.js";
 import { byDispatchOrder } from "./children.js";
 import { batchClosesAt, coalesceDelay, inStartBackoff } from "./waiting.js";
+import { recordSessionUsage } from "./usage.js";
 
 const ACTIVE = ["queued", "starting", "running"] as const;
 const ENDED = ["succeeded", "failed", "cancelled", "timed_out"] as const;
@@ -53,7 +54,7 @@ export function underClaimLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-function summary(row: typeof schema.sessions.$inferSelect): SessionSummary {
+export function summary(row: typeof schema.sessions.$inferSelect): SessionSummary {
   return {
     id: row.id,
     kind: row.kind,
@@ -529,6 +530,7 @@ export async function endSession(
     await runner.stop(row.containerId).catch((err) => console.error("[orchestrator] stop failed", err));
   }
   await recordEvent({ boardId: row.boardId, cardId: row.cardId, actor: SYSTEM_ACTOR, type: `session.${status}`, payload: { sessionId, outcomeSummary } });
+  void recordSessionUsage(sessionId).catch((err) => console.error("[usage] could not record", err));
   await publishSession(sessionId);
   let rerunning = false;
   if (row.cardId) {
@@ -640,11 +642,6 @@ export async function listBoardSessions(boardId: string, limit = 50): Promise<Se
 export async function getSession(sessionId: string): Promise<SessionSummary | null> {
   const row = await db.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId)).get();
   return row ? summary(row) : null;
-}
-
-export async function listAllSessions(limit = 100): Promise<(SessionSummary & { boardId: string })[]> {
-  const rows = await db.select().from(schema.sessions).orderBy(sql`${schema.sessions.createdAt} desc`).limit(limit);
-  return rows.map((r) => ({ ...summary(r), boardId: r.boardId }));
 }
 
 // Called once at boot: anything that was active when the process died is reconciled here.

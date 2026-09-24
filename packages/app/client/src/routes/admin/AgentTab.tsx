@@ -4,6 +4,7 @@ import { MAX_WALL_CLOCK_MINUTES, MIN_WALL_CLOCK_MINUTES, type Settings } from "@
 import { keys, request, useAdminSettings } from "../../lib/api";
 import { Avatar, Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { TabHeader } from "./AdminPage";
+import { ProvidersStatus } from "./ProvidersStatus";
 
 export function AgentTab() {
   const settings = useAdminSettings();
@@ -73,6 +74,7 @@ export function AgentTab() {
           {save.isSuccess ? <span className="ml-3 text-[12.5px] text-ink-muted">Saved.</span> : null}
         </div>
       </form>
+      <ProvidersStatus />
     </>
   );
 }

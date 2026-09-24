@@ -76,3 +76,27 @@ describe("what the proxy remembers", () => {
     assert.deepEqual(limits.snapshot().claude, { at: "2026-09-15T12:00:00.000Z", until: null });
   });
 });
+
+describe("what the proxy reports beyond usage", () => {
+  it("keeps the latest rejected credential per provider until a turn is accepted again", () => {
+    const limits = new UsageLimits();
+    assert.deepEqual(limits.report(), { claude: null, codex: null, authFailures: { claude: null, codex: null }, refusals: { count: 0, last: null } });
+    limits.noteAuthFailure("claude", 401, "POST /v1/messages answered 401", NOW);
+    assert.deepEqual(limits.report().authFailures, { claude: { at: "2026-09-15T12:00:00.000Z", status: 401, reason: "POST /v1/messages answered 401" }, codex: null });
+    limits.noteAccepted("codex");
+    assert.equal(limits.report().authFailures.claude?.status, 401, "a turn on the other provider says nothing about this one");
+    limits.noteAccepted("claude");
+    assert.equal(limits.report().authFailures.claude, null);
+  });
+
+  it("counts refused calls and keeps the last, with its path clipped", () => {
+    const limits = new UsageLimits();
+    limits.noteRefused("codex", "GET", "/wham/usage", NOW);
+    limits.noteRefused("claude", "POST", `/v1/${"x".repeat(400)}`, NOW + 1_000);
+    const { refusals } = limits.report();
+    assert.equal(refusals.count, 2);
+    assert.equal(refusals.last?.provider, "claude");
+    assert.equal(refusals.last?.path.length, 200);
+    assert.equal(refusals.last?.at, "2026-09-15T12:00:01.000Z");
+  });
+});

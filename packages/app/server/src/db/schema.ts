@@ -169,9 +169,18 @@ export const sessions = sqliteTable(
     startedAt: text("started_at"),
     endedAt: text("ended_at"),
     outcomeSummary: text("outcome_summary"),
+    // Read from Claude Code's final `result` event when the Session ends; null for a Codex Session,
+    // one that never ran, or one stopped before it finished.
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
+    cacheCreationTokens: integer("cache_creation_tokens"),
+    costUsd: real("cost_usd"),
+    numTurns: integer("num_turns"),
+    durationMs: integer("duration_ms"),
     createdAt: text("created_at").notNull().$defaultFn(now),
   },
-  (t) => [index("sessions_board_status_idx").on(t.boardId, t.status)],
+  (t) => [index("sessions_board_status_idx").on(t.boardId, t.status), index("sessions_created_idx").on(t.createdAt)],
 );
 
 export const triggers = sqliteTable(

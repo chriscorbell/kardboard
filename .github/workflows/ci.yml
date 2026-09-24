@@ -1,12 +1,17 @@
-# Deployment contract: every push to main publishes five images to GHCR tagged :latest and :sha.
-# Watchtower on minicore polls GHCR every 60 s and restarts the running containers. Roll back by
-# pinning a :sha tag in the compose file or re-running this job from an older commit.
+# Deployment contract: a push to main publishes to GHCR, tagged :latest and :sha, each of the five
+# images whose inputs changed since the last run on main that succeeded. Watchtower on minicore polls
+# GHCR every 60 s and restarts the containers whose image moved, so a push that touches only the app
+# restarts only the app, and a push of documentation restarts nothing. Pull requests build all five
+# images without pushing, so a broken Dockerfile fails before it reaches main. Running the workflow
+# by hand on main publishes all five whatever changed. Roll back by pinning a :sha tag in the compose
+# file or re-running this job from an older commit.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,31 +39,103 @@ jobs:
       - run: pnpm -r test
       - run: pnpm --filter @kardboard/app build
 
+  # Which images this run builds, as the publish job's matrix. A pull request or a manual run takes
+  # all five. A push to main takes the images whose inputs differ between this commit and the head of
+  # the last run on main that succeeded, whose images were therefore all published. That, and not the
+  # commit before this push, is the baseline: a run that failed, or a queued run that a newer push
+  # replaced, published nothing, and its changes are still owed. A change to an input every image
+  # shares, this workflow included, takes all five; a push that changes no image's inputs takes none,
+  # and publish is skipped.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # To find the last run that succeeded.
+      actions: read
+    outputs:
+      images: ${{ steps.pick.outputs.images }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The baseline commit, and whether it is an ancestor of this one, need the history.
+          fetch-depth: 0
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          IMAGES: >-
+            [{"name": "app", "dockerfile": "packages/app/Dockerfile"},
+            {"name": "runner", "dockerfile": "packages/runner/Dockerfile"},
+            {"name": "egress", "dockerfile": "packages/egress/Dockerfile"},
+            {"name": "preview-router", "dockerfile": "packages/preview-router/Dockerfile"},
+            {"name": "agent", "dockerfile": "images/agent/Dockerfile"}]
+        run: |
+          set -euo pipefail
+          all="app runner egress preview-router agent"
+          # The matrix entries named in a space-separated list, once each and in IMAGES order.
+          pick() { jq -c --arg names "$1" '($names | split(" ")) as $wanted | [.[] | select(.name as $n | $wanted | index($n))]' <<< "$IMAGES"; }
+          publish() {
+            echo "Images to build: $(jq -r 'map(.name) | join(" ") | if . == "" then "none" else . end' <<< "$1")"
+            echo "images=$1" >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "$EVENT" != "push" ]; then
+            publish "$(pick "$all")"
+            exit 0
+          fi
+          # The newest run of this workflow on main that succeeded, from a push or a manual run; a pull
+          # request from a fork's own main branch would also match the branch filter.
+          base=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=30" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].head_sha // empty') || base=""
+          # No such run, or one whose commit a force push has left off main's history: there is
+          # nothing trustworthy to compare with, so everything is built.
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$base" "$SHA"; then
+            echo "No earlier successful run on main to compare with${base:+ (${base} is not an ancestor)}."
+            publish "$(pick "$all")"
+            exit 0
+          fi
+          echo "Comparing with ${base}, the last commit on main whose run succeeded."
+
+          # A plain assignment, so a failed diff stops the job instead of reading as "nothing changed".
+          # Without rename detection a moved file is listed at both paths, so moving one out of an
+          # image's directory still rebuilds that image.
+          changed=$(git diff --no-renames --name-only "$base" "$SHA")
+          # What goes into each image, read from its Dockerfile's COPY lines. Every image installs
+          # from the root lockfile and workspace files.
+          names=""
+          while IFS= read -r file; do
+            case "$file" in
+              pnpm-lock.yaml | pnpm-workspace.yaml | package.json | .npmrc | tsconfig.base.json | .dockerignore | .github/workflows/ci.yml | packages/shared/*) names="$names $all" ;;
+              packages/app/*) names="$names app" ;;
+              packages/runner/*) names="$names runner" ;;
+              packages/egress/*) names="$names egress" ;;
+              packages/preview-router/*) names="$names preview-router" ;;
+              images/agent/*) names="$names agent" ;;
+            esac
+          done <<< "$changed"
+          publish "$(pick "$names")"
+
   publish:
-    needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [validate, changes]
+    if: needs.changes.outputs.images != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    env:
+      # Only main publishes. A pull request, or a manual run on another branch, builds and stops.
+      PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: app
-            dockerfile: packages/app/Dockerfile
-          - name: runner
-            dockerfile: packages/runner/Dockerfile
-          - name: egress
-            dockerfile: packages/egress/Dockerfile
-          - name: preview-router
-            dockerfile: packages/preview-router/Dockerfile
-          - name: agent
-            dockerfile: images/agent/Dockerfile
+        include: ${{ fromJSON(needs.changes.outputs.images) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - if: env.PUSH == 'true'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -74,9 +151,11 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
+          push: ${{ env.PUSH == 'true' }}
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # A pull request reads main's layer cache but does not write to it, so its builds cannot
+          # crowd main's layers out of the repository's cache allowance.
+          cache-to: ${{ env.PUSH == 'true' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}

@@ -111,14 +111,18 @@ function fromEvent(at: string | null, event: Record<string, unknown>): Transcrip
   return out;
 }
 
+/** One log line without its Docker timestamp, and the timestamp when it had one. */
+export function splitLogLine(line: string): { at: string | null; rest: string } {
+  const stamped = DOCKER_TIMESTAMP.exec(line);
+  return stamped ? { at: stamped[1]!, rest: stamped[2]! } : { at: null, rest: line };
+}
+
 // Parses a slice of a log. Partial lines are the caller's problem: the runner returns whole lines.
 export function parseTranscript(raw: string): TranscriptEntry[] {
   const out: TranscriptEntry[] = [];
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    const stamped = DOCKER_TIMESTAMP.exec(line);
-    const at = stamped ? stamped[1]! : null;
-    const rest = stamped ? stamped[2]! : line;
+    const { at, rest } = splitLogLine(line);
     if (!rest.trim()) continue;
     if (rest.startsWith("{")) {
       let event: Record<string, unknown> | null = null;
