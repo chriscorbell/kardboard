@@ -185,15 +185,17 @@ api.post("/cards/:id/move", json(moveCardSchema), async (c) => {
   }
 });
 
-api.post("/cards/:id/approve", async (c) => {
+// `headSha` is the pull request head the Card showed the Member. Approval is bound to it, and is
+// refused if the pull request has moved on since.
+api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullable().optional() })), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
   try {
-    return c.json(await approveCard(card.id, actorOf(c)), 201);
+    return c.json(await approveCard(card.id, actorOf(c), c.req.valid("json").headSha ?? null), 201);
   } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message }, 400);
+    if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
     throw err;
   }
 });

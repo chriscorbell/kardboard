@@ -18,6 +18,7 @@ import { getUsersByIds } from "../services/users.js";
 import { recordEvent } from "../services/events.js";
 import { publish } from "../services/realtime.js";
 import { previewUrlFor, startPreview } from "../services/previews.js";
+import { linkPullRequest, refreshPullRequestHead } from "../services/approvals.js";
 
 type SessionRow = typeof schema.sessions.$inferSelect;
 
@@ -131,7 +132,9 @@ function buildServer(session: SessionRow): McpServer {
         const now = (await getCard(id))!;
         throw new Error(`card ${id} changed after revision ${revision}: it is now at revision ${now.revision} in ${COLUMN_LABELS[now.column]}. Read it again with get_card before deciding whether to move it.`);
       }
-      return { content: [{ type: "text", text: JSON.stringify({ column: moved.column, revision: moved.revision }) }] };
+      // Entering Review fixes the revision a member is shown; the Session hears if it cannot be approved.
+      const note = column === "review" ? await refreshPullRequestHead(id).catch((err: Error) => `could not read the pull request from GitHub: ${err.message}`) : null;
+      return { content: [{ type: "text", text: JSON.stringify({ column: moved.column, revision: moved.revision, ...(note ? { note } : {}) }) }] };
     },
   );
 
@@ -145,13 +148,20 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // A reported pull request is checked on GitHub before it is recorded: it has to come from this
+  // Card's own branch, because Approval merges whatever the Card points at with the merge App.
   server.registerTool(
     "set_work_state",
-    { description: "Record the pull request and preview for your own card.", inputSchema: { pr_url: z.string().url().optional(), pr_number: z.number().int().optional(), preview_url: z.string().url().optional() } },
+    {
+      description: "Record the pull request and preview for your own card. The pull request must be the one opened from this card's branch in the board's repository; kardboard checks that on GitHub and records its current head, which is the revision a member approves. Call it again after pushing more commits.",
+      inputSchema: { pr_url: z.string().url().optional(), pr_number: z.number().int().optional(), preview_url: z.string().url().optional() },
+    },
     async ({ pr_url, pr_number, preview_url }) => {
       if (session.kind !== "card" || !session.cardId) throw new Error("only card sessions can set work state");
-      await setCardWorkState(session.cardId, { prUrl: pr_url, prNumber: pr_number, previewUrl: preview_url });
-      return { content: [{ type: "text", text: "ok" }] };
+      if (pr_number !== undefined || pr_url !== undefined) await linkPullRequest(session.cardId, { number: pr_number, url: pr_url });
+      if (preview_url !== undefined) await setCardWorkState(session.cardId, { previewUrl: preview_url });
+      const card = (await getCard(session.cardId))!;
+      return { content: [{ type: "text", text: JSON.stringify({ prNumber: card.prNumber, prUrl: card.prUrl, headSha: card.prHeadSha, previewUrl: card.previewUrl }) }] };
     },
   );
 

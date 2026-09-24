@@ -60,6 +60,7 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     branch: r.branch,
     prUrl: r.prUrl,
     prNumber: r.prNumber,
+    prHeadSha: r.prHeadSha,
     previewUrl: r.previewUrl,
     commentCount: countMap.get(r.id) ?? 0,
     activeSession: activeMap.get(r.id) ?? null,
@@ -260,7 +261,7 @@ export async function moveCard(
 
 export async function setCardWorkState(
   id: string,
-  patch: { branch?: string | null; prUrl?: string | null; prNumber?: number | null; previewUrl?: string | null },
+  patch: { branch?: string | null; prUrl?: string | null; prNumber?: number | null; prHeadSha?: string | null; previewUrl?: string | null },
 ): Promise<Card> {
   await db
     .update(schema.cards)

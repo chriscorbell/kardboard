@@ -121,6 +121,8 @@ export interface Card {
   branch: string | null;
   prUrl: string | null;
   prNumber: number | null;
+  /** The pull request head a Member is shown and approves. Approve sends it back. */
+  prHeadSha: string | null;
   previewUrl: string | null;
   commentCount: number;
   activeSession: SessionSummary | null;

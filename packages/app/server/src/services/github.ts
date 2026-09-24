@@ -122,14 +122,16 @@ export interface PullRequest {
   body: string;
   headSha: string;
   headRef: string;
+  /** `owner/repo` the head branch lives in: another repository for a fork, null for a deleted one. */
+  headRepo: string | null;
   state: "open" | "closed";
   merged: boolean;
   mergeable: boolean | null;
   mergeableState: string;
 }
 
-function toPr(p: { number: number; html_url: string; title: string; body?: string | null; head: { sha: string; ref: string }; state: "open" | "closed"; merged?: boolean; merged_at?: string | null; mergeable?: boolean | null; mergeable_state?: string }): PullRequest {
-  return { number: p.number, url: p.html_url, title: p.title, body: p.body ?? "", headSha: p.head.sha, headRef: p.head.ref, state: p.state, merged: Boolean(p.merged ?? p.merged_at), mergeable: p.mergeable ?? null, mergeableState: p.mergeable_state ?? "unknown" };
+function toPr(p: { number: number; html_url: string; title: string; body?: string | null; head: { sha: string; ref: string; repo?: { full_name: string } | null }; state: "open" | "closed"; merged?: boolean; merged_at?: string | null; mergeable?: boolean | null; mergeable_state?: string }): PullRequest {
+  return { number: p.number, url: p.html_url, title: p.title, body: p.body ?? "", headSha: p.head.sha, headRef: p.head.ref, headRepo: p.head.repo?.full_name ?? null, state: p.state, merged: Boolean(p.merged ?? p.merged_at), mergeable: p.mergeable ?? null, mergeableState: p.mergeable_state ?? "unknown" };
 }
 
 export async function getPullRequest(owner: string, repo: string, number: number): Promise<PullRequest | null> {

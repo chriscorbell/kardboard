@@ -64,6 +64,9 @@ export const cards = sqliteTable(
     branch: text("branch"),
     prUrl: text("pr_url"),
     prNumber: integer("pr_number"),
+    // The pull request head a Member is shown and approves. Read from GitHub when a Session reports
+    // the pull request or moves the Card to Review, never taken from the Session's word.
+    prHeadSha: text("pr_head_sha"),
     previewUrl: text("preview_url"),
     pendingRerun: integer("pending_rerun", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull().$defaultFn(now),
