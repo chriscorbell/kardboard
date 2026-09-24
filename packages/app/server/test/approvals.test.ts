@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -10,22 +10,24 @@ import { serve } from "@hono/node-server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { approvalAwaitingRetry, type Approval } from "@kardboard/shared";
+import { githubAppEnv, installFakeGitHub } from "./fake-github.js";
 
 // The database module opens its file at import time, and the GitHub merge App is read from the
-// environment at import time, so both are set first. The App's key is real because the app signs
-// its JWT with it; everything it would send to GitHub is answered by the fake below.
+// environment at import time, so both are set first. Everything the app would send to GitHub is
+// answered by the fake in fake-github.ts.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-approvals-"));
 process.env.KARDBOARD_DATA_DIR = root;
 // These tests sign in with dev authentication, whatever a local .env chooses.
 process.env.KARDBOARD_AUTH = "dev";
 process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
-const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-process.env.GITHUB_MERGE_APP_ID = "1";
-process.env.GITHUB_MERGE_APP_PRIVATE_KEY_B64 = Buffer.from(privateKey).toString("base64");
+// A merge GitHub is still thinking about is asked again after this long, and twice as long after that.
+process.env.KARDBOARD_MERGE_RECHECK_MS = "5";
+githubAppEnv();
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { ApprovalError, approveCard, followUpFor, linkPullRequest, listApprovals, retryMerge } = await import("../src/services/approvals.js");
 const { getCard } = await import("../src/services/cards.js");
+const { classifyMergeRefusal, summarizeChecks } = await import("../src/services/github.js");
 const { api } = await import("../src/routes/api.js");
 const { mcp } = await import("../src/routes/mcp.js");
 
@@ -36,53 +38,7 @@ const BRANCH = "kardboard/card-1-the-change";
 const HEAD_A = "a".repeat(40);
 const HEAD_B = "b".repeat(40);
 
-// ---- a fake GitHub, just enough of the REST API for pull requests and merges ----
-
-interface FakePull {
-  ref: string;
-  repo: string | null;
-  sha: string;
-  state: "open" | "closed";
-}
-// `refusal` makes the next merges fail the way GitHub does for a reason of its own, such as a failing required check.
-const github = { pulls: new Map<number, FakePull>(), merges: [] as { number: number; sha: string }[], refusal: null as { status: number; message: string } | null };
-
-function pullJson(number: number, p: FakePull) {
-  return { number, html_url: `https://github.com/${REPO}/pull/${number}`, title: "The change", body: "What it does.", head: { sha: p.sha, ref: p.ref, repo: p.repo ? { full_name: p.repo } : null }, state: p.state, merged: false, mergeable: true, mergeable_state: "clean" };
-}
-
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-  const url = new URL(input instanceof Request ? input.url : String(input));
-  if (url.hostname !== "api.github.com") return realFetch(input, init);
-  const method = init?.method ?? "GET";
-  const reply = (status: number, body: unknown) => new Response(body === null ? null : JSON.stringify(body), { status });
-  if (url.pathname === `/repos/${REPO}/installation`) return reply(200, { id: 42 });
-  if (url.pathname === "/app/installations/42/access_tokens") return reply(201, { token: "ghs_test", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
-  if (url.pathname === `/repos/${REPO}/pulls` && method === "GET") {
-    const head = url.searchParams.get("head");
-    const open = [...github.pulls].filter(([, p]) => p.state === "open" && p.repo === REPO && `acme:${p.ref}` === head);
-    return reply(200, open.map(([n, p]) => pullJson(n, p)));
-  }
-  let m = new RegExp(`^/repos/${REPO}/pulls/(\\d+)$`).exec(url.pathname);
-  if (m && method === "GET") {
-    const p = github.pulls.get(Number(m[1]));
-    return p ? reply(200, pullJson(Number(m[1]), p)) : reply(404, { message: "Not Found" });
-  }
-  m = new RegExp(`^/repos/${REPO}/pulls/(\\d+)/merge$`).exec(url.pathname);
-  if (m && method === "PUT") {
-    const number = Number(m[1]);
-    const p = github.pulls.get(number)!;
-    const { sha } = JSON.parse(String(init?.body)) as { sha: string };
-    if (github.refusal) return reply(github.refusal.status, { message: github.refusal.message });
-    if (sha !== p.sha) return reply(409, { message: "Head branch was modified. Review and try the merge again." });
-    github.merges.push({ number, sha });
-    p.state = "closed";
-    return reply(200, { merged: true, sha: "c".repeat(40) });
-  }
-  if (url.pathname.startsWith(`/repos/${REPO}/git/refs/heads/`) && method === "DELETE") return reply(204, null);
-  return reply(404, { message: `the fake GitHub has no ${method} ${url.pathname}` });
-}) as typeof fetch;
+const github = installFakeGitHub(REPO);
 
 // ---- the MCP server, reached the way a Session reaches it ----
 
@@ -92,7 +48,7 @@ const mcpUrl = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).por
 
 after(() => {
   server.close();
-  globalThis.fetch = realFetch;
+  github.restore();
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -115,11 +71,10 @@ const MEMBER = { kind: "user" as const, id: "ada" };
 
 beforeEach(async () => {
   for (const t of [schema.approvals, schema.sessions, schema.triggers, schema.events, schema.notifications, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  github.pulls.clear();
-  github.merges.length = 0;
-  github.refusal = null;
+  github.reset();
   await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one", repoUrl: `https://github.com/${REPO}` });
   await db.insert(schema.users).values({ id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "active" });
+  await db.insert(schema.users).values({ id: "root", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active" });
   await db.insert(schema.boardMembers).values({ boardId: "board-1", userId: "ada" });
   await db.insert(schema.cards).values({ id: CARD, boardId: "board-1", title: "The change", column: "review", creatorKind: "user", creatorId: "ada", branch: BRANCH });
   // The Card's own pull request, another Card's, and a fork's with the same branch name.
@@ -269,7 +224,7 @@ describe("what a merge outcome means for the approval it was made on", () => {
     const followUp = followUpFor({ ok: false, reason: "error", message: "403 Required status check is failing" }, 7, "@ada");
     assert.equal(followUp.kind, "refused");
     assert.equal(followUp.kind === "refused" ? followUp.error : "", "403 Required status check is failing");
-    assert.match(followUp.kind === "refused" ? followUp.comment : "", /Retry merge/);
+    assert.match(followUp.kind === "refused" ? followUp.comment : "", /Try merging again/);
   });
 });
 
@@ -376,5 +331,255 @@ describe("retrying a merge GitHub refused", () => {
 
     assert.equal(res.status, 200);
     assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+  });
+});
+
+describe("retrying a merge GitHub still refuses", () => {
+  it("keeps the approval standing with the newer refusal, and the card in Review", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.refusal = { status: 403, message: "Resource not accessible by integration" };
+    await approveCard(CARD, MEMBER, HEAD_A);
+    github.refusal = { status: 422, message: "Rate limited" };
+
+    const approval = await retryMerge(CARD, MEMBER);
+
+    assert.equal(approval.invalidatedAt, null);
+    assert.equal(approval.mergeError, "422 Rate limited");
+    assert.deepEqual(github.merges, []);
+    assert.equal((await getCard(CARD))!.column, "review");
+    assert.equal(approvalAwaitingRetry(await listApprovals(CARD))?.id, approval.id, "the card still offers a retry");
+  });
+});
+
+describe("a 405 from GitHub's merge", () => {
+  it("is asked again while GitHub is still working out mergeability, and then merges", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({ status: 405, message: "Pull Request is not mergeable", then: (p) => (p.mergeable = null) });
+
+    await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+    assert.equal((await getCard(CARD))!.column, "done");
+  });
+
+  it("is asked again when the base branch moved a moment ago", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({ status: 405, message: "Base branch was modified. Review and try the merge again." });
+
+    await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+  });
+
+  it("leaves the approval standing and offers a retry when GitHub is still computing after asking again", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    const computing = { status: 405, message: "Pull Request is not mergeable", then: (p: { mergeable?: boolean | null }) => (p.mergeable = null) };
+    github.mergeReplies.push(computing, computing, computing);
+
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.equal(approval.invalidatedAt, null, "nothing is wrong with the pull request, so the approval stands");
+    assert.match(approval.mergeError ?? "", /still checking/);
+    assert.deepEqual(github.merges, []);
+    assert.equal((await getCard(CARD))!.column, "review");
+    const triggers = await db.select().from(schema.triggers).where(eq(schema.triggers.cardId, CARD));
+    assert.deepEqual(triggers, [], "no session is sent to change a branch that needs no change");
+
+    github.pulls.get(7)!.mergeable = true;
+    await retryMerge(CARD, MEMBER);
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+  });
+
+  it("voids the approval and sends a session to update a branch with conflicts", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({
+      status: 405,
+      message: "Merge conflict",
+      then: (p) => {
+        p.mergeable = false;
+        p.mergeableState = "dirty";
+      },
+    });
+
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.notEqual(approval.invalidatedAt, null);
+    const triggers = await db.select().from(schema.triggers).where(eq(schema.triggers.cardId, CARD));
+    assert.deepEqual(
+      triggers.map((t) => t.kind),
+      ["approval"],
+    );
+  });
+
+  it("leaves the approval standing for a rule of the repository's own", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({ status: 405, message: "Repository rule violations found", then: (p) => (p.mergeableState = "blocked") });
+
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.equal(approval.invalidatedAt, null);
+    assert.equal(approval.mergeError, "405 Repository rule violations found");
+  });
+
+  it("is sorted by what GitHub says of the pull request, not by the status alone", () => {
+    assert.equal(classifyMergeRefusal("Pull Request is not mergeable", { mergeable: null, mergeableState: "unknown" }), "retry");
+    assert.equal(classifyMergeRefusal("Base branch was modified. Review and try the merge again.", { mergeable: true, mergeableState: "behind" }), "retry");
+    assert.equal(classifyMergeRefusal("Pull Request is not mergeable", { mergeable: false, mergeableState: "dirty" }), "conflict");
+    assert.equal(classifyMergeRefusal("Head branch is out of date", { mergeable: true, mergeableState: "behind" }), "conflict");
+    assert.equal(classifyMergeRefusal("At least 1 approving review is required", { mergeable: true, mergeableState: "blocked" }), "refused");
+  });
+});
+
+describe("a pull request's checks", () => {
+  const run = (name: string, conclusion: string | null, status = conclusion ? "completed" : "in_progress") => ({ name, status, conclusion, url: null });
+
+  it("are summed up as one state", () => {
+    assert.deepEqual(summarizeChecks({ runs: [run("build", "success"), run("lint", "skipped")], statuses: [] }), { state: "passing", total: 2, failed: 0, pending: 0 });
+    assert.deepEqual(summarizeChecks({ runs: [run("build", "success"), run("test", null)], statuses: [] }), { state: "pending", total: 2, failed: 0, pending: 1 });
+    assert.deepEqual(summarizeChecks({ runs: [run("build", "failure"), run("test", null)], statuses: [run("deploy", "error")] }), { state: "failing", total: 3, failed: 2, pending: 1 });
+    assert.deepEqual(summarizeChecks({ runs: [], statuses: [] }), { state: "none", total: 0, failed: 0, pending: 0 });
+  });
+
+  it("are unknown when either half cannot be read, unless something visibly failed", () => {
+    assert.equal(summarizeChecks({ runs: null, statuses: [run("ci", "success")] }).state, "unknown");
+    assert.equal(summarizeChecks({ runs: [run("build", "success")], statuses: null }).state, "unknown");
+    assert.equal(summarizeChecks({ runs: [run("build", "cancelled")], statuses: null }).state, "failing");
+  });
+});
+
+describe("approving over the checks", () => {
+  const approve = (email: string, body: Record<string, unknown>) =>
+    api.request(`/cards/${CARD}/approve`, { method: "POST", headers: { "x-dev-user": email, "content-type": "application/json" }, body: JSON.stringify({ headSha: HEAD_A, ...body }) });
+
+  it("is refused while a check is failing, and the card shows why", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.checkRuns.set(HEAD_A, [
+      { name: "build", status: "completed", conclusion: "success" },
+      { name: "test", status: "completed", conclusion: "failure" },
+    ]);
+
+    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), (err: unknown) => err instanceof ApprovalError && err.status === 409 && /1 of 2 checks failed/.test(err.message));
+
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await listApprovals(CARD), []);
+    const checks = (await getCard(CARD))!.checks;
+    assert.equal(checks?.state, "failing");
+    assert.equal(checks?.sha, HEAD_A);
+  });
+
+  it("merges over failing checks when the Admin overrides, and records that they did", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.checkRuns.set(HEAD_A, [{ name: "test", status: "completed", conclusion: "failure" }]);
+
+    const res = await approve("root@example.com", { overrideChecks: true });
+
+    assert.equal(res.status, 201);
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+    const approved = await db.select().from(schema.events).where(eq(schema.events.type, "card.approved")).get();
+    assert.equal(approved?.payload.overrideChecks, true);
+    assert.equal(approved?.payload.checks, "failing");
+  });
+
+  it("ignores a member's request to override", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.checkRuns.set(HEAD_A, [{ name: "test", status: "completed", conclusion: "failure" }]);
+
+    const res = await approve("ada@example.com", { overrideChecks: true });
+
+    assert.equal(res.status, 409);
+    assert.match(((await res.json()) as { error: string }).error, /The check failed/);
+    assert.deepEqual(github.merges, []);
+  });
+
+  it("merges when the checks cannot be read", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.checkRuns.set(HEAD_A, 403);
+
+    await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.equal(github.merges.length, 1);
+  });
+
+  it("merges while checks are still running; warning about that is the client's job", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.checkRuns.set(HEAD_A, [{ name: "test", status: "in_progress", conclusion: null }]);
+
+    await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.equal(github.merges.length, 1);
+  });
+
+  it("gates a retry the same way", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.refusal = { status: 403, message: "Resource not accessible by integration" };
+    await approveCard(CARD, MEMBER, HEAD_A);
+    github.refusal = null;
+    github.checkRuns.set(HEAD_A, [{ name: "test", status: "completed", conclusion: "failure" }]);
+
+    await assert.rejects(retryMerge(CARD, MEMBER), /The check failed/);
+    assert.deepEqual(github.merges, []);
+
+    await retryMerge(CARD, { kind: "user", id: "root" }, { overrideChecks: true });
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+  });
+});
+
+describe("get_checks", () => {
+  it("reads the checks on the head the session last pushed, and records them on the card", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.pulls.get(7)!.sha = HEAD_B;
+    github.checkRuns.set(HEAD_B, [
+      { name: "build", status: "completed", conclusion: "success" },
+      { name: "test", status: "completed", conclusion: "failure" },
+    ]);
+    github.statuses.set(HEAD_B, [{ context: "deploy/preview", state: "pending" }]);
+    const session = await sessionOn(CARD);
+    try {
+      const result = await session.callTool({ name: "get_checks", arguments: {} });
+      assert.notEqual(result.isError, true);
+      const out = JSON.parse(text(result)) as { state: string; sha: string; checks: { name: string; status: string; conclusion: string | null; url: string | null }[] };
+      assert.equal(out.state, "failing");
+      assert.equal(out.sha, HEAD_B);
+      assert.deepEqual(
+        out.checks.map((c) => [c.name, c.status, c.conclusion]),
+        [
+          ["build", "completed", "success"],
+          ["test", "completed", "failure"],
+          ["deploy/preview", "pending", null],
+        ],
+      );
+      assert.ok(out.checks.every((c) => c.url));
+      const card = (await getCard(CARD))!;
+      assert.equal(card.prHeadSha, HEAD_B);
+      assert.deepEqual([card.checks?.state, card.checks?.failed, card.checks?.pending, card.checks?.total], ["failing", 1, 1, 3]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("says unknown rather than failing when GitHub will not show the checks", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.checkRuns.set(HEAD_A, 403);
+    github.statuses.set(HEAD_A, 404);
+    const session = await sessionOn(CARD);
+    try {
+      const out = JSON.parse(text(await session.callTool({ name: "get_checks", arguments: {} }))) as { state: string; checks: unknown[] };
+      assert.equal(out.state, "unknown");
+      assert.deepEqual(out.checks, []);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("asks for the pull request first when none is recorded or open", async () => {
+    github.pulls.delete(7);
+    const session = await sessionOn(CARD);
+    try {
+      const result = await session.callTool({ name: "get_checks", arguments: {} });
+      assert.equal(result.isError, true);
+      assert.match(text(result), /set_work_state/);
+    } finally {
+      await session.close();
+    }
   });
 });

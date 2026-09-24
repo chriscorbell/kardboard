@@ -19,6 +19,8 @@ import { recordEvent } from "../services/events.js";
 import { publish } from "../services/realtime.js";
 import { previewUrlFor, startPreview } from "../services/previews.js";
 import { linkPullRequest, refreshPullRequestHead } from "../services/approvals.js";
+import { githubConfigured, parseRepoUrl } from "../services/github.js";
+import { refreshCardChecks } from "../services/checks.js";
 
 type SessionRow = typeof schema.sessions.$inferSelect;
 
@@ -162,6 +164,35 @@ function buildServer(session: SessionRow): McpServer {
       if (preview_url !== undefined) await setCardWorkState(session.cardId, { previewUrl: preview_url });
       const card = (await getCard(session.cardId))!;
       return { content: [{ type: "text", text: JSON.stringify({ prNumber: card.prNumber, prUrl: card.prUrl, headSha: card.prHeadSha, previewUrl: card.previewUrl }) }] };
+    },
+  );
+
+  // CI for the head the Card records, read with the merge App's token, which a Session does not
+  // hold: the Sessions token is kept to three permissions, so `gh pr checks` may be refused on a
+  // private repository while this still answers.
+  server.registerTool(
+    "get_checks",
+    {
+      description:
+        "CI on your card's pull request: every check run and commit status on its current head, and one state for all of them: passing, failing, pending (still running), none (nothing ran), or unknown (kardboard cannot read them here). Call it after pushing and reporting the pull request, and fix failures before moving the card to Review.",
+      inputSchema: {},
+    },
+    async () => {
+      if (session.kind !== "card" || !session.cardId) throw new Error("only card sessions have a pull request to check");
+      const board = await getBoardById(session.boardId);
+      const repo = parseRepoUrl(board?.repoUrl ?? null);
+      if (!repo || !githubConfigured("merge")) {
+        const out = { state: "unknown", checks: [], note: "kardboard has no GitHub merge app for this board, so it cannot read checks; try gh pr checks" };
+        return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+      }
+      // Your latest push is what you want checked, so the head is read from GitHub first, as
+      // move_card does on entering Review.
+      const note = await refreshPullRequestHead(session.cardId).catch((err: Error) => `could not read the pull request from GitHub: ${err.message}`);
+      const card = (await getCard(session.cardId))!;
+      if (!card.prHeadSha) throw new Error(note ?? "no pull request is recorded for this card yet; open it and report it with set_work_state first");
+      const read = await refreshCardChecks(card.id, repo, card.prHeadSha);
+      const out = { state: read.state, prNumber: card.prNumber, sha: card.prHeadSha, checks: read.checks, ...(note ? { note } : {}) };
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
   );
 
