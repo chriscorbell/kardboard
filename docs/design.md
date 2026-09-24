@@ -106,7 +106,7 @@ In the app a bell beside the avatar carries a badge with the unread count and op
 
 ## Admin panel, v1 scope
 
-- Users: invite, revoke, grant and remove Board membership.
+- Users: invite, revoke, remove, grant and remove Board membership. Only a revoked User can be removed. Removing one deletes their email address, sign-in, avatar, Board memberships, notifications, and any email still waiting for them, and takes them off the Users list; the row stays, revoked, with their name and handle, so what they wrote keeps their name and an old Mention still means them. Their address can then be invited again as a new User with a handle of its own. Nothing brings a removed User back.
 - Boards: create, repository URL, GitHub App installation status for both apps, preview mode, Provider, model, reasoning level, image override, concurrency caps, prompt append text, pause, delete. The Admin can also pause and resume a Board from its page. Deleting a Board removes its Cards and everything on them, its Sessions and event log, its Previews, and its memberships, after the Admin types its slug. It is refused while a Session is active on the Board, and refused when the snapshot taken first fails, so a deleted Board can be restored from Backups; for the same reason its attachments stay in the off-disk copy. The repository on GitHub is not touched. Anyone viewing the Board is sent back to their Boards.
 - Agent: name, avatar, global caps, and each Provider's state as the egress proxy last saw it: a usage window still shut, a rejected credential, a refused call.
 - Sessions: every run with its Card, duration, and usage, filtered by Board, status, and kind, fifty at a time, with thirty-day totals per Board; cancel, cancel and re-run.

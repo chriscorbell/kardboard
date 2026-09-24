@@ -18,6 +18,9 @@ export const users = sqliteTable("users", {
   // When the User dismissed the board explainer. Kept here rather than in the browser, since
   // clients move between a laptop and a phone.
   onboardedAt: text("onboarded_at"),
+  // Set when the Admin removed a revoked User. The row stays, with its name and handle, so what they
+  // wrote is still signed; the email, sign-in, avatar, and everything addressed to them are gone.
+  removedAt: text("removed_at"),
   createdAt: text("created_at").notNull().$defaultFn(now),
 });
 

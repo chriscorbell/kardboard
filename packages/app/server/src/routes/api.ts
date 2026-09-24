@@ -35,7 +35,7 @@ import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoard
 import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, retryCard, RetryRefused, updateCard } from "../services/cards.js";
 import { addAttachment, createComment, deleteComment, getAttachment, getComment, listComments, underFileLock, updateComment } from "../services/comments.js";
 import { getAgentProfile, getSettings, updateSettings } from "../services/settings.js";
-import { getPreferences, getUser, inviteUser, listUsers, setUserStatus, updatePreferences } from "../services/users.js";
+import { getPreferences, getUser, inviteUser, isRemoved, listUsers, removeUser, RemoveRefused, setUserStatus, updatePreferences } from "../services/users.js";
 import { sendInvitation } from "../services/email.js";
 import { subscribe } from "../services/realtime.js";
 import { boardPauseChanged, cancelSession, getSession, listBoardSessions } from "../services/orchestrator.js";
@@ -413,6 +413,7 @@ admin.post("/users/:id/revoke", async (c) => {
   return c.json({ ok: true });
 });
 admin.post("/users/:id/reinstate", async (c) => {
+  if (await isRemoved(c.req.param("id"))) return c.json({ error: "not_found" }, 404);
   await setUserStatus(c.req.param("id"), "invited");
   const user = await getUser(c.req.param("id"));
   if (user) await sendInvitation(user, c.get("user"));
@@ -421,8 +422,20 @@ admin.post("/users/:id/reinstate", async (c) => {
 // The first invitation can be missed; an Admin can send it again without re-entering the address.
 admin.post("/users/:id/resend-invitation", async (c) => {
   const user = await getUser(c.req.param("id"));
-  if (!user) return c.json({ error: "not_found" }, 404);
+  if (!user || (await isRemoved(user.id))) return c.json({ error: "not_found" }, 404);
   return c.json({ sent: await sendInvitation(user, c.get("user")) });
+});
+
+// Only a revoked User, so removing someone is always the second of two steps.
+admin.delete("/users/:id", async (c) => {
+  if (c.req.param("id") === c.get("user").id) return c.json({ error: "You cannot remove yourself." }, 400);
+  try {
+    await removeUser(c.req.param("id"));
+  } catch (err) {
+    if (err instanceof RemoveRefused) return c.json({ error: err.message }, err.message === "not_found" ? 404 : 409);
+    throw err;
+  }
+  return c.json({ ok: true });
 });
 
 admin.get("/boards", async (c) => {

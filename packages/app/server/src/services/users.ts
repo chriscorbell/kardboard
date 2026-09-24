@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { EmailPreference, User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
@@ -16,8 +16,9 @@ export function toUser(row: typeof schema.users.$inferSelect): User {
   };
 }
 
+// Removed Users are left out: nothing about them can be managed any more.
 export async function listUsers(): Promise<User[]> {
-  const rows = await db.select().from(schema.users).orderBy(schema.users.createdAt);
+  const rows = await db.select().from(schema.users).where(isNull(schema.users.removedAt)).orderBy(schema.users.createdAt);
   return rows.map(toUser);
 }
 
@@ -114,8 +115,51 @@ export async function inviteUser(input: {
   return (await getUser(id))!;
 }
 
+// A removed User stays revoked: reinstating one would bring back a row with no email to sign in with.
 export async function setUserStatus(id: string, status: "invited" | "active" | "revoked"): Promise<void> {
-  await db.update(schema.users).set({ status }).where(eq(schema.users.id, id));
+  await db
+    .update(schema.users)
+    .set({ status })
+    .where(and(eq(schema.users.id, id), isNull(schema.users.removedAt)));
+}
+
+export async function isRemoved(id: string): Promise<boolean> {
+  const row = await db.select({ removedAt: schema.users.removedAt }).from(schema.users).where(eq(schema.users.id, id)).get();
+  return Boolean(row?.removedAt);
+}
+
+export class RemoveRefused extends Error {}
+
+/**
+ * Removes a revoked User for good, keeping only what signs their work: the row stays, still revoked,
+ * with its name and handle, so their Cards, Comments, and Approvals keep their name and an old
+ * Mention of them still means them. Their email address, sign-in, and avatar are cleared, and with
+ * them their Board memberships, notifications, Preview codes, and any email still waiting to be sent
+ * to them. The address is free to be invited again, as a new User with a handle of its own.
+ */
+export async function removeUser(id: string): Promise<void> {
+  const row = await db.select().from(schema.users).where(eq(schema.users.id, id)).get();
+  if (!row || row.removedAt) throw new RemoveRefused("not_found");
+  if (row.status !== "revoked") throw new RemoveRefused("Revoke their access first.");
+  await db.batch([
+    db.delete(schema.boardMembers).where(eq(schema.boardMembers.userId, id)),
+    db.delete(schema.notifications).where(eq(schema.notifications.userId, id)),
+    db.delete(schema.previewCodes).where(eq(schema.previewCodes.userId, id)),
+    db.delete(schema.outboundEmails).where(and(eq(schema.outboundEmails.toUserId, id), eq(schema.outboundEmails.status, "pending"))),
+    db
+      .update(schema.users)
+      .set({
+        // Unique and never deliverable: `.invalid` is reserved for exactly this.
+        email: `removed-${id}@removed.invalid`,
+        clerkUserId: null,
+        avatarUrl: null,
+        // An Admin's role reaches every Board; a removed User reaches none.
+        role: "member",
+        emailPreference: "off",
+        removedAt: new Date().toISOString(),
+      })
+      .where(eq(schema.users.id, id)),
+  ]);
 }
 
 export async function activateFromClerk(input: {

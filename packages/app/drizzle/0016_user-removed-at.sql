@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `removed_at` text;
