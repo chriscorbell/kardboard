@@ -20,9 +20,11 @@ export interface LogSlice {
 
 const EMPTY: LogSlice = { exists: false, size: 0, offset: 0, nextOffset: 0, text: "", skipped: false };
 
-// Session ids come from `newId()`; anything else must not reach the filesystem.
+// Session and Preview ids come from `newId()`; anything else must not reach the filesystem.
+export const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
 export function logPathFor(dir: string, sessionId: string): string | null {
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(sessionId)) return null;
+  if (!ID_PATTERN.test(sessionId)) return null;
   return path.join(dir, `${sessionId}.log`);
 }
 
