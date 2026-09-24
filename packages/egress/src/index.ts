@@ -10,7 +10,9 @@ import { createProxy } from "./proxy.js";
 // Routes:
 //   /anthropic/* -> https://api.anthropic.com/*              (Claude Code with ANTHROPIC_BASE_URL)
 //   /openai/*    -> https://chatgpt.com/backend-api/codex/*  (Codex with a named model provider)
-//   /limits      -> the last usage refusal seen per Provider (the app, with the control token)
+//   /limits      -> the last usage refusal and credential rejection seen per Provider, and the
+//                   calls refused here (the app, with the control token)
+//   /healthz     -> up, and which credentials are loaded, as booleans
 //
 // Only the provider calls listed in `ALLOWED_CALLS` in proxy.ts go upstream; the rest get a 403.
 //

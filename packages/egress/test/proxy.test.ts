@@ -153,7 +153,7 @@ describe("a proxy with no Codex credential", () => {
     assert.equal(seen.length, 0);
 
     const health = await fetch(`${proxy.base}/healthz`);
-    assert.deepEqual(await health.json(), { ok: true, codex: false });
+    assert.deepEqual(await health.json(), { ok: true, credentials: { claude: true, codex: false } });
 
     await proxy.close();
     await upstream.close();
@@ -377,7 +377,7 @@ describe("serving the limits to the app", () => {
 
     const ok = await fetch(`${proxy.base}/limits`, { headers: { authorization: "Bearer control-token" } });
     assert.equal(ok.status, 200);
-    assert.deepEqual(await ok.json(), limits.snapshot());
+    assert.deepEqual(await ok.json(), { ...limits.report(), credentials: { claude: true, codex: false } });
 
     await proxy.close();
     await upstream.close();
@@ -391,7 +391,114 @@ describe("serving the limits to the app", () => {
     );
     const res = await fetch(`${proxy.base}/limits`);
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { claude: null, codex: null });
+    assert.deepEqual(await res.json(), {
+      claude: null,
+      codex: null,
+      authFailures: { claude: null, codex: null },
+      refusals: { count: 0, last: null },
+      credentials: { claude: true, codex: false },
+    });
+    await proxy.close();
+    await upstream.close();
+  });
+});
+
+/** Stands in for a provider that answers every call with one status. */
+function answeringUpstream(status: () => number): Promise<{ url: URL; close: () => Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(status(), { "content-type": "application/json" });
+      res.end("{}");
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as { port: number };
+      resolve({ url: new URL(`http://127.0.0.1:${port}`), close: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+describe("noticing that a provider rejected the credential", () => {
+  it("records a 401 on a turn, reports it on /limits, and clears it once a turn goes through", async () => {
+    let status = 401;
+    const upstream = await answeringUpstream(() => status);
+    const limits = new UsageLimits();
+    const proxy = await proxyServer(
+      createProxy({ claudeToken: "t", anthropicUpstream: upstream.url, codexUpstream: upstream.url, codex: null, allowedNetworks: [], limits }),
+    );
+
+    assert.equal((await fetch(`${proxy.base}/anthropic/v1/messages?beta=true`, { method: "POST", body: "{}" })).status, 401, "the Session still sees the answer");
+    const report = (await (await fetch(`${proxy.base}/limits`)).json()) as { authFailures: Record<string, { status: number; reason: string } | null> };
+    assert.equal(report.authFailures.claude?.status, 401);
+    assert.equal(report.authFailures.claude?.reason, "POST /v1/messages answered 401");
+    assert.equal(report.authFailures.codex, null);
+
+    status = 200;
+    await fetch(`${proxy.base}/anthropic/v1/messages`, { method: "POST", body: "{}" });
+    assert.equal(limits.report().authFailures.claude, null);
+
+    await proxy.close();
+    await upstream.close();
+  });
+
+  it("ignores a refusal on a call that does not run a turn", async () => {
+    const upstream = await answeringUpstream(() => 403);
+    const limits = new UsageLimits();
+    const proxy = await proxyServer(
+      createProxy({ claudeToken: "t", anthropicUpstream: upstream.url, codexUpstream: upstream.url, codex: null, allowedNetworks: [], limits }),
+    );
+    await fetch(`${proxy.base}/anthropic/v1/models`);
+    await fetch(`${proxy.base}/anthropic/v1/messages/count_tokens`, { method: "POST", body: "{}" });
+    assert.equal(limits.report().authFailures.claude, null);
+    await proxy.close();
+    await upstream.close();
+  });
+
+  it("counts a Codex sign-in that cannot be refreshed, without passing on what the token endpoint said", async () => {
+    const upstream = await answeringUpstream(() => 200);
+    const limits = new UsageLimits();
+    const proxy = await proxyServer(
+      createProxy({
+        claudeToken: "",
+        anthropicUpstream: upstream.url,
+        codexUpstream: upstream.url,
+        codex: {
+          headers: async () => {
+            throw new Error('codex token refresh failed: 401 {"error":"refresh_token_reused","account":"acct-real"}');
+          },
+        },
+        allowedNetworks: [],
+        limits,
+      }),
+    );
+    assert.equal((await fetch(`${proxy.base}/openai/responses`, { method: "POST", body: "{}" })).status, 502);
+    const failure = limits.report().authFailures.codex;
+    assert.equal(failure?.status, 401);
+    assert.doesNotMatch(JSON.stringify(failure), /acct-real|refresh_token_reused/);
+
+    const health = (await (await fetch(`${proxy.base}/healthz`)).json()) as { credentials: unknown };
+    assert.deepEqual(health.credentials, { claude: false, codex: true });
+    await proxy.close();
+    await upstream.close();
+  });
+});
+
+describe("counting the calls it refused", () => {
+  it("keeps a count and the last path, and reports both on /limits", async () => {
+    const seen: Seen[] = [];
+    const upstream = await upstreamServer(seen);
+    const limits = new UsageLimits();
+    const proxy = await proxyServer(
+      createProxy({ claudeToken: "t", anthropicUpstream: upstream.url, codexUpstream: upstream.url, codex: null, allowedNetworks: [], limits }),
+    );
+    await fetch(`${proxy.base}/anthropic/api/oauth/usage`);
+    await fetch(`${proxy.base}/anthropic/v1/files?purpose=x`, { method: "POST", body: "{}" });
+    const report = (await (await fetch(`${proxy.base}/limits`)).json()) as { refusals: { count: number; last: { provider: string; method: string; path: string } } };
+    assert.equal(report.refusals.count, 2);
+    assert.deepEqual({ ...report.refusals.last, at: undefined }, { at: undefined, provider: "claude", method: "POST", path: "/v1/files" });
+    assert.equal(seen.length, 0);
     await proxy.close();
     await upstream.close();
   });

@@ -2,7 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
 import type { CodexCredential } from "./codex-credential.js";
-import { isUsageLimit, UsageLimits, type Provider } from "./limits.js";
+import { isAuthFailure, isUsageLimit, UsageLimits, type Provider } from "./limits.js";
 
 // The request handling half of the egress proxy, kept apart from the process so a test can drive it
 // against a local upstream. `index.ts` builds the config from the environment and listens.
@@ -96,6 +96,17 @@ export function callAllowed(provider: Provider, method: string | undefined, targ
   return ALLOWED_CALLS[provider].some((call) => call.method === method && call.path.test(path));
 }
 
+/**
+ * The calls that run a turn. Only their answer says anything about the credential: a model lookup or
+ * a token count the provider declines for its own reasons is not a rejected sign-in, and every
+ * Session makes a turn call within seconds of starting, so nothing real is missed by looking only here.
+ */
+export function isTurnCall(provider: Provider, method: string | undefined, targetPath: string): boolean {
+  const path = targetPath.split("?")[0]!;
+  if (method !== "POST") return false;
+  return provider === "claude" ? path === "/v1/messages" : /^\/responses(\/compact)?$/.test(path);
+}
+
 /** Join the upstream's own base path with the path left after the route prefix is removed. */
 export function upstreamPath(upstream: URL, targetPath: string): string {
   return `${upstream.pathname.replace(/\/$/, "")}${targetPath}`;
@@ -103,6 +114,7 @@ export function upstreamPath(upstream: URL, targetPath: string): string {
 
 export function createProxy(config: ProxyConfig): http.RequestListener {
   const limits = config.limits ?? new UsageLimits();
+  const credentials = () => ({ claude: config.claudeToken !== "", codex: config.codex !== null });
   // A test points an upstream at a local http server; production upstreams are https.
   const request = (options: https.RequestOptions, cb: (res: http.IncomingMessage) => void) =>
     options.protocol === "http:" ? http.request(options, cb) : https.request(options, cb);
@@ -124,6 +136,17 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
           const limit = limits.note(provider, up.headers);
           console.warn(`[egress] ${provider} refused a request for want of usage; window reopens ${limit.until ?? "at an unstated time"}`);
         }
+        // A rejected credential fails every Session on this Provider until the Admin replaces it,
+        // and nothing but this proxy sees the provider's answer, so it is kept for the app.
+        if (isTurnCall(provider, req.method, targetPath)) {
+          const status = up.statusCode ?? 0;
+          if (isAuthFailure(status)) {
+            limits.noteAuthFailure(provider, status, `${req.method} ${targetPath.split("?")[0]} answered ${status}`);
+            console.warn(`[egress] ${provider} rejected the credential with ${status}`);
+          } else if (status >= 200 && status < 300) {
+            limits.noteAccepted(provider);
+          }
+        }
         const outHeaders: Record<string, string | string[]> = {};
         for (const [k, v] of Object.entries(up.headers)) if (v !== undefined && !HOP_BY_HOP.has(k)) outHeaders[k] = v;
         res.writeHead(up.statusCode ?? 502, outHeaders);
@@ -139,16 +162,22 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
   }
 
   function refuse(req: http.IncomingMessage, res: http.ServerResponse, provider: Provider, targetPath: string) {
-    console.warn(`[egress] refused ${provider} ${req.method} ${JSON.stringify(targetPath.split("?")[0]!.slice(0, 200))}: not a call a Session needs`);
+    const path = targetPath.split("?")[0]!.slice(0, 200);
+    // Counted for the app as well as logged: after a CLI upgrade this is the first sign that a
+    // Provider calls something new, and the log alone goes unread.
+    limits.noteRefused(provider, req.method ?? "", path);
+    console.warn(`[egress] refused ${provider} ${req.method} ${JSON.stringify(path)}: not a call a Session needs`);
     req.resume();
     res.writeHead(403, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "call_not_allowed" }));
   }
 
   return (req, res) => {
+    // Which credentials this process holds, as booleans only: the check answers anything that can
+    // reach the proxy, Session containers included.
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, codex: config.codex !== null }));
+      res.end(JSON.stringify({ ok: true, credentials: credentials() }));
       return;
     }
     if (!ipAllowed(req.socket.remoteAddress, config.allowedNetworks)) {
@@ -157,8 +186,9 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
       return;
     }
 
-    // What the app needs to decide whether to fall a Card's Session back to the other Provider. It
-    // says nothing about the credential itself, only that the subscription is out of usage.
+    // What the app needs to decide whether to fall a Card's Session back to the other Provider, and
+    // what the Admin panel shows about each one. It never carries a credential: only whether one is
+    // loaded and whether the provider last rejected it.
     if (req.url === "/limits") {
       req.resume();
       if (config.controlToken && (req.headers["authorization"] ?? "") !== `Bearer ${config.controlToken}`) {
@@ -167,7 +197,7 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
         return;
       }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(limits.snapshot()));
+      res.end(JSON.stringify({ ...limits.report(), credentials: credentials() }));
       return;
     }
 
@@ -200,6 +230,10 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
         })
         .catch((err: Error) => {
           console.error("[egress] codex credential error", err.message);
+          // The message can carry a fragment of the token endpoint's answer, so only its status
+          // travels on to the app.
+          const status = /refresh failed: (\d{3})/.exec(err.message)?.[1];
+          limits.noteAuthFailure("codex", status ? Number(status) : null, "the sign-in file could not be read or refreshed");
           // The body is deliberately vague: a Session must not learn about the credential's state.
           res.writeHead(502, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "codex_credential_unavailable" }));
