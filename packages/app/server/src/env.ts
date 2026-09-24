@@ -102,5 +102,12 @@ export const env = {
   backupDir: path.resolve(str("KARDBOARD_BACKUP_DIR", path.join(dataDir, "backups"))),
   backupHour: Number(str("KARDBOARD_BACKUP_HOUR", "4")),
   backupKeep: atLeastOne("KARDBOARD_BACKUP_KEEP", str("KARDBOARD_BACKUP_KEEP"), 14),
+  // Optional second home for snapshots and attachments, off the data disk: on minicore a directory
+  // on the NAS mount. Each verified snapshot is copied there and pruned to the same count, and new
+  // files in `uploads/` are copied beside them. Empty keeps everything on the one disk.
+  backupCopyDir: str("KARDBOARD_BACKUP_COPY_DIR") ? path.resolve(str("KARDBOARD_BACKUP_COPY_DIR")) : null,
+  // The app's own console output, one file a day, so a log outlives the container that wrote it.
+  logDir: path.join(dataDir, "logs"),
+  logKeepDays: 14,
   isProduction,
 };
