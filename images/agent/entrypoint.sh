@@ -100,7 +100,8 @@ case "$KARDBOARD_PROVIDER" in
 { "mcpServers": { "kardboard": { "type": "http", "url": "$KARDBOARD_MCP_URL", "headers": { "Authorization": "Bearer $KARDBOARD_TOKEN" } } } }
 JSON
     MODEL_ARGS=(); [ -n "${KARDBOARD_MODEL:-}" ] && MODEL_ARGS=(--model "$KARDBOARD_MODEL")
-    # Effort level: Claude Code reads CLAUDE_CODE_EFFORT_LEVEL (low, medium, high, max).
+    # Effort level: Claude Code reads CLAUDE_CODE_EFFORT_LEVEL (low, medium, high, xhigh, max), and runs
+    # a level the model lacks as the highest one it has at or below it.
     [ -n "${KARDBOARD_REASONING:-}" ] && export CLAUDE_CODE_EFFORT_LEVEL="$KARDBOARD_REASONING"
     # stream-json, not text: text prints nothing until the run ends, so the container log — which is
     # what the admin panel shows as the Session's transcript — would stay empty for the whole run.
@@ -157,7 +158,7 @@ TOML
     # configured should stop loudly; silently ignored config is how this path broke before.
     CODEX_ARGS=(--strict-config --skip-git-repo-check)
     [ -n "${KARDBOARD_MODEL:-}" ] && CODEX_ARGS+=(-m "$KARDBOARD_MODEL")
-    # Codex calls the top level "xhigh"; kardboard's "max" maps to it.
+    # Codex takes "xhigh" as it is. Its models have no "max", so kardboard's "max" runs as "xhigh".
     if [ -n "${KARDBOARD_REASONING:-}" ]; then
       EFFORT="$KARDBOARD_REASONING"; [ "$EFFORT" = "max" ] && EFFORT="xhigh"
       CODEX_ARGS+=(-c "model_reasoning_effort=\"$EFFORT\"")

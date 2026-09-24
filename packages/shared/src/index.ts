@@ -22,7 +22,9 @@ export const PROVIDERS = ["claude", "codex"] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const providerSchema = z.enum(PROVIDERS);
 
-export const REASONING_LEVELS = ["low", "medium", "high", "max"] as const;
+// Claude Code takes all five, and runs a level the model lacks as the highest one it has at or below
+// it. Codex has no "max" for its models, so the entrypoint runs it as "xhigh".
+export const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Reasoning = (typeof REASONING_LEVELS)[number];
 export const reasoningSchema = z.enum(REASONING_LEVELS);
 
