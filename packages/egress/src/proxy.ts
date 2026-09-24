@@ -223,19 +223,24 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
       headers["host"] = config.codexUpstream.host;
       void codex
         .headers()
-        .then(({ authorization, accountId }) => {
-          headers["authorization"] = authorization;
-          if (accountId) headers["chatgpt-account-id"] = accountId;
-          forward(req, res, "codex", config.codexUpstream, targetPath, headers);
-        })
+        .then(
+          ({ authorization, accountId }) => {
+            headers["authorization"] = authorization;
+            if (accountId) headers["chatgpt-account-id"] = accountId;
+            forward(req, res, "codex", config.codexUpstream, targetPath, headers);
+          },
+          (err: Error) => {
+            // The message can carry a fragment of the token endpoint's answer, so only its status
+            // travels on to the app.
+            const status = /refresh failed: (\d{3})/.exec(err.message)?.[1];
+            limits.noteAuthFailure("codex", status ? Number(status) : null, "the sign-in file could not be read or refreshed");
+            throw err;
+          },
+        )
         .catch((err: Error) => {
           console.error("[egress] codex credential error", err.message);
-          // The message can carry a fragment of the token endpoint's answer, so only its status
-          // travels on to the app.
-          const status = /refresh failed: (\d{3})/.exec(err.message)?.[1];
-          limits.noteAuthFailure("codex", status ? Number(status) : null, "the sign-in file could not be read or refreshed");
           // The body is deliberately vague: a Session must not learn about the credential's state.
-          res.writeHead(502, { "content-type": "application/json" });
+          if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "codex_credential_unavailable" }));
           req.resume();
         });
