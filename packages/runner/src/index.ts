@@ -10,7 +10,7 @@ import { ID_PATTERN, readLogSlice } from "./logs.js";
 import { createSessionNetwork, prunePreviewNetworks, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
 import { buildAndRunPreview, PreviewCancelled, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
 import { resumeLogFrom, runningSessions } from "./reattach.js";
-import { deliverWithRetry } from "./report.js";
+import { deliverWithRetry, exitReportBody, type ContainerExitState } from "./report.js";
 
 // The runner is the only process with the Docker socket. It knows how to do exactly two things:
 // run a Session container from an approved image with fixed limits, and stop or remove one.
@@ -112,7 +112,7 @@ async function pruneExitedSessions(): Promise<void> {
     const container = docker.getContainer(c.Id);
     const sessionId = c.Labels["kardboard.session"];
     const info = await container.inspect().catch(() => null);
-    if (sessionId && info) await reportExit(sessionId, info.State.ExitCode);
+    if (sessionId && info) await reportExit(sessionId, info.State.ExitCode, info.State);
     await container.remove({ force: true }).catch(() => {});
     console.log(`[runner] removed exited ${c.Names[0] ?? c.Id}`);
   }
@@ -126,12 +126,12 @@ async function reattachRunningSessions(): Promise<void> {
   }
 }
 
-async function reportExit(sessionId: string, exitCode: number, reason?: string) {
+async function reportExit(sessionId: string, exitCode: number, state: ContainerExitState | null | undefined) {
   const delivered = await deliverWithRetry(() =>
     fetch(`${env.appUrl}/api/internal/sessions/${sessionId}/exit`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ exitCode, reason }),
+      body: JSON.stringify(exitReportBody(exitCode, state)),
     }),
   );
   if (!delivered) console.error(`[runner] could not report exit ${exitCode} for ${sessionId}`);
@@ -154,7 +154,9 @@ function watchContainer(sessionId: string, container: Docker.Container, since?: 
   void container
     .wait()
     .then(async (res) => {
-      await reportExit(sessionId, res.StatusCode);
+      // Read before the container is removed: whether it hit its memory limit is only on its state.
+      const info = await container.inspect().catch(() => null);
+      await reportExit(sessionId, res.StatusCode, info?.State);
       await container.remove({ force: true }).catch(() => {});
       await removeSessionNetwork(docker, sessionId).catch(() => {});
     })

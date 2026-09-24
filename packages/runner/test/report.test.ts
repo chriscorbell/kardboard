@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deliverWithRetry } from "../src/report.js";
+import { deliverWithRetry, exitReportBody } from "../src/report.js";
 
 const noWait = { wait: async () => {} };
+
+describe("the exit report's body", () => {
+  it("says the container ran out of memory when Docker says so", () => {
+    assert.deepEqual(exitReportBody(137, { OOMKilled: true }), { exitCode: 137, oomKilled: true });
+  });
+
+  it("does not guess from the exit code alone", () => {
+    assert.deepEqual(exitReportBody(137, { OOMKilled: false }), { exitCode: 137, oomKilled: false });
+    assert.deepEqual(exitReportBody(137, null), { exitCode: 137, oomKilled: false }, "the container could not be inspected");
+  });
+});
 
 describe("reporting an exit to the app", () => {
   it("keeps trying while the app is restarting, then stops once it answers", async () => {
