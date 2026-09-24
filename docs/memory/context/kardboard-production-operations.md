@@ -3,8 +3,8 @@
 Read when: deploying a change to production, rotating a secret, reading a Session's log, or inspecting the production database.
 Status: verified
 Scope: environment, minicore
-Verified: 2026-09-14
-Source: the deployment and Session runs of 2026-09-14; `deploy/compose.yaml`; `~/Code/stacks/kardboard/compose.yaml`
+Verified: 2026-09-24
+Source: the deployment and Session runs of 2026-09-14; the internal-rename cutover of 2026-09-24; `deploy/compose.yaml`; `~/Code/stacks/kardboard/compose.yaml`
 Recheck when: the compose file moves, the runner's log directory changes, the agent entrypoint's output format changes, or the app image stops bundling `@libsql/client`
 
 - Code deploys itself: push to `main`, CI publishes five images, Watchtower restarts the four services within a minute. Every push rebuilds all five images, so every service restarts on every push.
@@ -16,4 +16,4 @@ Recheck when: the compose file moves, the runner's log directory changes, the ag
 
 Preview host configuration and verification are recorded in [the preview runbook](../../runbooks/previews.md). Watchtower applies image updates only; applying PR 10 required separately updating the stacks Compose file to create `kardboard_preview` and wire the app secret and hostname pattern.
 
-The domain migration deployed as `f6b868b` on 2026-09-15 UTC. Before cutover, snapshot `kardboard-20260915T032551Z.db` was verified. Private environment backups are under `~/.local/state/kardboard/` on mbp and minicore. These are recovery artifacts, not the current deploy configuration.
+Watchtower only follows image names already running. A change to image names, env keys, networks, or data paths needs the stack moved by hand, as on 2026-09-24 when every `cardboard` name became `kardboard`; see [the archive note](../archive/2026-09-24-internal-rename.md). Private environment and Compose backups from both cutovers are under `~/.local/state/kardboard/` on mbp and minicore. These are recovery artifacts, not the current deploy configuration.

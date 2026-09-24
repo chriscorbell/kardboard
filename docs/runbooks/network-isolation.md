@@ -38,13 +38,23 @@ fifteen Linux allows for an interface), and `deploy/compose.yaml` names the prev
 `cbnprev`. One `-i cbn+` match therefore covers every Session and every Preview and needs no update
 when a Session starts.
 
-On minicore, as root:
+On minicore the script is installed as `/usr/local/sbin/kardboard-network-isolation`, and
+[`deploy/kardboard-lan-isolation.service`](../../deploy/kardboard-lan-isolation.service) runs it
+whenever Docker starts, so the rules come back after a reboot or a `systemctl restart docker`. To
+install or update both, from a checkout of this repository, as root:
 
 ```bash
-cd /home/chris/docker/stacks/kardboard
-./network-isolation.sh check     # what is installed now
-./network-isolation.sh apply     # insert the rules; idempotent
-./network-isolation.sh remove    # take them out again
+install -m 755 deploy/network-isolation.sh /usr/local/sbin/kardboard-network-isolation
+install -m 644 deploy/kardboard-lan-isolation.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now kardboard-lan-isolation
+```
+
+By hand:
+
+```bash
+kardboard-network-isolation check     # what is installed now
+kardboard-network-isolation apply     # insert the rules; idempotent
+kardboard-network-isolation remove    # take them out again
 ```
 
 It inserts, into `DOCKER-USER`, a drop for traffic arriving on a `cbn*` bridge and leaving for
@@ -58,8 +68,8 @@ runner and need nothing.
 
 ### What it does not cover
 
-- **A host reboot or `systemctl restart docker`** rebuilds the chains and loses the rules. Re-run
-  `apply`, or persist them with `iptables-persistent` or a systemd unit ordered after Docker.
+- **A host without the systemd unit.** A reboot loses the rules; install the unit above rather
+  than re-running `apply` by hand.
 - **Host ports published on the bridge gateway.** A container can still reach the host at its
   bridge gateway address, which reaches published ports 3070 and 3073 — the app and the preview
   router. Both are services a Session may already reach by name, so this is not new exposure, but
@@ -82,3 +92,9 @@ getent hosts kardboard-session-<other id>
 
 `docker network inspect kardboard-session-<id>` should list exactly three containers: the Session,
 the app, and the egress proxy.
+
+Last verified on minicore on 2026-09-24: the rules and the systemd unit were installed, the stack
+was recreated so the preview bridge is `cbnprev`, and a throwaway container on a `cbn` bridge
+resolved DNS and reached the internet but not 10.0.0.1, the host's LAN address, or the tailnet
+resolver. A real Session then ran on its own `kardboard-session-<id>` network, and the public
+preview host still answered through the router.

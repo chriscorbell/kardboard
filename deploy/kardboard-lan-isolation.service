@@ -1,0 +1,20 @@
+# Re-applies deploy/network-isolation.sh whenever Docker starts, so the rules survive a reboot and a
+# `systemctl restart docker`. Install on minicore, as root:
+#
+#   install -m 755 network-isolation.sh /usr/local/sbin/kardboard-network-isolation
+#   install -m 644 kardboard-lan-isolation.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now kardboard-lan-isolation
+[Unit]
+Description=Keep kardboard Session and Preview containers off the LAN
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/kardboard-network-isolation apply
+ExecStop=/usr/local/sbin/kardboard-network-isolation remove
+
+[Install]
+WantedBy=docker.service
