@@ -15,29 +15,31 @@ import {
   settingsSchema,
   updateCardSchema,
   updateCommentSchema,
+  updateMeSchema,
   upsertBoardSchema,
   ACTIVE_SESSION_STATUSES,
   type BoardView,
   type CardDetail,
   type Me,
   type SessionTranscript,
+  type User,
 } from "@kardboard/shared";
 import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { refreshFromClerk, requireAdmin, requireUser, type AuthVariables } from "../auth.js";
-import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardsForUser, listMembers, setBoardPaused, setMembers, updateBoard } from "../services/boards.js";
+import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardPeople, listBoardsForUser, listMembers, listMentionable, setBoardPaused, setMembers, updateBoard } from "../services/boards.js";
 import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, retryCard, RetryRefused, updateCard } from "../services/cards.js";
-import { addAttachment, createComment, getAttachment, getComment, listComments, updateComment } from "../services/comments.js";
+import { addAttachment, createComment, deleteComment, getAttachment, getComment, listComments, updateComment } from "../services/comments.js";
 import { getAgentProfile, getSettings, updateSettings } from "../services/settings.js";
-import { getUser, inviteUser, listUsers, setUserStatus } from "../services/users.js";
+import { getPreferences, getUser, inviteUser, listUsers, setUserStatus, updatePreferences } from "../services/users.js";
 import { sendInvitation } from "../services/email.js";
 import { subscribe } from "../services/realtime.js";
 import { boardPauseChanged, cancelSession, getSession, listAllSessions, listBoardSessions } from "../services/orchestrator.js";
 import { runner } from "../services/runner-client.js";
 import { parseTranscript } from "../services/transcript.js";
 import { ApprovalError, approveCard, listApprovals, retryMerge } from "../services/approvals.js";
-import { listNotifications, markNotificationsRead } from "../services/notifications.js";
+import { listNotifications, markCardNotificationsRead, markNotificationsRead } from "../services/notifications.js";
 import { backupsView, takeSnapshot } from "../services/backup.js";
 import { installationStatus, parseRepoUrl } from "../services/github.js";
 import { reconcileOnDemand } from "../services/reconcile.js";
@@ -82,15 +84,18 @@ async function boardForUser(c: Parameters<typeof actorOf>[0] & { json: (b: unkno
   return { board };
 }
 
-api.get("/me", async (c) => {
-  const me: Me = { user: c.get("user"), agent: await getAgentProfile(), authMode: env.authMode };
-  return c.json(me);
-});
+async function meView(user: User): Promise<Me> {
+  return { user, agent: await getAgentProfile(), authMode: env.authMode, ...(await getPreferences(user.id)) };
+}
 
-api.post("/me/refresh", async (c) => {
-  const user = await refreshFromClerk(c.get("user"));
-  const me: Me = { user, agent: await getAgentProfile(), authMode: env.authMode };
-  return c.json(me);
+api.get("/me", async (c) => c.json(await meView(c.get("user"))));
+
+api.post("/me/refresh", async (c) => c.json(await meView(await refreshFromClerk(c.get("user")))));
+
+// A User's own settings: how much email they want, and whether they have seen the board explainer.
+api.patch("/me", json(updateMeSchema), async (c) => {
+  await updatePreferences(c.get("user").id, c.req.valid("json"));
+  return c.json(await meView(c.get("user")));
 });
 
 api.get("/boards", async (c) => c.json(await listBoardsForUser(c.get("user"))));
@@ -111,7 +116,8 @@ api.get("/boards/:slug", async (c) => {
   const view: BoardView = {
     board,
     cards: await listCards(board.id),
-    members: await listMembers(board.id),
+    members: await listMentionable(board.id),
+    people: await listBoardPeople(board.id),
     sessions: await listBoardSessions(board.id, 20),
     agent: await getAgentProfile(),
   };
@@ -161,6 +167,15 @@ api.get("/cards/:id", async (c) => {
     children: await listChildren(card.id),
   };
   return c.json(detail);
+});
+
+// The card sheet calls this as it opens: whatever the bell held about this Card has now been seen.
+api.post("/cards/:id/read", async (c) => {
+  const card = await getCard(c.req.param("id"));
+  if (!card) return c.json({ error: "not_found" }, 404);
+  const access = await boardForUser(c as never, card.boardId);
+  if ("error" in access) return access.error;
+  return c.json(await markCardNotificationsRead(c.get("user"), card.id));
 });
 
 api.patch("/cards/:id", json(updateCardSchema), async (c) => {
@@ -274,6 +289,21 @@ api.patch("/comments/:id", json(updateCommentSchema), async (c) => {
   const user = c.get("user");
   if (!(comment.authorKind === "user" && comment.authorId === user.id)) return c.json({ error: "forbidden" }, 403);
   return c.json(await updateComment(comment.id, { body: c.req.valid("json").body, actor: actorOf(c) }));
+});
+
+// A Comment's author may delete it, and so may the Admin, who alone can remove the Agent's. As with
+// an edit, the author must still be able to open the Board.
+api.delete("/comments/:id", async (c) => {
+  const comment = await getComment(c.req.param("id"));
+  if (!comment) return c.json({ error: "not_found" }, 404);
+  const card = (await getCard(comment.cardId))!;
+  const access = await boardForUser(c as never, card.boardId);
+  if ("error" in access) return access.error;
+  const user = c.get("user");
+  const mine = comment.authorKind === "user" && comment.authorId === user.id;
+  if (!mine && user.role !== "admin") return c.json({ error: "forbidden" }, 403);
+  await deleteComment(comment.id, actorOf(c));
+  return c.body(null, 204);
 });
 
 api.post("/comments/:id/attachments", async (c) => {

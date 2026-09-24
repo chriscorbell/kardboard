@@ -1,5 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm";
-import type { Board, User } from "@kardboard/shared";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import type { Board, Person, User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { toUser } from "./users.js";
@@ -69,6 +69,31 @@ export async function listMembers(boardId: string): Promise<User[]> {
   const admins = await db.select().from(schema.users).where(eq(schema.users.role, "admin"));
   for (const a of admins) if (!members.some((m) => m.id === a.id)) members.push(toUser(a));
   return members.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Who a Mention on this Board reaches, and so who the composer offers: the Admin and the Board's
+// Members, less anyone revoked.
+export async function listMentionable(boardId: string): Promise<User[]> {
+  return (await listMembers(boardId)).filter((u) => u.status !== "revoked");
+}
+
+// Everyone a Board can show as the author of something: its Members and the Admin, and every User
+// who created a Card, wrote or was mentioned in a Comment, gave an Approval, or acted in its
+// activity, whether or not they can still open it. A removed Member keeps their name that way.
+export async function listBoardPeople(boardId: string): Promise<Person[]> {
+  const referenced = sql`(
+    select user_id from board_members where board_id = ${boardId}
+    union select creator_id from cards where board_id = ${boardId} and creator_kind = 'user'
+    union select c.author_id from comments c join cards k on k.id = c.card_id where k.board_id = ${boardId} and c.author_kind = 'user'
+    union select m.user_id from mentions m join comments c on c.id = m.comment_id join cards k on k.id = c.card_id where k.board_id = ${boardId}
+    union select a.user_id from approvals a join cards k on k.id = a.card_id where k.board_id = ${boardId}
+    union select actor_id from events where board_id = ${boardId} and actor_kind = 'user'
+  )`;
+  return db
+    .select({ id: schema.users.id, handle: schema.users.handle, name: schema.users.name, avatarUrl: schema.users.avatarUrl })
+    .from(schema.users)
+    .where(or(eq(schema.users.role, "admin"), sql`${schema.users.id} in ${referenced}`))
+    .orderBy(asc(schema.users.name));
 }
 
 export async function setMembers(boardId: string, userIds: string[]): Promise<void> {

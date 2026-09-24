@@ -75,10 +75,17 @@ export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 export const CARD_OUTCOMES = ["implemented", "closed"] as const;
 export type CardOutcome = (typeof CARD_OUTCOMES)[number];
 
-// What the app notifies a user about. Every kind also sends that user an email. `session_failed`
-// goes to a Card's creator and the Admin when a Session on it failed or ran out of time.
+// What the app notifies a user about. Every kind is recorded in the app; whether it is also emailed
+// depends on the User's EmailPreference. `session_failed` goes to a Card's creator and the Admin
+// when a Session on it failed or ran out of time.
 export const NOTIFICATION_KINDS = ["mention", "card_moved", "session_failed"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+// How much a User wants by email. In-app notifications are recorded whatever they choose.
+// "important" keeps what asks something of the reader: Mentions, a failed Session, and a Card of
+// theirs moving to Blocked or Review.
+export const EMAIL_PREFERENCES = ["all", "important", "off"] as const;
+export type EmailPreference = (typeof EMAIL_PREFERENCES)[number];
 
 export type ActorKind = "user" | "agent" | "system";
 
@@ -92,6 +99,13 @@ export interface User {
   status: UserStatus;
   createdAt: string;
 }
+
+/**
+ * Enough of a User to say who did something: a name, a face, and the handle a Mention uses. A
+ * Board lists everyone who ever appeared on it this way, so a Member who was removed or revoked
+ * keeps their name on their Cards, Comments, and Approvals, without their email going with it.
+ */
+export type Person = Pick<User, "id" | "handle" | "name" | "avatarUrl">;
 
 export interface Board {
   id: string;
@@ -154,6 +168,8 @@ export interface Card {
   /** Set while the Card has Triggers waiting and no Session: what it is waiting for. */
   waiting: CardWaiting | null;
   pendingRerun: boolean;
+  /** In Blocked with the Agent's question as the last word on it, so a person owes it an answer. */
+  awaitingReply: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -323,7 +339,10 @@ export interface AgentProfile {
 export interface BoardView {
   board: Board;
   cards: Card[];
+  /** Who can open the Board now and is not revoked: the people a Mention can reach. */
   members: User[];
+  /** Everyone who can open the Board or appears on it, former Members included. For names only. */
+  people: Person[];
   sessions: SessionSummary[];
   agent: AgentProfile;
 }
@@ -340,6 +359,9 @@ export interface Me {
   user: User;
   agent: AgentProfile;
   authMode: "dev" | "clerk";
+  emailPreference: EmailPreference;
+  /** When this User dismissed the board explainer. Null shows it on the next Board they open. */
+  onboardedAt: string | null;
 }
 
 // ---- request schemas ----
@@ -376,6 +398,12 @@ export const createCommentSchema = z.object({
 });
 export const updateCommentSchema = z.object({
   body: z.string().trim().min(1).max(20_000),
+});
+
+// A User's own settings. `onboarded: true` records that the board explainer was dismissed.
+export const updateMeSchema = z.object({
+  emailPreference: z.enum(EMAIL_PREFERENCES).optional(),
+  onboarded: z.boolean().optional(),
 });
 
 export const inviteUserSchema = z.object({
@@ -463,6 +491,7 @@ export type BoardEvent =
   | { type: "card.upserted"; card: Card }
   | { type: "card.removed"; cardId: string }
   | { type: "comment.upserted"; comment: Comment }
+  | { type: "comment.removed"; commentId: string; cardId: string }
   | { type: "session.updated"; session: SessionSummary }
   | { type: "board.updated"; board: Board };
 

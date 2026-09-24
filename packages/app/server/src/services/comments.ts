@@ -1,13 +1,16 @@
+import fs from "node:fs";
+import path from "node:path";
 import { asc, eq, inArray } from "drizzle-orm";
 import { extractMentionHandles, type Attachment, type Comment, type User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
+import { env } from "../env.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
 import { recordEvent, type Actor } from "./events.js";
 import { enqueueTrigger } from "./orchestrator.js";
 import { getCard } from "./cards.js";
 import { findUsersByHandles } from "./users.js";
-import { canBeNotified, notifyMentions } from "./notifications.js";
+import { canBeNotified, forgetMentionNotifications, notifyMentions } from "./notifications.js";
 
 function toAttachment(row: typeof schema.attachments.$inferSelect): Attachment {
   return {
@@ -130,6 +133,44 @@ export async function updateComment(id: string, input: { body: string; actor: Ac
     await enqueueTrigger({ card, kind: "comment_edited", actorUserId: input.actor.id, payload: { commentId: id } });
   }
   return comment;
+}
+
+// Where an uploaded file lives: named by its content, as the upload route writes it.
+export function uploadPath(sha256: string): string {
+  return path.join(env.dataDir, "uploads", sha256.slice(0, 2), sha256);
+}
+
+/**
+ * Removes a Comment for good: its body, every earlier revision of it, its Mentions, its
+ * Attachments, and each uploaded file no other Attachment still points at. A pasted secret is the
+ * usual reason, so the mention notifications that quoted it go as well; an email already sent
+ * cannot be recalled. The event log records that the Comment was deleted and whose it was, never
+ * what it said. Not a Trigger: taking words back is not a request for work.
+ */
+export async function deleteComment(id: string, actor: Actor): Promise<void> {
+  const current = await getComment(id);
+  if (!current) throw new Error("comment not found");
+  const card = (await getCard(current.cardId))!;
+  const revisions = await db.select({ body: schema.commentRevisions.body }).from(schema.commentRevisions).where(eq(schema.commentRevisions.commentId, id));
+  const hashes = new Set(current.attachments.length > 0 ? (await db.select({ sha256: schema.attachments.sha256 }).from(schema.attachments).where(eq(schema.attachments.commentId, id))).map((a) => a.sha256) : []);
+  await db.delete(schema.commentRevisions).where(eq(schema.commentRevisions.commentId, id));
+  await db.delete(schema.attachments).where(eq(schema.attachments.commentId, id));
+  await db.delete(schema.mentions).where(eq(schema.mentions.commentId, id));
+  await db.delete(schema.comments).where(eq(schema.comments.id, id));
+  await forgetMentionNotifications(card.id, [current.body, ...revisions.map((r) => r.body)]);
+  for (const sha256 of hashes) {
+    const still = await db.select({ id: schema.attachments.id }).from(schema.attachments).where(eq(schema.attachments.sha256, sha256)).limit(1).get();
+    if (!still) fs.rmSync(uploadPath(sha256), { force: true });
+  }
+  await recordEvent({
+    boardId: card.boardId,
+    cardId: card.id,
+    actor,
+    type: "comment.deleted",
+    payload: { commentId: id, authorKind: current.authorKind, authorId: current.authorId },
+  });
+  publish(card.boardId, { type: "comment.removed", commentId: id, cardId: card.id });
+  publish(card.boardId, { type: "card.upserted", card: (await getCard(card.id))! });
 }
 
 export async function addAttachment(input: {
