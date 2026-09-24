@@ -45,7 +45,7 @@ A copy that fails, refuses, or does not finish within 15 minutes is reported on 
 
 On minicore the directory is `/nas/backup/minicore/kardboard`, on `nas`'s `backup` share, which `/etc/fstab` automounts beside Crafty's backups in `/nas/backup/minicore/crafty`. `nas` snapshots its pools daily and the `backup` machine replicates those snapshots nightly, so a copy there also outlives `nas` itself (see `~/Code/fleet/AGENTS.md`). The container runs as uid 1000, which must be able to write there.
 
-The Compose file binds it with `create_host_path: false`, so Docker never creates the directory itself. The flip side: while the share is not mounted, Docker cannot create the `app` container at all, which is what a Watchtower update does on every deploy. If the app is down and `docker compose ps -a` shows it failed with a bind-source error, mount the share, or remove that one volume entry until it is back; the marker check alone still keeps a copy from landing on the local disk.
+The Compose file binds the share in the short form, so an unmounted share never stops Watchtower recreating the `app` container: Docker binds an empty local folder in its place, the marker is missing from it, and the app copies nothing and alerts the Admin instead.
 
 To set it up, or to check it after a change to the mount:
 
