@@ -98,12 +98,69 @@ describe("update_card", () => {
     assert.equal((await db.select().from(schema.triggers)).length, 0, "an Agent edit is not a Trigger");
   });
 
-  it("edits another card on the board when named", async () => {
+  it("keeps what each changed field said before, so the author's words are never lost", async () => {
+    await db.update(schema.cards).set({ description: "make the export work pls" }).where(eq(schema.cards.id, CARD));
+    const { client, sessionId } = await sessionOn(CARD);
+    const result = await call(client, "update_card", { description: "Export invoices as CSV.\n\nOriginal ask: make the export work pls", priority: "none", revision: 0 });
+    assert.notEqual(result.isError, true, text(result));
+    const [edited] = await db.select().from(schema.events).where(and(eq(schema.events.cardId, CARD), eq(schema.events.type, "card.edited")));
+    assert.deepEqual(edited!.payload, { sessionId, fields: ["description"], previous: { description: "make the export work pls" } }, "an unchanged priority is not an edit");
+  });
+
+  it("edits a child of its own card and a card it created itself", async () => {
+    await card("card-child", { parentCardId: CARD, column: "blocked", creatorKind: "agent", creatorId: null });
+    const { client } = await sessionOn(CARD);
+    const made = json(await call(client, "create_card", { title: "Rotate the deploy key", column: "ready" })).cardId as string;
+
+    for (const id of ["card-child", made]) {
+      const result = await call(client, "update_card", { card_id: id, title: "A clearer title", revision: 0 });
+      assert.notEqual(result.isError, true, text(result));
+      assert.equal((await row(id)).title, "A clearer title");
+    }
+  });
+
+  it("refuses someone else's card, even its title", async () => {
     await card("card-other");
     const { client } = await sessionOn(CARD);
-    const result = await call(client, "update_card", { card_id: "card-other", description: "Steps to reproduce: …", revision: 0 });
-    assert.notEqual(result.isError, true, text(result));
-    assert.equal((await row("card-other")).description, "Steps to reproduce: …");
+    const result = await call(client, "update_card", { card_id: "card-other", title: "Retitled", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /not yours to edit.*Comment on it instead/);
+    assert.equal((await row("card-other")).title, "Card card-other");
+  });
+
+  it("refuses a card another Session created", async () => {
+    const { client: maker } = await sessionOn(CARD);
+    const made = json(await call(maker, "create_card", { title: "An Admin step" })).cardId as string;
+    await card("card-second", { column: "in_progress" });
+    const { client } = await sessionOn("card-second");
+    const result = await call(client, "update_card", { card_id: made, title: "Mine now", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /not yours to edit/);
+  });
+
+  it("refuses a card another Session is working on", async () => {
+    await card("card-child", { parentCardId: CARD, creatorKind: "agent", creatorId: null });
+    await db.insert(schema.sessions).values({ id: "session-child", boardId: BOARD, cardId: "card-child", provider: "claude", status: "running" });
+    const { client } = await sessionOn(CARD);
+    const result = await call(client, "update_card", { card_id: "card-child", description: "Do it differently", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /being worked on by session session-child/);
+  });
+
+  it("refuses a card in Done, its own included", async () => {
+    await db.update(schema.cards).set({ column: "done" }).where(eq(schema.cards.id, CARD));
+    const { client } = await sessionOn(CARD);
+    const result = await call(client, "update_card", { title: "Tidied after the fact", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /in Done/);
+  });
+
+  it("gives a hygiene sweep no edits, since it corrects columns rather than what cards say", async () => {
+    const { client } = await sessionOn(null, "sweep");
+    const result = await call(client, "update_card", { card_id: CARD, priority: "high", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /hygiene sweep does not edit cards/);
+    assert.equal((await row(CARD)).priority, "none");
   });
 
   it("refuses an edit made from an old revision and says where the card is now", async () => {

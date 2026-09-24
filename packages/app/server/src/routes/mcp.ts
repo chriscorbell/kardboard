@@ -6,7 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
@@ -31,10 +31,11 @@ const DONE_SHOWN = 15;
 const EARLIER_SESSIONS_SHOWN = 10;
 
 // The agent-native interface. Every tool runs under a Session's identity; authorization is the
-// Session's Board plus, for pull-request state, its own Card. Sweeps cannot touch work state.
+// Session's Board plus, for pull-request state, its own Card, and for card edits, the Cards that are
+// its own (see `editRefusal`). Sweeps cannot touch work state or edit cards.
 function buildServer(session: SessionRow): McpServer {
   const server = new McpServer({ name: "kardboard", version: "0.1.0" });
-  const actor = { kind: "agent" as const, id: null };
+  const actor = { kind: "agent" as const, id: null, sessionId: session.id };
 
   async function assertBoardCard(cardId: string) {
     const card = await getCard(cardId);
@@ -172,11 +173,31 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // Which Cards a Session may rewrite. Its own, which it is working on and answers for, and the ones
+  // it made, whose words are the Agent's. Not a Card someone else's Session holds, which that Session
+  // is reading and may be rewriting too, and not a closed Card, whose text is the record of what was
+  // asked. Nor anyone else's open Card, not even its title or priority: both are its author's call, a
+  // Session with no Claim on it has heard nothing from the author to justify changing them, and a
+  // Comment says the same thing without taking the author's words away.
+  async function editRefusal(card: NonNullable<Awaited<ReturnType<typeof getCard>>>): Promise<string | null> {
+    if (card.column === "done") return `card ${card.id} is in Done, and a closed card is not edited. Comment on it instead.`;
+    if (card.activeSession && card.activeSession.id !== session.id) return `card ${card.id} is being worked on by session ${card.activeSession.id}. Leave it to that session, and comment if it needs to know something.`;
+    if (card.id === session.cardId || (session.cardId && card.parentCardId === session.cardId)) return null;
+    const created = await db
+      .select({ id: schema.events.id })
+      .from(schema.events)
+      .where(and(eq(schema.events.cardId, card.id), eq(schema.events.type, "card.created"), eq(schema.events.actorKind, "agent"), sql`json_extract(${schema.events.payload}, '$.sessionId') = ${session.id}`))
+      .get();
+    if (created) return null;
+    return `card ${card.id} is not yours to edit: you may edit your own card, its child cards, and cards you created. Comment on it instead.`;
+  }
+
   // Tidying a card is not a request for work, so an edit here, unlike a person's, starts nothing.
+  // What a field said before is kept on the card's history, so an edit never loses the author's words.
   server.registerTool(
     "update_card",
     {
-      description: "Change a card's title, description, or priority: during intake, to give a vague card a title that says what it asks for, set its priority, or lay out the description. Keep everything the author asked for; add and clarify, never drop. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again. Omit card_id for your own card. Editing a card starts no session.",
+      description: "Change the title, description, or priority of your own card, one of its child cards, or a card you created: during intake, to give a vague card a title that says what it asks for, set its priority, or lay out the description. Keep everything the author asked for; add and clarify, never drop. Cards in Done, cards another session is working on, and other people's cards are refused: comment on those instead. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again. Omit card_id for your own card. Editing a card starts no session.",
       inputSchema: {
         card_id: z.string().optional(),
         title: z.string().trim().min(1).max(200).optional(),
@@ -186,10 +207,13 @@ function buildServer(session: SessionRow): McpServer {
       },
     },
     async ({ card_id, title, description, priority, revision }) => {
+      // A sweep corrects which column a card is in. What a card says is its author's.
+      if (session.kind !== "card" || !session.cardId) throw new Error("a hygiene sweep does not edit cards: move a card that drifted, and explain the move in a comment.");
       const id = card_id ?? session.cardId;
-      if (!id) throw new Error("card_id required for a sweep session");
-      await assertBoardCard(id);
+      const current = await assertBoardCard(id);
       if (title === undefined && description === undefined && priority === undefined) throw new Error("nothing to change: pass a title, a description, or a priority");
+      const refusal = await editRefusal(current);
+      if (refusal) throw new Error(refusal);
       let card;
       try {
         card = await updateCard(id, { title, description, priority, revision, actor });

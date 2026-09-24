@@ -253,12 +253,14 @@ export async function updateCard(
     .returning({ id: schema.cards.id });
   if (written.length === 0) throw new ConflictError("card changed since you loaded it");
   const card = (await getCard(id))!;
+  // What each changed field said before, so no edit, a person's or the Agent's, loses an author's words.
+  const previous = Object.fromEntries(Object.keys(changed).map((field) => [field, current[field as "title" | "description" | "priority"]]));
   await recordEvent({
     boardId: card.boardId,
     cardId: card.id,
     actor: input.actor,
     type: "card.edited",
-    payload: { fields: Object.keys(changed) },
+    payload: { fields: Object.keys(changed), previous },
   });
   publish(card.boardId, { type: "card.upserted", card });
   // Priority alone is a signal to the next Session, not a reason to start one.
