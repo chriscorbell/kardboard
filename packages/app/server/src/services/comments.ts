@@ -95,7 +95,9 @@ export async function createComment(input: {
     body: input.body,
   });
   let comment = (await getComment(id))!;
-  const newlyMentioned = await syncMentions(comment, card.boardId, input.actor);
+  // kardboard's own notices quote what went wrong in the Agent's words, which can name people; the
+  // Agent already reached them, and the notice's own notification goes to who it concerns.
+  const newlyMentioned = input.actor.kind === "system" ? [] : await syncMentions(comment, card.boardId, input.actor);
   comment = (await getComment(id))!;
   await recordEvent({
     boardId: card.boardId,
@@ -124,7 +126,9 @@ export async function updateComment(id: string, input: { body: string; actor: Ac
     .where(eq(schema.comments.id, id));
   let comment = (await getComment(id))!;
   const card = (await getCard(comment.cardId))!;
-  const newlyMentioned = await syncMentions(comment, card.boardId, input.actor);
+  // kardboard's own notices quote what went wrong in the Agent's words, which can name people; the
+  // Agent already reached them, and the notice's own notification goes to who it concerns.
+  const newlyMentioned = input.actor.kind === "system" ? [] : await syncMentions(comment, card.boardId, input.actor);
   comment = (await getComment(id))!;
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "comment.edited", payload: { commentId: id } });
   publish(card.boardId, { type: "comment.upserted", comment });

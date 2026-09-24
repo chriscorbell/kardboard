@@ -338,8 +338,8 @@ export class RetryRefused extends Error {
 
 /**
  * Try again: a `retry_requested` Trigger that starts a Session at once rather than after the
- * batching window, since pressing the button is the whole request. Refused while a Session holds
- * the Card, which would make it a pending re-run nobody asked for, and in Done, where a Comment is
+ * batching window, since pressing the button is the whole request. Refused unless the Card's last
+ * Session failed or ran out of time, while a Session holds the Card, which would make it a pending re-run nobody asked for, and in Done, where a Comment is
  * how a closed Card is reopened. The Trigger carries the Session it follows, so the next one can
  * read what went wrong.
  */
@@ -350,6 +350,9 @@ export async function retryCard(id: string, actor: Actor): Promise<Card> {
   if (card.activeSession) throw new RetryRefused(`${agent.name} is already working on this card.`);
   if (card.column === "done") throw new RetryRefused("This card is done. Add a comment to reopen it.");
   const last = card.lastSession;
+  // Try again follows a run that stopped short, and the next Session is told so; anything else is
+  // a request for new work, which a Comment makes.
+  if (!last || (last.status !== "failed" && last.status !== "timed_out")) throw new RetryRefused(`${agent.name}'s last session on this card did not fail. Add a comment to ask for more.`);
   const payload = last ? { sessionId: last.id, status: last.status, outcomeSummary: last.outcomeSummary } : {};
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor, type: "card.retry_requested", payload });
   await enqueueTrigger({ card, kind: "retry_requested", actorUserId: actor.id, payload, promptly: true });

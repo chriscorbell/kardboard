@@ -180,7 +180,7 @@ export const sessions = sqliteTable(
     durationMs: integer("duration_ms"),
     createdAt: text("created_at").notNull().$defaultFn(now),
   },
-  (t) => [index("sessions_board_status_idx").on(t.boardId, t.status), index("sessions_created_idx").on(t.createdAt)],
+  (t) => [index("sessions_board_status_idx").on(t.boardId, t.status), index("sessions_created_idx").on(t.createdAt), index("sessions_card_created_idx").on(t.cardId, t.createdAt)],
 );
 
 export const triggers = sqliteTable(

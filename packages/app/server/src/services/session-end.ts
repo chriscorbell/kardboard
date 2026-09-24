@@ -26,7 +26,8 @@ async function reportedOutcome(session: typeof schema.sessions.$inferSelect): Pr
   const row = await db
     .select({ payload: schema.events.payload })
     .from(schema.events)
-    .where(and(eq(schema.events.boardId, session.boardId), eq(schema.events.type, "session.reported"), sql`json_extract(${schema.events.payload}, '$.sessionId') = ${session.id}`))
+    // By Card when there is one, which the events table indexes; a sweep reports on its Board.
+    .where(and(session.cardId ? eq(schema.events.cardId, session.cardId) : eq(schema.events.boardId, session.boardId), eq(schema.events.type, "session.reported"), sql`json_extract(${schema.events.payload}, '$.sessionId') = ${session.id}`))
     .orderBy(desc(schema.events.createdAt))
     .get();
   if (!row) return null;

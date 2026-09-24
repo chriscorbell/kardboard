@@ -1,0 +1,1 @@
+CREATE INDEX `sessions_card_created_idx` ON `sessions` (`card_id`,`created_at`);

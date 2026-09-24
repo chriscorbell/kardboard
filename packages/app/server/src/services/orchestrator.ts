@@ -15,7 +15,7 @@ import { providerAfterFailure, providerForDispatch } from "./fallback.js";
 import { readProviderLimits, type LimitSnapshot } from "./provider-limits.js";
 import { removePreviewForCard } from "./previews.js";
 import { byDispatchOrder } from "./children.js";
-import { batchClosesAt, coalesceDelay, inStartBackoff } from "./waiting.js";
+import { batchClosesAt, coalesceDelay, couldNotStart, inStartBackoff } from "./waiting.js";
 import { recordSessionUsage } from "./usage.js";
 
 const ACTIVE = ["queued", "starting", "running"] as const;
@@ -191,6 +191,25 @@ async function cardsOwedASession(boardId?: string) {
     .where(boardId ? and(pending, eq(schema.cards.boardId, boardId)) : pending)
     .groupBy(schema.cards.id);
   return rows.sort(byDispatchOrder);
+}
+
+// Rounds of failed starts, each already three attempts, before a Card's Triggers are set aside.
+const START_ROUNDS_BEFORE_GIVING_UP = 3;
+
+/** How many of the Card's most recent Sessions, in a row, never got a container running. */
+async function startFailuresInARow(cardId: string): Promise<number> {
+  const recent = await db
+    .select({ status: schema.sessions.status, startedAt: schema.sessions.startedAt, endedAt: schema.sessions.endedAt })
+    .from(schema.sessions)
+    .where(eq(schema.sessions.cardId, cardId))
+    .orderBy(sql`${schema.sessions.createdAt} desc`)
+    .limit(START_ROUNDS_BEFORE_GIVING_UP);
+  let n = 0;
+  for (const s of recent) {
+    if (!couldNotStart(s)) break;
+    n++;
+  }
+  return n;
 }
 
 /** The newest Session on this Card that has ended. */
@@ -556,7 +575,9 @@ export async function endSession(
       });
     }
     const card = await db.select().from(schema.cards).where(eq(schema.cards.id, row.cardId)).get();
-    rerunning = opts.rerun ?? (fallbackTo !== null || (card?.pendingRerun === true && status !== "cancelled"));
+    // A paused Board starts nothing, a re-run included, so the Card is not told one is starting.
+    const board = await db.select({ paused: schema.boards.paused }).from(schema.boards).where(eq(schema.boards.id, row.boardId)).get();
+    rerunning = !board?.paused && (opts.rerun ?? (fallbackTo !== null || (card?.pendingRerun === true && status !== "cancelled")));
     if (!rerunning && card?.pendingRerun) {
       await db.update(schema.cards).set({ pendingRerun: false }).where(eq(schema.cards.id, row.cardId));
     }
@@ -566,6 +587,17 @@ export async function endSession(
     if (fallbackTo === null && !opts.requeue && (status === "failed" || status === "timed_out")) {
       const { tellPeopleSessionStopped } = await import("./session-end.js");
       await tellPeopleSessionStopped({ cardId: row.cardId, status, outcomeSummary, rerunning }).catch((err) => console.error("[orchestrator] could not report the stopped session", err));
+    }
+    // A start that keeps failing, such as an image that cannot be pulled or a repository the Sessions
+    // app is not installed on, would otherwise be retried every few minutes for ever with nobody
+    // told. After a few rounds its Triggers are set aside and the Card's people hear about it; Try
+    // again, or any new change, starts over.
+    if (opts.requeue && status === "failed" && (await startFailuresInARow(row.cardId)) >= START_ROUNDS_BEFORE_GIVING_UP) {
+      const cardId = row.cardId;
+      await underClaimLock(() => db.update(schema.triggers).set({ status: "consumed" }).where(and(eq(schema.triggers.cardId, cardId), eq(schema.triggers.status, "pending"))));
+      const { tellPeopleSessionStopped } = await import("./session-end.js");
+      const reason = `It could not be started ${START_ROUNDS_BEFORE_GIVING_UP} times in a row${outcomeSummary ? `: ${outcomeSummary.replace(/^Could not start:\s*/, "")}` : "."}`;
+      await tellPeopleSessionStopped({ cardId, status: "failed", outcomeSummary: reason, rerunning: false }).catch((err) => console.error("[orchestrator] could not report the stopped starts", err));
     }
     await publishCard(row.cardId);
     if (rerunning) scheduleDispatch(row.cardId, 1_000);

@@ -61,6 +61,9 @@ async function startSweep(board: typeof schema.boards.$inferSelect, windowOpened
   // take the last slot. The Board's own cap is not consulted.
   const claimed = await underClaimLock(async () => {
     if (await sweptSince(board.id, windowOpened)) return null;
+    // Read again under the lock: the Admin may have paused the Board while the proxy answered.
+    const current = await db.select({ paused: schema.boards.paused }).from(schema.boards).where(eq(schema.boards.id, board.id)).get();
+    if (!current || current.paused) return null;
     const settings = await getSettings();
     if ((await activeCount()) >= settings.globalMaxConcurrentSessions) return null;
     // A sweep has no Card to pick up again, so it gets the half of the fallback that helps it: don't
