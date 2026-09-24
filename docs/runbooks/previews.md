@@ -25,7 +25,7 @@ Check both `http://127.0.0.1:3070/healthz` and `http://127.0.0.1:3073/healthz` o
 
 ## Enable a Board
 
-Set the Board's preview mode to `runner`. Its repository needs a root `Dockerfile` that starts a server on `$PORT`, currently 3000. This repository links that path to `packages/app/Dockerfile`; its health check uses the same port. The app starts with its own seeded database in dev authentication mode, behind the production preview router's membership gate. The preview container receives no production credentials or host mounts.
+Set the Board's preview mode to `runner`. Its repository needs a root `Dockerfile` that starts a server on `$PORT`, currently 3000. This repository links that path to `packages/app/Dockerfile`; its health check uses the same port. The app starts with its own seeded database in dev authentication mode, behind the production preview router's membership gate. Dev mode is refused anywhere else the image runs with `NODE_ENV=production`; the app allows it here because the runner sets `KARDBOARD_PREVIEW_HOST` on every Preview container, and a Preview needs no `KARDBOARD_AUTH`. The preview container receives no production credentials or host mounts.
 
 A Session pushes its branch and calls `request_preview`. The Card receives a URL while the image builds. A Member without a Preview cookie is redirected to kardboard to sign in. The router exchanges a single-use code for a host-only cookie and strips cookies and authorization headers before forwarding the request.
 

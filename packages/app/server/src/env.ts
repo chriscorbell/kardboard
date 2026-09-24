@@ -24,6 +24,24 @@ function githubApp(prefix: string) {
   };
 }
 
+/**
+ * Dev authentication signs every request in as the Admin and lets any caller pick a User with a
+ * header, so a missing or mistyped setting must never produce it in production. There it runs only
+ * in a Preview container, which the runner marks with KARDBOARD_PREVIEW_HOST: a Preview runs this
+ * image with its own seeded database, behind the preview router's membership check. Anywhere else a
+ * production process refuses to start.
+ */
+export function resolveAuthMode(input: { auth: string; production: boolean; preview: boolean }): "dev" | "clerk" {
+  const auth = input.auth.trim().toLowerCase();
+  if (auth === "clerk") return "clerk";
+  if (auth !== "" && auth !== "dev") throw new Error(`KARDBOARD_AUTH must be "clerk" or "dev", not ${JSON.stringify(input.auth)}.`);
+  if (input.production && !input.preview) {
+    throw new Error("Refusing to start: NODE_ENV is production and authentication would run in dev mode, which signs every request in as the Admin. Set KARDBOARD_AUTH=clerk with the Clerk keys.");
+  }
+  return "dev";
+}
+
+const isProduction = process.env.NODE_ENV === "production";
 const dataDir = path.resolve(str("KARDBOARD_DATA_DIR", "./data"));
 const publicUrl = str("KARDBOARD_PUBLIC_URL", "http://localhost:5173").replace(/\/$/, "");
 
@@ -42,7 +60,7 @@ export const env = {
   dataDir,
   publicUrl,
   redirectHosts: str("KARDBOARD_REDIRECT_HOSTS").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
-  authMode: (str("KARDBOARD_AUTH", "dev") === "clerk" ? "clerk" : "dev") as "dev" | "clerk",
+  authMode: resolveAuthMode({ auth: str("KARDBOARD_AUTH"), production: isProduction, preview: str("KARDBOARD_PREVIEW_HOST") !== "" }),
   clerkSecretKey: str("CLERK_SECRET_KEY"),
   clerkPublishableKey: str("CLERK_PUBLISHABLE_KEY") || str("VITE_CLERK_PUBLISHABLE_KEY"),
   resendApiKey: str("RESEND_API_KEY"),
@@ -67,5 +85,5 @@ export const env = {
   backupDir: path.resolve(str("KARDBOARD_BACKUP_DIR", path.join(dataDir, "backups"))),
   backupHour: Number(str("KARDBOARD_BACKUP_HOUR", "4")),
   backupKeep: Number(str("KARDBOARD_BACKUP_KEEP", "14")),
-  isProduction: process.env.NODE_ENV === "production",
+  isProduction,
 };
