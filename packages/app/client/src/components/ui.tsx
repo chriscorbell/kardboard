@@ -84,7 +84,7 @@ export function Chip({ children, tone = "neutral", className }: { children: Reac
   return <span className={cx("inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] font-medium leading-none", tones, className)}>{children}</span>;
 }
 
-export function Field({ label, hint, error, children, className }: { label: string; hint?: string; error?: string | null; children: ReactNode; className?: string }) {
+export function Field({ label, hint, error, children, className }: { label: ReactNode; hint?: string; error?: string | null; children: ReactNode; className?: string }) {
   return (
     <label className={cx("flex flex-col gap-1.5", className)}>
       <span className="text-[13px] font-medium text-ink-muted">{label}</span>

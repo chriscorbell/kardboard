@@ -154,13 +154,6 @@ function forgetBackupCopy(sha256: string): void {
     .catch((err: Error) => console.error(`[backup] could not remove a deleted attachment from ${env.backupCopyDir}: ${err.message}`));
 }
 
-/**
- * Removes a Comment for good: its body, every earlier revision of it, its Mentions, its
- * Attachments, and each uploaded file no other Attachment still points at. A pasted secret is the
- * usual reason, so the mention notifications that quoted it go as well; an email already sent
- * cannot be recalled. The event log records that the Comment was deleted and whose it was, never
- * what it said. Not a Trigger: taking words back is not a request for work.
- */
 // Uploads are stored once per content hash, so writing a file for a new Attachment and removing
 // the file once the last Attachment using it is deleted must not interleave, or the new one would
 // point at nothing. One process owns the data directory (ADR 0004); this chain orders the two per hash.
@@ -175,6 +168,32 @@ export function underFileLock<T>(sha256: string, fn: () => Promise<T>): Promise<
   return run;
 }
 
+/**
+ * Removes each of these uploaded files that no Attachment points at any more, and says how many went.
+ * `offDiskCopy` removes the copy kept with the backups as well, for words that must not survive; left
+ * there, a snapshot taken before the delete can still be restored with its attachments.
+ */
+export async function removeUnusedUploads(hashes: Iterable<string>, opts: { offDiskCopy: boolean }): Promise<number> {
+  let removed = 0;
+  for (const sha256 of hashes) {
+    await underFileLock(sha256, async () => {
+      const still = await db.select({ id: schema.attachments.id }).from(schema.attachments).where(eq(schema.attachments.sha256, sha256)).limit(1).get();
+      if (still) return;
+      fs.rmSync(uploadPath(sha256), { force: true });
+      if (opts.offDiskCopy) forgetBackupCopy(sha256);
+      removed++;
+    });
+  }
+  return removed;
+}
+
+/**
+ * Removes a Comment for good: its body, every earlier revision of it, its Mentions, its
+ * Attachments, and each uploaded file no other Attachment still points at. A pasted secret is the
+ * usual reason, so the mention notifications that quoted it go as well; an email already sent
+ * cannot be recalled. The event log records that the Comment was deleted and whose it was, never
+ * what it said. Not a Trigger: taking words back is not a request for work.
+ */
 export async function deleteComment(id: string, actor: Actor): Promise<void> {
   const current = await getComment(id);
   if (!current) throw new Error("comment not found");
@@ -190,15 +209,7 @@ export async function deleteComment(id: string, actor: Actor): Promise<void> {
   await db
     .delete(schema.triggers)
     .where(and(eq(schema.triggers.cardId, card.id), eq(schema.triggers.status, "pending"), sql`json_extract(${schema.triggers.payload}, '$.commentId') = ${id}`));
-  for (const sha256 of hashes) {
-    await underFileLock(sha256, async () => {
-      const still = await db.select({ id: schema.attachments.id }).from(schema.attachments).where(eq(schema.attachments.sha256, sha256)).limit(1).get();
-      if (!still) {
-        fs.rmSync(uploadPath(sha256), { force: true });
-        forgetBackupCopy(sha256);
-      }
-    });
-  }
+  await removeUnusedUploads(hashes, { offDiskCopy: true });
   await recordEvent({
     boardId: card.boardId,
     cardId: card.id,

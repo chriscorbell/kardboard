@@ -10,6 +10,7 @@ import {
   boardMembersSchema,
   createCardSchema,
   createCommentSchema,
+  deleteBoardSchema,
   inviteUserSchema,
   markNotificationsReadSchema,
   moveCardSchema,
@@ -49,6 +50,7 @@ import { backupsView, takeSnapshot } from "../services/backup.js";
 import { installationStatus, parseRepoUrl } from "../services/github.js";
 import { reconcileOnDemand } from "../services/reconcile.js";
 import { bumpEveryPreviewEpoch, bumpPreviewEpoch, issuePreviewCode, PreviewError } from "../services/previews.js";
+import { BoardDeletionRefused, boardDeletionImpact, deleteBoard } from "../services/board-deletion.js";
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
@@ -455,6 +457,24 @@ admin.get("/boards/:id/github", async (c) => {
   const repo = parseRepoUrl(board.repoUrl);
   if (!repo) return c.json({ repo: null, sessions: "unconfigured", merge: "unconfigured" });
   return c.json({ repo: `${repo.owner}/${repo.repo}`, ...(await installationStatus(repo.owner, repo.repo)) });
+});
+// What deleting the Board would remove, and whether a running Session holds it back.
+admin.get("/boards/:id/deletion", async (c) => {
+  const board = await getBoardById(c.req.param("id"));
+  if (!board) return c.json({ error: "not_found" }, 404);
+  return c.json(await boardDeletionImpact(board.id));
+});
+admin.delete("/boards/:id", json(deleteBoardSchema), async (c) => {
+  const board = await getBoardById(c.req.param("id"));
+  if (!board) return c.json({ error: "not_found" }, 404);
+  if (c.req.valid("json").slug !== board.slug) return c.json({ error: "Type the board's slug exactly to confirm." }, 400);
+  try {
+    const { snapshot } = await deleteBoard(board.id, actorOf(c));
+    return c.json({ ok: true, snapshot });
+  } catch (err) {
+    if (err instanceof BoardDeletionRefused) return c.json({ error: err.message }, err.status);
+    throw err;
+  }
 });
 admin.put("/boards/:id/members", json(boardMembersSchema), async (c) => {
   await setMembers(c.req.param("id"), c.req.valid("json").userIds);
