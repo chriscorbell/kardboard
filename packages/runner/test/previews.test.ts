@@ -237,7 +237,8 @@ describe("building and running a Preview", () => {
 
   it("stops a build that runs past its limit and says why", async () => {
     const docker = fakeDocker({ build: hang });
-    await assert.rejects(() => buildAndRunPreview(docker, branchReq, { ...limits, buildTimeoutMs: 100 }, () => {}), (err: Error) => {
+    // Long enough for the clone to finish under a loaded test run, so the limit lands mid-build.
+    await assert.rejects(() => buildAndRunPreview(docker, branchReq, { ...limits, buildTimeoutMs: 1_500 }, () => {}), (err: Error) => {
       assert.ok(err instanceof PreviewError, String(err));
       assert.match(err.message, /took longer than/);
       return true;
