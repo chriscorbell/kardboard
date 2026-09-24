@@ -125,6 +125,10 @@ export const approvals = sqliteTable("approvals", {
   headSha: text("head_sha"),
   createdAt: text("created_at").notNull().$defaultFn(now),
   invalidatedAt: text("invalidated_at"),
+  // Why GitHub last refused to merge on this Approval. Set only for a refusal the Approval
+  // survives, so the Card can offer Retry merge; cleared once the merge lands or the Approval is
+  // invalidated.
+  mergeError: text("merge_error"),
 });
 
 export const sessions = sqliteTable(

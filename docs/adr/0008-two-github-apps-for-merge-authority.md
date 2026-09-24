@@ -26,7 +26,11 @@ approves, only a pull request whose head is the Card's own branch in the Board's
 fork, and not another Card's branch. Otherwise a Session, following text a client wrote, could point
 its Card at any open pull request and have a Member's Approval merge it past the ruleset. A pull request that is not mergeable
 sends the approval trigger to a Session to update the branch, and its push likewise needs a fresh
-Approval.
+Approval. Any other refusal — a failing required check, a permission GitHub has not granted the
+merge app, a rate limit — says nothing about what the Member reviewed, so the Approval survives it
+with the reason recorded, and the Card offers Retry merge. The retry sends the same reviewed SHA
+as its precondition, so a push in the meantime turns it into the 409 case and asks for a fresh
+Approval rather than merging something nobody saw.
 
 ## Consequences
 

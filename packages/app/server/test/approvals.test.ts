@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import { serve } from "@hono/node-server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { approvalAwaitingRetry, type Approval } from "@kardboard/shared";
 
 // The database module opens its file at import time, and the GitHub merge App is read from the
 // environment at import time, so both are set first. The App's key is real because the app signs
@@ -23,7 +24,7 @@ process.env.GITHUB_MERGE_APP_ID = "1";
 process.env.GITHUB_MERGE_APP_PRIVATE_KEY_B64 = Buffer.from(privateKey).toString("base64");
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
-const { ApprovalError, approveCard, linkPullRequest } = await import("../src/services/approvals.js");
+const { ApprovalError, approveCard, followUpFor, linkPullRequest, listApprovals, retryMerge } = await import("../src/services/approvals.js");
 const { getCard } = await import("../src/services/cards.js");
 const { api } = await import("../src/routes/api.js");
 const { mcp } = await import("../src/routes/mcp.js");
@@ -43,7 +44,8 @@ interface FakePull {
   sha: string;
   state: "open" | "closed";
 }
-const github = { pulls: new Map<number, FakePull>(), merges: [] as { number: number; sha: string }[] };
+// `refusal` makes the next merges fail the way GitHub does for a reason of its own, such as a failing required check.
+const github = { pulls: new Map<number, FakePull>(), merges: [] as { number: number; sha: string }[], refusal: null as { status: number; message: string } | null };
 
 function pullJson(number: number, p: FakePull) {
   return { number, html_url: `https://github.com/${REPO}/pull/${number}`, title: "The change", body: "What it does.", head: { sha: p.sha, ref: p.ref, repo: p.repo ? { full_name: p.repo } : null }, state: p.state, merged: false, mergeable: true, mergeable_state: "clean" };
@@ -72,6 +74,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     const number = Number(m[1]);
     const p = github.pulls.get(number)!;
     const { sha } = JSON.parse(String(init?.body)) as { sha: string };
+    if (github.refusal) return reply(github.refusal.status, { message: github.refusal.message });
     if (sha !== p.sha) return reply(409, { message: "Head branch was modified. Review and try the merge again." });
     github.merges.push({ number, sha });
     p.state = "closed";
@@ -114,6 +117,7 @@ beforeEach(async () => {
   for (const t of [schema.approvals, schema.sessions, schema.triggers, schema.events, schema.notifications, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   github.pulls.clear();
   github.merges.length = 0;
+  github.refusal = null;
   await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one", repoUrl: `https://github.com/${REPO}` });
   await db.insert(schema.users).values({ id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "active" });
   await db.insert(schema.boardMembers).values({ boardId: "board-1", userId: "ada" });
@@ -240,5 +244,137 @@ describe("approving a card", () => {
     assert.equal(res.status, 409);
     assert.match(((await res.json()) as { error: string }).error, /moved on/);
     assert.deepEqual(github.merges, []);
+  });
+});
+
+describe("what a merge outcome means for the approval it was made on", () => {
+  it("merges", () => {
+    assert.deepEqual(followUpFor({ ok: true, sha: "abc" }, 7, "@ada"), { kind: "merged", sha: "abc" });
+  });
+
+  it("voids the approval when the head moved, and asks for a fresh look rather than a retry", () => {
+    const followUp = followUpFor({ ok: false, reason: "head_changed", message: "head changed" }, 7, "@ada");
+    assert.equal(followUp.kind, "invalidated");
+    assert.equal(followUp.kind === "invalidated" && followUp.rerun, false);
+    assert.match(followUp.kind === "invalidated" ? followUp.comment : "", /approve once more/);
+  });
+
+  it("voids the approval and sends a session to update a branch that cannot merge", () => {
+    const followUp = followUpFor({ ok: false, reason: "not_mergeable", message: "not mergeable" }, 7, "@ada");
+    assert.equal(followUp.kind, "invalidated");
+    assert.equal(followUp.kind === "invalidated" && followUp.rerun === true ? followUp.reason : "", "not mergeable");
+  });
+
+  it("keeps the approval standing for a refusal of GitHub's own, and offers a retry", () => {
+    const followUp = followUpFor({ ok: false, reason: "error", message: "403 Required status check is failing" }, 7, "@ada");
+    assert.equal(followUp.kind, "refused");
+    assert.equal(followUp.kind === "refused" ? followUp.error : "", "403 Required status check is failing");
+    assert.match(followUp.kind === "refused" ? followUp.comment : "", /Retry merge/);
+  });
+});
+
+describe("the approval a card offers a retry on", () => {
+  const approval = (fields: Partial<Approval>): Approval => ({
+    id: `a-${Math.random()}`,
+    cardId: CARD,
+    userId: "ada",
+    prNumber: 7,
+    headSha: HEAD_A,
+    createdAt: "2026-09-15T04:00:00.000Z",
+    invalidatedAt: null,
+    mergeError: null,
+    ...fields,
+  });
+
+  it("is the standing one whose merge GitHub refused", () => {
+    const refused = approval({ mergeError: "403 Resource not accessible" });
+    assert.equal(approvalAwaitingRetry([approval({}), refused])?.id, refused.id);
+  });
+
+  it("is nothing when no merge was refused, or the refusal voided the approval", () => {
+    assert.equal(approvalAwaitingRetry([approval({})]), null);
+    assert.equal(approvalAwaitingRetry([]), null);
+    assert.equal(approvalAwaitingRetry([approval({ mergeError: "403", invalidatedAt: "2026-09-15T04:05:00.000Z" })]), null);
+  });
+
+  it("is the newest one, as the server lists them", async () => {
+    await db.insert(schema.approvals).values({ id: "old", cardId: CARD, userId: "ada", prNumber: 7, headSha: HEAD_A, createdAt: "2026-09-15T04:00:00.000Z", invalidatedAt: "2026-09-15T04:01:00.000Z" });
+    await db.insert(schema.approvals).values({ id: "new", cardId: CARD, userId: "ada", prNumber: 7, headSha: HEAD_A, createdAt: "2026-09-15T04:02:00.000Z", mergeError: "403 Resource not accessible" });
+    assert.equal(approvalAwaitingRetry(await listApprovals(CARD))?.id, "new");
+  });
+});
+
+describe("retrying a merge GitHub refused", () => {
+  async function refusedApproval(): Promise<Approval> {
+    await linkPullRequest(CARD, { number: 7 });
+    github.refusal = { status: 403, message: "Required status check is failing" };
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+    github.refusal = null;
+    return approval;
+  }
+
+  it("leaves the approval standing with the refusal recorded, and nothing merged", async () => {
+    const approval = await refusedApproval();
+    assert.equal(approval.invalidatedAt, null);
+    assert.equal(approval.mergeError, "403 Required status check is failing");
+    assert.deepEqual(github.merges, []);
+    assert.equal((await getCard(CARD))!.column, "review");
+  });
+
+  it("merges the reviewed head once the cause is fixed, without a second sign-off", async () => {
+    await refusedApproval();
+
+    const approval = await retryMerge(CARD, MEMBER);
+
+    assert.equal(approval.mergeError, null);
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+    assert.equal((await getCard(CARD))!.column, "done");
+  });
+
+  it("merges nothing when the branch moved after the approval, and asks the member to look again", async () => {
+    await refusedApproval();
+    github.pulls.get(7)!.sha = HEAD_B;
+
+    const approval = await retryMerge(CARD, MEMBER);
+
+    assert.notEqual(approval.invalidatedAt, null);
+    assert.deepEqual(github.merges, []);
+    const card = (await getCard(CARD))!;
+    assert.equal(card.column, "review");
+    assert.equal(card.prHeadSha, HEAD_B);
+  });
+
+  it("refuses when no approval is waiting on a refused merge", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    await db.insert(schema.approvals).values({ id: "voided", cardId: CARD, userId: "ada", prNumber: 7, headSha: HEAD_A, mergeError: "403", invalidatedAt: "2026-09-15T04:05:00.000Z" });
+    await assert.rejects(retryMerge(CARD, MEMBER), (err: unknown) => err instanceof ApprovalError && /waiting on a refused merge/.test(err.message));
+  });
+
+  it("refuses once the card has left Review", async () => {
+    await refusedApproval();
+    await db.update(schema.cards).set({ column: "done" }).where(eq(schema.cards.id, CARD));
+    await assert.rejects(retryMerge(CARD, MEMBER), /in Review/);
+    assert.deepEqual(github.merges, []);
+  });
+
+  it("refuses while a Session is working on the card", async () => {
+    await refusedApproval();
+    await db.insert(schema.sessions).values({ id: "session-busy", boardId: "board-1", cardId: CARD, kind: "card", provider: "claude", status: "running" });
+    await assert.rejects(retryMerge(CARD, MEMBER), (err: unknown) => err instanceof ApprovalError && err.status === 409);
+    assert.deepEqual(github.merges, []);
+  });
+
+  it("needs a signed-in user, since the retry is a member's act", async () => {
+    await refusedApproval();
+    await assert.rejects(retryMerge(CARD, { kind: "agent", id: null }), /signed-in user/);
+  });
+
+  it("is offered to members through the API", async () => {
+    await refusedApproval();
+
+    const res = await api.request(`/cards/${CARD}/retry-merge`, { method: "POST", headers: { "x-dev-user": "ada@example.com" } });
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
   });
 });

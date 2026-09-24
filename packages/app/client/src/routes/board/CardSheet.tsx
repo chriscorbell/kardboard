@@ -1,8 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, RotateCcw, Square, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
-import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment, request, keys } from "../../lib/api";
+import { approvalAwaitingRetry, COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type Approval, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
+import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useRetryMerge, useUpdateCard, useUpdateComment, request, keys } from "../../lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
@@ -66,6 +66,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   const update = useUpdateCard(slug);
   const move = useMoveCard(slug);
   const approve = useApproveCard(slug);
+  const retryMerge = useRetryMerge(slug);
   const qc = useQueryClient();
   const members = useMemo(() => new Map(view.members.map((m) => [m.id, m])), [view.members]);
   const handles = useMemo(() => {
@@ -218,7 +219,18 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
         ) : null}
 
         {card.column === "review" ? (
-          <ReviewBlock card={card} agentName={view.agent.name} approvals={detail.data?.approvals ?? []} members={members} onApprove={() => approve.mutate({ id: card.id, headSha: card.prHeadSha })} busy={approve.isPending} error={approve.error?.message ?? null} />
+          <ReviewBlock
+            card={card}
+            agentName={view.agent.name}
+            approvals={detail.data?.approvals ?? []}
+            members={members}
+            onApprove={() => approve.mutate({ id: card.id, headSha: card.prHeadSha })}
+            busy={approve.isPending}
+            error={approve.error?.message ?? null}
+            onRetryMerge={() => retryMerge.mutate(card.id)}
+            retrying={retryMerge.isPending}
+            retryError={retryMerge.error?.message ?? null}
+          />
         ) : null}
 
         {detail.data?.children.length ? <ChildCards slug={slug} cards={detail.data.children} agentName={view.agent.name} /> : null}
@@ -446,14 +458,51 @@ function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map
 }
 
 // Approval is bound to the revision shown here: the short SHA is what Approve sends back, and the
-// server refuses it if the pull request has moved on or a Session is still at work.
-function ReviewBlock({ card, agentName, approvals, members, onApprove, busy, error }: { card: Card; agentName: string; approvals: { userId: string; createdAt: string; invalidatedAt: string | null }[]; members: Map<string, User>; onApprove: () => void; busy: boolean; error: string | null }) {
+// server refuses it if the pull request has moved on or a Session is still at work. An Approval
+// GitHub refused to merge for a reason of its own still stands, so the block offers Retry merge.
+function ReviewBlock({
+  card,
+  agentName,
+  approvals,
+  members,
+  onApprove,
+  busy,
+  error,
+  onRetryMerge,
+  retrying,
+  retryError,
+}: {
+  card: Card;
+  agentName: string;
+  approvals: Approval[];
+  members: Map<string, User>;
+  onApprove: () => void;
+  busy: boolean;
+  error: string | null;
+  onRetryMerge: () => void;
+  retrying: boolean;
+  retryError: string | null;
+}) {
   const reduce = useReducedMotion();
   const live = approvals.filter((a) => !a.invalidatedAt);
+  const refused = approvalAwaitingRetry(approvals);
   const working = Boolean(card.activeSession);
+  const shown = refused ? retryError : live.length === 0 ? error : null;
   return (
     <div className="mx-6 mt-4 rounded-card border border-line bg-raised px-4 py-3.5">
-      {live.length > 0 ? (
+      {refused ? (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="min-w-0 flex-1">
+            <p className="text-[13.5px] font-medium text-ink">GitHub refused the merge</p>
+            <p className="mt-0.5 text-[12.5px] text-ink-muted">
+              {refused.mergeError} The approval by {members.get(refused.userId)?.name ?? "a member"} {relativeTime(refused.createdAt)} still stands, so try again once the cause is fixed.
+            </p>
+          </div>
+          <Button variant="primary" className="w-full sm:w-auto" loading={retrying} disabled={working} icon={<RotateCcw className="size-4" strokeWidth={2} />} onClick={onRetryMerge}>
+            Retry merge
+          </Button>
+        </div>
+      ) : live.length > 0 ? (
         <div className="flex items-center gap-2 text-[13px]">
           <Check className="size-4 text-ok" strokeWidth={2} />
           <span className="text-ink">
@@ -484,7 +533,7 @@ function ReviewBlock({ card, agentName, approvals, members, onApprove, busy, err
         </div>
       )}
       <AnimatePresence initial={false}>
-        {error && live.length === 0 ? (
+        {shown ? (
           <motion.p
             key="approve-error"
             role="alert"
@@ -494,7 +543,7 @@ function ReviewBlock({ card, agentName, approvals, members, onApprove, busy, err
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className="mt-3 border-t border-line pt-2.5 text-[12.5px] text-danger"
           >
-            {error}
+            {shown}
           </motion.p>
         ) : null}
       </AnimatePresence>

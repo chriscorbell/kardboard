@@ -36,7 +36,7 @@ import { subscribe } from "../services/realtime.js";
 import { cancelSession, getSession, listAllSessions, listBoardSessions } from "../services/orchestrator.js";
 import { runner } from "../services/runner-client.js";
 import { parseTranscript } from "../services/transcript.js";
-import { ApprovalError, approveCard, listApprovals } from "../services/approvals.js";
+import { ApprovalError, approveCard, listApprovals, retryMerge } from "../services/approvals.js";
 import { listNotifications, markNotificationsRead } from "../services/notifications.js";
 import { backupsView, takeSnapshot } from "../services/backup.js";
 import { installationStatus, parseRepoUrl } from "../services/github.js";
@@ -194,6 +194,21 @@ api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullab
   if ("error" in access) return access.error;
   try {
     return c.json(await approveCard(card.id, actorOf(c), c.req.valid("json").headSha ?? null), 201);
+  } catch (err) {
+    if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
+    throw err;
+  }
+});
+
+// The Approval stands after a refusal GitHub gave for its own reasons, so the merge can simply be
+// tried again once the cause is fixed, without asking the Member to sign off a second time.
+api.post("/cards/:id/retry-merge", async (c) => {
+  const card = await getCard(c.req.param("id"));
+  if (!card) return c.json({ error: "not_found" }, 404);
+  const access = await boardForUser(c as never, card.boardId);
+  if ("error" in access) return access.error;
+  try {
+    return c.json(await retryMerge(card.id, actorOf(c)));
   } catch (err) {
     if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
     throw err;
