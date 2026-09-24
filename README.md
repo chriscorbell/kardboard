@@ -38,7 +38,7 @@ When the work is done, the Session opens a pull request and moves the card to Re
 - **Notifications** for mentions, failed runs, and the card moves that need you: a bell with an unread badge in the app, and email through Resend that each person can turn down or off.
 - **Invite-only access** with Clerk. Only email addresses you add can sign in, each member only sees their boards, and an invitation email tells them where to do it.
 - **Live session transcripts**: expand any run in the admin panel to watch the agent's messages, tool calls, and results arrive as they happen.
-- **Live updates** over server-sent events, verified nightly database snapshots, and an admin panel for users, boards, the agent, sessions, and backups.
+- **Live updates** over server-sent events, verified nightly database snapshots with an optional off-disk copy, and an admin panel for users, boards, the agent, sessions with their token use and cost, and backups. The admin is emailed when backups, the runner, or a provider credential need attention.
 
 ## How a Session works
 
@@ -99,6 +99,7 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 | `GITHUB_SESSIONS_APP_*`, `GITHUB_MERGE_APP_*` | The two GitHub Apps. See [deploy/github-apps.md](deploy/github-apps.md). |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Held by the egress proxy only. Create it with `claude setup-token`. |
 | `KARDBOARD_BACKUP_HOUR`, `KARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |
+| `KARDBOARD_BACKUP_COPY_DIR` | Optional off-disk copy of every snapshot and attachment, such as a NAS share. The directory needs a `.kardboard-backup-target` marker file. |
 | `KARDBOARD_PREVIEW_SECRET`, `KARDBOARD_PREVIEW_HOST_PATTERN` | Signs preview cookies, and the preview hostname shape. Needed only for boards in `runner` preview mode. |
 
 ## Deploying

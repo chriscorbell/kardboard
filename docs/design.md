@@ -66,7 +66,7 @@ Overlapping intents on the Ledger do not block each other. A Session that sees a
 
 A sweep Session holds no Claim, may move Cards and Comment, and never opens pull requests. It runs nightly at 03:00 minicore local time, once per Board even if the app restarts inside the window, waits up to one hour for card Sessions on the Board to finish, and counts against the global cap only.
 
-Members see the status indicator and Comments. The Admin can also cancel a Session from the Card, and open its transcript from there. kardboard stores per Session its status, timings, Provider, outcome summary, and the Comments it posted. Raw logs are written as files on the runner's bind mount and kept 14 days; the database never holds a transcript.
+Members see the status indicator and Comments. The Admin can also cancel a Session from the Card, and open its transcript from there. kardboard stores per Session its status, timings, Provider, outcome summary, the Comments it posted, and, for Claude Code, the tokens, turns, and cost its final result reported; Codex prints nothing structured to read them from. Raw logs are written as files on the runner's bind mount and kept 14 days; the database never holds a transcript.
 
 The Admin, and only the Admin, can read a Session's transcript: expanding a run in the admin panel tails that log file through the runner and renders it as the agent's messages, tool calls, and results. A running Session is followed live. The provider CLI is therefore run in a streaming output mode, so the log fills as the work happens rather than at exit. Nothing is shown to Members, and nothing is redacted: a transcript carries whatever the agent printed, so it is admin-only for the same reason the log file is.
 
@@ -108,8 +108,11 @@ In the app a bell beside the avatar carries a badge with the unread count and op
 
 - Users: invite, revoke, grant and remove Board membership.
 - Boards: create, repository URL, GitHub App installation status for both apps, preview mode, Provider, model, reasoning level, image override, concurrency caps, prompt append text, pause. The Admin can also pause and resume a Board from its page.
-- Agent: name, avatar, global caps.
-- Sessions: active list, cancel, cancel and re-run.
+- Agent: name, avatar, global caps, and each Provider's state as the egress proxy last saw it: a usage window still shut, a rejected credential, a refused call.
+- Sessions: every run with its Card, duration, and usage, filtered by Board, status, and kind, fifty at a time, with thirty-day totals per Board; cancel, cancel and re-run.
+- Backups: snapshots, the last attempt, and the last off-disk copy.
+
+The Admin is also emailed, at most once every six hours for the same problem, when a daily snapshot or its copy fails, when the runner has not answered for five minutes, and when the egress proxy reports a Provider rejecting its credential or a call it refused.
 
 ## Infrastructure
 
@@ -126,7 +129,7 @@ Three user-defined networks separate the three kinds of traffic. `control` carri
 
 Every Session and Preview bridge is named with a `cbn` prefix so one host firewall rule keeps both kinds of container off 10.0.0.0/24 and every other stack's bridge, which Docker's NAT otherwise reaches. [ADR 0003](adr/0003-unrestricted-agent-egress-in-v1.md) accepts unrestricted public egress, not access to the rest of minicore. The rule is not part of the stack: an Admin installs `deploy/network-isolation.sh` on the host with a systemd unit that re-applies it whenever Docker starts. See [network isolation](runbooks/network-isolation.md).
 
-The app keeps its state in SQLite in WAL mode, see [ADR 0004](adr/0004-sqlite-in-a-single-server-process.md). Once a day it writes a snapshot with `VACUUM INTO` to `backups/` on the same bind mount, verifies it, and keeps the newest fourteen; restoring one is an operator procedure with the app stopped, described in [the backups runbook](runbooks/backups.md). Attachments are stored on the data bind mount with content-addressed names and served through the app with membership checks; there are no public file URLs. Only the runner mounts the Docker socket, see [ADR 0005](adr/0005-runner-service-owns-the-docker-socket.md).
+The app keeps its state in SQLite in WAL mode, see [ADR 0004](adr/0004-sqlite-in-a-single-server-process.md). Once a day it writes a snapshot with `VACUUM INTO` to `backups/` on the same bind mount, verifies it, and keeps the newest fourteen; when migrations are waiting at boot it takes one more first, named `kardboard-pre-migrate-<stamp>.db`. With `KARDBOARD_BACKUP_COPY_DIR` set it also copies each snapshot, and every attachment it does not hold yet, to that directory in the background, but only once the directory carries a `.kardboard-backup-target` marker, so a NAS share that failed to mount never receives a copy that reports success. Restoring one is an operator procedure with the app stopped, described in [the backups runbook](runbooks/backups.md). Attachments are stored on the data bind mount with content-addressed names and served through the app with membership checks; there are no public file URLs. Only the runner mounts the Docker socket, see [ADR 0005](adr/0005-runner-service-owns-the-docker-socket.md).
 
 Public exposure uses the existing Cloudflare Tunnel. The apex `kardboard.cc` rule points to port 3070; `*.kardboard.cc` points to the preview router on port 3073. Preview URLs use `{card}.kardboard.cc`, covered by Universal SSL. Proxied apex and wildcard DNS records point to that tunnel. Legacy app aliases redirect to the canonical root. Clerk is the only gate; there is no Cloudflare Access. TLS terminates at Cloudflare's edge.
 

@@ -18,7 +18,7 @@ pnpm install --frozen-lockfile && pnpm -r typecheck && pnpm -r test && pnpm --fi
 
 Facts a Session cannot see from the tree:
 
-- Docker images are built only after a merge to `main`, never on a pull request: the `publish` job is gated on `github.event_name == 'push' && github.ref == 'refs/heads/main'`, and reports "skipping" on a pull request. A change to a `Dockerfile`, `deploy/compose.yaml`, or `.github/workflows/ci.yml` therefore cannot be proven before Approval; say so in the pull request, and do not wait for `publish` to go green on it. `publish` sets `fail-fast: false`, so a broken image build leaves that one image unpublished while the others deploy.
+- A pull request builds all five Docker images without pushing them, so a broken `Dockerfile` fails its `publish` check before Approval. Only `main` publishes, and only the images whose inputs changed since the last successful run on `main`. A change to `deploy/compose.yaml` or `.github/workflows/ci.yml` still cannot be proven before Approval, since neither runs until after a merge; say so in the pull request. `publish` sets `fail-fast: false`, so a broken image build leaves that one image unpublished while the others deploy.
 - A schema change in `packages/app/server/src/db/schema.ts` needs a migration: run `pnpm db:generate` and commit the new file under `packages/app/drizzle/` with its journal update.
 - Merging to `main` deploys to production within about a minute through Watchtower. Keep pull requests small and self-contained.
 - `deploy/.env`, `packages/app/.env`, and anything under `docs/memory/history/` are never edited by a Session.
