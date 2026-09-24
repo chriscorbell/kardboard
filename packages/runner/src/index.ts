@@ -10,6 +10,7 @@ import { ID_PATTERN, readLogSlice } from "./logs.js";
 import { createSessionNetwork, prunePreviewNetworks, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
 import { buildAndRunPreview, PreviewCancelled, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
 import { resumeLogFrom, runningSessions } from "./reattach.js";
+import { deliverWithRetry } from "./report.js";
 
 // The runner is the only process with the Docker socket. It knows how to do exactly two things:
 // run a Session container from an approved image with fixed limits, and stop or remove one.
@@ -126,15 +127,14 @@ async function reattachRunningSessions(): Promise<void> {
 }
 
 async function reportExit(sessionId: string, exitCode: number, reason?: string) {
-  try {
-    await fetch(`${env.appUrl}/api/internal/sessions/${sessionId}/exit`, {
+  const delivered = await deliverWithRetry(() =>
+    fetch(`${env.appUrl}/api/internal/sessions/${sessionId}/exit`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ exitCode, reason }),
-    });
-  } catch (err) {
-    console.error(`[runner] could not report exit for ${sessionId}`, err);
-  }
+    }),
+  );
+  if (!delivered) console.error(`[runner] could not report exit ${exitCode} for ${sessionId}`);
 }
 
 // Sessions whose container this process is already waiting on, so a start and the boot-time
