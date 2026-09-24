@@ -319,6 +319,18 @@ describe("the poll", () => {
     assert.deepEqual([checks?.state, checks?.pending, checks?.sha], ["pending", 1, HEAD_A]);
   });
 
+  it("keeps the CI it last read when GitHub fails to answer", async () => {
+    github.checkRuns.set(HEAD_A, [{ name: "test", status: "completed", conclusion: "success" }]);
+    await reconcileCard(CARD);
+    const before = (await getCard(CARD))!.checks;
+    assert.equal(before?.state, "passing");
+
+    github.checkRuns.set(HEAD_A, 502);
+    await reconcileCard(CARD);
+
+    assert.deepEqual((await getCard(CARD))!.checks, before, "a bad moment at GitHub is not news about the checks");
+  });
+
   it("leaves Done cards, cards with no pull request, and cards on boards without GitHub alone", async () => {
     await db.update(schema.cards).set({ column: "done" }).where(eq(schema.cards.id, CARD));
     await db.insert(schema.cards).values({ id: "card-2", boardId: "board-1", title: "No pull request yet", column: "in_progress", creatorKind: "user", creatorId: "ada" });

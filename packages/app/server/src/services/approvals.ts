@@ -34,7 +34,9 @@ export async function listApprovals(cardId: string): Promise<Approval[]> {
 export class ApprovalError extends Error {
   constructor(
     message: string,
-    public status: 400 | 409 = 400,
+    public status: 400 | 409 | 503 = 400,
+    /** A machine word for a refusal the client acts on, beside the sentence it shows. */
+    public reason?: "checks_unavailable",
   ) {
     super(message);
   }
@@ -292,15 +294,27 @@ export async function completeMerge(card: CardRow, input: { prNumber: number; he
 /**
  * The checks gate on a merge. CI is read again for the head about to merge rather than taken from
  * what the Card last showed, and a failing run refuses the merge unless the Admin chose to merge
- * anyway. Pending and unknown do not refuse: the Member was warned of the first before approving,
- * and the second is a repository that does not let kardboard see its checks at all.
+ * anyway. So does a read GitHub failed to answer, since the checks it could not show may be the
+ * failing ones. Pending and unknown do not refuse: the Member was warned of the first before
+ * approving, and the second is a repository that does not let kardboard see its checks at all.
+ * `overridden` is whether the Admin's choice is what let the merge through.
  */
-async function checksGate(card: CardRow, repo: Repo, pr: PullRequest, headSha: string, overrideChecks: boolean): Promise<ChecksSummary> {
-  const summary = toChecksSummary(await refreshCardChecks(card.id, repo, headSha), headSha);
-  if (summary.state === "failing" && !overrideChecks) {
-    throw new ApprovalError(`${describeChecks(summary)} on pull request #${pr.number}, so it can't be merged yet. Once they pass it can be; the Admin can also merge it anyway.`, 409);
+async function checksGate(card: CardRow, repo: Repo, pr: PullRequest, headSha: string, overrideChecks: boolean): Promise<{ summary: ChecksSummary; overridden: boolean }> {
+  const read = await refreshCardChecks(card.id, repo, headSha);
+  const summary = toChecksSummary(read, headSha);
+  if (read.unavailable) {
+    if (!overrideChecks) {
+      throw new ApprovalError(`kardboard couldn't read the checks on pull request #${pr.number} from GitHub just now, so nothing was merged. Try again in a moment.`, 503, "checks_unavailable");
+    }
+    return { summary, overridden: true };
   }
-  return summary;
+  if (summary.state === "failing") {
+    if (!overrideChecks) {
+      throw new ApprovalError(`${describeChecks(summary)} on pull request #${pr.number}, so it can't be merged yet. Once they pass it can be; the Admin can also merge it anyway.`, 409);
+    }
+    return { summary, overridden: true };
+  }
+  return { summary, overridden: false };
 }
 
 /**
@@ -347,7 +361,7 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
   const mention = await mentionFor(actor.id);
 
   let pr: PullRequest | null = null;
-  let checks: ChecksSummary | null = null;
+  let checks: { summary: ChecksSummary; overridden: boolean } | null = null;
   if (repo && githubConfigured("merge")) {
     pr = await resolvePullRequest(card, repo.owner, repo.repo);
     if (!pr || pr.state !== "open") throw new ApprovalError("No open pull request is linked to this card yet, so there is nothing to approve.");
@@ -379,7 +393,7 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
     cardId,
     actor,
     type: "card.approved",
-    payload: { approvalId: id, prNumber: pr?.number ?? card.prNumber, headSha, ...(checks ? { checks: checks.state } : {}), ...(checks?.state === "failing" ? { overrideChecks: true } : {}) },
+    payload: { approvalId: id, prNumber: pr?.number ?? card.prNumber, headSha, ...(checks ? { checks: checks.summary.state } : {}), ...(checks?.overridden ? { overrideChecks: true } : {}) },
   });
   publish(card.boardId, { type: "card.upserted", card: (await getCard(cardId))! });
 
@@ -438,7 +452,7 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
     cardId,
     actor,
     type: "card.merge_retried",
-    payload: { approvalId: approval.id, prNumber: pr.number, ...(checks ? { checks: checks.state } : {}), ...(checks?.state === "failing" ? { overrideChecks: true } : {}) },
+    payload: { approvalId: approval.id, prNumber: pr.number, ...(checks ? { checks: checks.summary.state } : {}), ...(checks?.overridden ? { overrideChecks: true } : {}) },
   });
   await mergeOnApproval({ card, approvalId: approval.id, pr, headSha: approval.headSha, repo, mention, actorUserId: actor.id });
   return (await readApproval(approval.id))!;

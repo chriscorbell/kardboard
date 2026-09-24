@@ -212,8 +212,9 @@ api.post("/cards/:id/move", json(moveCardSchema), async (c) => {
 });
 
 // `headSha` is the pull request head the Card showed the Member. Approval is bound to it, and is
-// refused if the pull request has moved on since, or while its checks are failing unless the Admin
-// sends `overrideChecks`.
+// refused if the pull request has moved on since, while the Agent has work on the Card still to
+// start or finish, or while its checks are failing or cannot be read unless the Admin sends
+// `overrideChecks`. A refusal the client acts on carries a `reason` beside the sentence.
 api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullable().optional(), overrideChecks: z.boolean().optional() })), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
@@ -223,7 +224,7 @@ api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullab
   try {
     return c.json(await approveCard(card.id, actorOf(c), input.headSha ?? null, { overrideChecks: overrideFor(c, input.overrideChecks) }), 201);
   } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
+    if (err instanceof ApprovalError) return c.json({ error: err.message, ...(err.reason ? { reason: err.reason } : {}) }, err.status);
     throw err;
   }
 });
@@ -240,7 +241,7 @@ api.post("/cards/:id/retry-merge", async (c) => {
   try {
     return c.json(await retryMerge(card.id, actorOf(c), { overrideChecks: overrideFor(c, body.success ? body.data.overrideChecks : undefined) }));
   } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
+    if (err instanceof ApprovalError) return c.json({ error: err.message, ...(err.reason ? { reason: err.reason } : {}) }, err.status);
     throw err;
   }
 });

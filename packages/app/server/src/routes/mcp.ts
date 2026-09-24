@@ -285,7 +285,8 @@ function buildServer(session: SessionRow): McpServer {
       const card = (await getCard(session.cardId))!;
       if (!card.prHeadSha) throw new Error(note ?? "no pull request is recorded for this card yet; open it and report it with set_work_state first");
       const read = await refreshCardChecks(card.id, repo, card.prHeadSha);
-      const out = { state: read.state, prNumber: card.prNumber, sha: card.prHeadSha, checks: read.checks, ...(note ? { note } : {}) };
+      const notes = [note, read.unavailable ? `GitHub did not answer this time (${read.unavailable}), so this is not the real state of the checks; call get_checks again in a moment` : null].filter(Boolean);
+      const out = { state: read.state, prNumber: card.prNumber, sha: card.prHeadSha, checks: read.checks, ...(notes.length ? { note: notes.join("; ") } : {}) };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
   );

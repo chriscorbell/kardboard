@@ -47,7 +47,7 @@ const API = "https://api.github.com";
 // A call GitHub never answers would otherwise hold whatever waits on it, a merge or a poll, forever.
 const REQUEST_TIMEOUT_MS = 30_000;
 
-async function gh<T>(token: string, path: string, init: RequestInit = {}): Promise<{ status: number; body: T }> {
+async function gh<T>(token: string, path: string, init: RequestInit = {}): Promise<{ status: number; body: T; headers: Headers }> {
   const res = await fetch(`${API}${path}`, {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...init,
@@ -67,7 +67,18 @@ async function gh<T>(token: string, path: string, init: RequestInit = {}): Promi
   } catch {
     body = text;
   }
-  return { status: res.status, body: body as T };
+  return { status: res.status, body: body as T, headers: res.headers };
+}
+
+/**
+ * Whether GitHub failed to answer for now rather than said no: a server error, or a rate limit.
+ * GitHub answers a secondary rate limit with 403 as well as 429, and marks it with `retry-after` or
+ * an exhausted `x-ratelimit-remaining`; a 403 without them is a permission the App was not granted.
+ */
+export function transientStatus(status: number, headers?: Headers): boolean {
+  if (status >= 500 || status === 429) return true;
+  if (status === 403 && headers) return headers.has("retry-after") || headers.get("x-ratelimit-remaining") === "0";
+  return false;
 }
 
 const installationCache = new Map<string, { id: number; expires: number }>();
@@ -302,6 +313,19 @@ export interface CommitChecks {
   failed: number;
   pending: number;
   checks: CheckItem[];
+  /**
+   * Set when `state` is `unknown` because GitHub failed to answer for now — a server error, a
+   * timeout, a rate limit — rather than because the Merge app may not read the checks. It says why,
+   * and says nothing about the checks themselves: asked again a moment later, GitHub may well answer.
+   */
+  unavailable: string | null;
+}
+
+/** One half of a commit's CI as GitHub answered: the checks, a refusal to show them, or no answer yet. */
+type ChecksRead = { items: CheckItem[] } | { denied: true } | { unavailable: string };
+
+function refusedRead(status: number, headers: Headers): ChecksRead {
+  return transientStatus(status, headers) ? { unavailable: `GitHub answered ${status}` } : { denied: true };
 }
 
 const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale", "error"]);
@@ -311,7 +335,7 @@ const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action
  * half that could not be read makes the whole `unknown`, since a passing half says nothing of the
  * other. `none` is a commit nothing ran on at all.
  */
-export function summarizeChecks(parts: { runs: CheckItem[] | null; statuses: CheckItem[] | null }): Omit<CommitChecks, "checks"> {
+export function summarizeChecks(parts: { runs: CheckItem[] | null; statuses: CheckItem[] | null }): Omit<CommitChecks, "checks" | "unavailable"> {
   const known = [...(parts.runs ?? []), ...(parts.statuses ?? [])];
   const pending = known.filter((c) => c.status !== "completed").length;
   const failed = known.filter((c) => c.status === "completed" && c.conclusion !== null && FAILED_CONCLUSIONS.has(c.conclusion)).length;
@@ -324,36 +348,51 @@ type CheckRunJson = { name: string; status: string; conclusion: string | null; h
 
 // The list endpoint returns only the latest run of each check by default, so a re-run replaces the
 // run it repeats instead of counting twice.
-async function readCheckRuns(token: string, owner: string, repo: string, sha: string): Promise<CheckItem[] | null> {
+async function readCheckRuns(token: string, owner: string, repo: string, sha: string): Promise<ChecksRead> {
   const out: CheckItem[] = [];
   for (let page = 1; page <= 5; page++) {
     const r = await gh<{ total_count?: number; check_runs?: CheckRunJson[] } | null>(token, `/repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`);
-    const runs = r.status === 200 ? r.body?.check_runs : undefined;
-    if (!Array.isArray(runs)) return null;
+    if (r.status !== 200) return refusedRead(r.status, r.headers);
+    const runs = r.body?.check_runs;
+    if (!Array.isArray(runs)) return { denied: true };
     out.push(...runs.map((c) => ({ name: c.name, status: c.status, conclusion: c.conclusion, url: c.html_url ?? c.details_url ?? null })));
     if (runs.length < 100 || out.length >= (r.body?.total_count ?? 0)) break;
   }
-  return out;
+  return { items: out };
 }
 
 // The combined status carries the latest status of each context.
-async function readStatuses(token: string, owner: string, repo: string, sha: string): Promise<CheckItem[] | null> {
+async function readStatuses(token: string, owner: string, repo: string, sha: string): Promise<ChecksRead> {
   const r = await gh<{ statuses?: { context: string; state: string; target_url?: string | null }[] } | null>(token, `/repos/${owner}/${repo}/commits/${sha}/status?per_page=100`);
-  const statuses = r.status === 200 ? r.body?.statuses : undefined;
-  if (!Array.isArray(statuses)) return null;
-  return statuses.map((s) => ({ name: s.context, status: s.state === "pending" ? "pending" : "completed", conclusion: s.state === "pending" ? null : s.state, url: s.target_url ?? null }));
+  if (r.status !== 200) return refusedRead(r.status, r.headers);
+  const statuses = r.body?.statuses;
+  if (!Array.isArray(statuses)) return { denied: true };
+  return { items: statuses.map((s) => ({ name: s.context, status: s.state === "pending" ? "pending" : "completed", conclusion: s.state === "pending" ? null : s.state, url: s.target_url ?? null })) };
 }
 
-/** CI on one commit. Never throws: anything GitHub will not or cannot say comes back `unknown`. */
+// A call that never got an answer, a timeout or a dropped connection, is GitHub not answering for
+// now. So is a token GitHub failed to mint; one it refused, for an App that is not installed, is not.
+function unansweredRead(err: unknown): ChecksRead {
+  if (err instanceof GitHubError && !transientStatus(err.status)) return { denied: true };
+  return { unavailable: (err as Error).message || "GitHub did not answer" };
+}
+
+/**
+ * CI on one commit. Never throws. What GitHub will not show comes back `unknown`; what it failed to
+ * answer this time comes back `unknown` with `unavailable` set, unless something already visibly
+ * failed, which is `failing` whatever the rest would have said.
+ */
 export async function readCommitChecks(owner: string, repo: string, sha: string): Promise<CommitChecks> {
-  try {
-    const { token } = await mintInstallationToken("merge", owner, repo);
-    const [runs, statuses] = await Promise.all([readCheckRuns(token, owner, repo, sha), readStatuses(token, owner, repo, sha)]);
-    return { ...summarizeChecks({ runs, statuses }), checks: [...(runs ?? []), ...(statuses ?? [])] };
-  } catch (err) {
-    console.warn(`[github] could not read checks for ${owner}/${repo}@${sha.slice(0, 7)}: ${(err as Error).message}`);
-    return { state: "unknown", total: 0, failed: 0, pending: 0, checks: [] };
-  }
+  const reads: [ChecksRead, ChecksRead] = await mintInstallationToken("merge", owner, repo).then(
+    ({ token }) => Promise.all([readCheckRuns(token, owner, repo, sha).catch(unansweredRead), readStatuses(token, owner, repo, sha).catch(unansweredRead)]),
+    (err: unknown) => [unansweredRead(err), unansweredRead(err)],
+  );
+  const [runs, statuses] = reads.map((r) => ("items" in r ? r.items : null)) as [CheckItem[] | null, CheckItem[] | null];
+  const summary = summarizeChecks({ runs, statuses });
+  const failure = reads.map((r) => ("unavailable" in r ? r.unavailable : null)).find((m) => m !== null) ?? null;
+  const unavailable = summary.state === "unknown" ? failure : null;
+  if (unavailable) console.warn(`[github] could not read checks for ${owner}/${repo}@${sha.slice(0, 7)}: ${unavailable}`);
+  return { ...summary, checks: [...(runs ?? []), ...(statuses ?? [])], unavailable };
 }
 
 export async function deleteBranch(owner: string, repo: string, branch: string): Promise<void> {
