@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUpRight, Check, ChevronDown, ExternalLink, FileText, GitBranch, GitPullRequest, History, Pencil, RotateCcw, Square, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type Attachment, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
+import { ArrowUpRight, Check, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, RotateCcw, Square, X } from "lucide-react";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
 import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment, request, keys } from "../../lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
@@ -13,6 +13,7 @@ import { Composer } from "./Composer";
 import { COLUMN_TONES } from "./columns";
 import { WorkingDot } from "./CardTile";
 import { ApiError } from "../../lib/errors";
+import { AttachmentView } from "./AttachmentView";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
 
@@ -394,24 +395,6 @@ function ReviewBlock({ card, agentName, approvals, members, onApprove, busy, err
         ) : null}
       </AnimatePresence>
     </div>
-  );
-}
-
-function AttachmentView({ a }: { a: Attachment }) {
-  const url = `/api/attachments/${a.id}`;
-  if (a.mime.startsWith("image/")) {
-    return (
-      <a href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-control border border-line">
-        <img src={url} alt={a.filename} className="max-h-64 w-auto" loading="lazy" />
-      </a>
-    );
-  }
-  return (
-    <a href={url} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-bg px-2.5 text-[12px] text-ink-muted no-underline hover:text-ink">
-      <FileText className="size-3.5" strokeWidth={1.75} />
-      <span className="max-w-56 truncate">{a.filename}</span>
-      <span className="font-mono text-[10.5px] text-ink-faint">{(a.size / 1024).toFixed(0)} KB</span>
-    </a>
   );
 }
 

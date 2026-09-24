@@ -16,7 +16,9 @@ import type {
   UpdateCardInput,
   User,
 } from "@kardboard/shared";
+import { useRef } from "react";
 import { ApiError, errorCode, NO_RESPONSE, shouldRetry } from "./errors";
+import { postComment, UploadFailed, type CommentRequests, type PostProgress } from "./commentPost";
 
 let tokenProvider: () => Promise<string | null> = async () => null;
 export function setTokenProvider(fn: () => Promise<string | null>) {
@@ -160,17 +162,29 @@ export function useApproveCard(slug: string) {
 
 export function useCreateComment(cardId: string) {
   const qc = useQueryClient();
+  // What a failed attempt already posted, so pressing Post again finishes it instead of duplicating it.
+  const progress = useRef<PostProgress<File> | null>(null);
   return useMutation({
     mutationFn: async ({ body, files }: { body: string; files: File[] }) => {
-      const comment = await request<Comment>(`/cards/${cardId}/comments`, { method: "POST", body: JSON.stringify({ body }) });
-      for (const file of files) {
-        const fd = new FormData();
-        fd.append("file", file);
-        await request(`/comments/${comment.id}/attachments`, { method: "POST", body: fd });
+      const requests: CommentRequests<File> = {
+        create: (text) => request<Comment>(`/cards/${cardId}/comments`, { method: "POST", body: JSON.stringify({ body: text }) }),
+        edit: (id, text) => request<Comment>(`/comments/${id}`, { method: "PATCH", body: JSON.stringify({ body: text }) }),
+        upload: (id, file) => {
+          const fd = new FormData();
+          fd.append("file", file);
+          return request(`/comments/${id}/attachments`, { method: "POST", body: fd });
+        },
+      };
+      try {
+        await postComment(requests, body, files, progress.current, (p) => (progress.current = p));
+      } catch (err) {
+        if (err instanceof UploadFailed) throw new Error(`Your comment is posted, but ${(err.file as File).name} did not upload. ${err.message} Post again to send the files that are left.`);
+        throw err;
       }
-      return comment;
+      progress.current = null;
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.card(cardId) }),
+    // Settled, not succeeded: after a failed upload the comment itself is already there to show.
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.card(cardId) }),
   });
 }
 
