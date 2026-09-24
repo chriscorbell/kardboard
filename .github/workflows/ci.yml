@@ -1,11 +1,10 @@
 # Deployment contract: a push to main publishes to GHCR, tagged :latest and :sha, each of the five
-# images whose inputs the push changed. Watchtower on minicore polls GHCR every 60 s and restarts
-# the containers whose image moved, so a push that touches only the app restarts only the app, and a
-# push of documentation restarts nothing. Pull requests build all five images without pushing, so a
-# broken Dockerfile fails before it reaches main. Running the workflow by hand on main publishes all
-# five whatever changed: the way to recover after an image failed to publish, since the next push
-# only rebuilds what it touches. Roll back by pinning a :sha tag in the compose file or re-running
-# this job from an older commit.
+# images whose inputs changed since the last run on main that succeeded. Watchtower on minicore polls
+# GHCR every 60 s and restarts the containers whose image moved, so a push that touches only the app
+# restarts only the app, and a push of documentation restarts nothing. Pull requests build all five
+# images without pushing, so a broken Dockerfile fails before it reaches main. Running the workflow
+# by hand on main publishes all five whatever changed. Roll back by pinning a :sha tag in the compose
+# file or re-running this job from an older commit.
 name: CI
 
 on:
@@ -41,24 +40,31 @@ jobs:
       - run: pnpm --filter @kardboard/app build
 
   # Which images this run builds, as the publish job's matrix. A pull request or a manual run takes
-  # all five. A push to main takes the images whose inputs differ between the commit main was on
-  # before the push and the one it is on now, however many commits the push carried. A change to an
-  # input every image shares, this workflow included, takes all five; a push that changes no image's
-  # inputs takes none, and publish is skipped.
+  # all five. A push to main takes the images whose inputs differ between this commit and the head of
+  # the last run on main that succeeded, whose images were therefore all published. That, and not the
+  # commit before this push, is the baseline: a run that failed, or a queued run that a newer push
+  # replaced, published nothing, and its changes are still owed. A change to an input every image
+  # shares, this workflow included, takes all five; a push that changes no image's inputs takes none,
+  # and publish is skipped.
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # To find the last run that succeeded.
+      actions: read
     outputs:
       images: ${{ steps.pick.outputs.images }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # The previous head of main has to be here to diff against.
+          # The baseline commit, and whether it is an ancestor of this one, need the history.
           fetch-depth: 0
       - id: pick
         env:
           EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
           IMAGES: >-
             [{"name": "app", "dockerfile": "packages/app/Dockerfile"},
             {"name": "runner", "dockerfile": "packages/runner/Dockerfile"},
@@ -79,16 +85,23 @@ jobs:
             publish "$(pick "$all")"
             exit 0
           fi
-          # A branch's first push has no previous commit, and a force push can leave one that no
-          # longer exists. Either way there is nothing trustworthy to diff against.
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            echo "No previous commit to compare with."
+          # The newest run of this workflow on main that succeeded, from a push or a manual run; a pull
+          # request from a fork's own main branch would also match the branch filter.
+          base=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=30" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].head_sha // empty') || base=""
+          # No such run, or one whose commit a force push has left off main's history: there is
+          # nothing trustworthy to compare with, so everything is built.
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$base" "$SHA"; then
+            echo "No earlier successful run on main to compare with${base:+ (${base} is not an ancestor)}."
             publish "$(pick "$all")"
             exit 0
           fi
+          echo "Comparing with ${base}, the last commit on main whose run succeeded."
 
           # A plain assignment, so a failed diff stops the job instead of reading as "nothing changed".
-          changed=$(git diff --name-only "$BEFORE" "$SHA")
+          # Without rename detection a moved file is listed at both paths, so moving one out of an
+          # image's directory still rebuilds that image.
+          changed=$(git diff --no-renames --name-only "$base" "$SHA")
           # What goes into each image, read from its Dockerfile's COPY lines. Every image installs
           # from the root lockfile and workspace files.
           names=""
