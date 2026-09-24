@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
-import { DailyLogFile, expiredLogFiles, logFileName, stampLines, teeProcessOutput } from "../src/services/logfile.js";
+import { DailyLogFile, expiredLogFiles, logFileName, redactTokens, stampLines, teeProcessOutput } from "../src/services/logfile.js";
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-logfile-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -17,6 +17,14 @@ describe("stamping lines", () => {
     const second = stampLines("o\nthree\n", first.atLineStart, T);
     assert.deepEqual(second, { text: `o\n${T} three\n`, atLineStart: true });
     assert.deepEqual(stampLines("", true, T), { text: "", atLineStart: true });
+  });
+});
+
+describe("what the request log keeps", () => {
+  it("blanks a token in the query and keeps the rest", () => {
+    assert.equal(redactTokens("<-- GET /api/boards/one/events?token=eyJhbGciOi.x.y"), "<-- GET /api/boards/one/events?token=[redacted]");
+    assert.equal(redactTokens("--> GET /api/x?offset=3&token=abc&n=1 200 4ms"), "--> GET /api/x?offset=3&token=[redacted]&n=1 200 4ms");
+    assert.equal(redactTokens("--> GET /api/admin/sessions?status=failed 200 4ms"), "--> GET /api/admin/sessions?status=failed 200 4ms");
   });
 });
 

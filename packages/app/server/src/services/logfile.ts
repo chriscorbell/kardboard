@@ -17,6 +17,11 @@ const ANSI_COLOUR = /\u001b\[[0-9;]*m/g;
 // About a minute of a busy server's output. Past it the disk is not keeping up.
 const MAX_QUEUED_BYTES = 8 * 1024 * 1024;
 
+/** A logged URL with the value of any `token` parameter blanked out. */
+export function redactTokens(line: string): string {
+  return line.replace(/([?&]token=)[^&\s#]+/gi, "$1[redacted]");
+}
+
 export function dayOf(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
