@@ -15,11 +15,16 @@ import { WorkingDot } from "./CardTile";
 import { ApiError } from "../../lib/errors";
 import { AttachmentView } from "./AttachmentView";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
+import { useModalFocus } from "../../components/focus";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
 
 export function CardSheet({ slug, cardId, view, onClose }: { slug: string; cardId: string | null; view: BoardView; onClose: () => void }) {
   const reduce = useReducedMotion();
+  const sheet = useRef<HTMLElement>(null);
+  const titleId = useId();
+  // The sheet is long, so it takes focus itself and is announced by the card's title first.
+  useModalFocus(sheet, Boolean(cardId), { initial: "container", resetKey: cardId });
   useEffect(() => {
     if (!cardId) return;
     const onKey = (e: KeyboardEvent) => {
@@ -34,15 +39,20 @@ export function CardSheet({ slug, cardId, view, onClose }: { slug: string; cardI
         <motion.div key="sheet-root" className="fixed inset-0 z-40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
           <div className="absolute inset-0 bg-bg/50" onClick={onClose} />
           <motion.aside
+            ref={sheet}
             key={cardId}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            tabIndex={-1}
             initial={reduce ? false : { x: 40, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 40, opacity: 0 }}
             transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute inset-y-0 right-0 flex w-full max-w-[680px] flex-col border-l border-line-strong bg-surface shadow-[-24px_0_64px_-24px_rgba(0,0,0,0.7)]"
+            className="absolute inset-y-0 right-0 flex w-full max-w-[680px] flex-col border-l border-line-strong bg-surface shadow-[-24px_0_64px_-24px_rgba(0,0,0,0.7)] focus:outline-none"
             aria-label="Card"
           >
-            <SheetBody slug={slug} cardId={cardId} view={view} onClose={onClose} />
+            <SheetBody slug={slug} cardId={cardId} titleId={titleId} view={view} onClose={onClose} />
           </motion.aside>
         </motion.div>
       ) : null}
@@ -50,7 +60,7 @@ export function CardSheet({ slug, cardId, view, onClose }: { slug: string; cardI
   );
 }
 
-function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: string; view: BoardView; onClose: () => void }) {
+function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; cardId: string; titleId: string; view: BoardView; onClose: () => void }) {
   const me = useMe();
   const detail = useCard(cardId);
   const update = useUpdateCard(slug);
@@ -65,7 +75,6 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
   }, [view.members, view.agent.name]);
   const card = detail.data?.card ?? view.cards.find((c) => c.id === cardId);
   const isAdmin = me.data?.user.role === "admin";
-  const titleId = useId();
 
   if (!card) {
     if (detail.isError) {
@@ -514,7 +523,12 @@ function CommentList({ comments, members, agent, handles, meId, cardId }: { comm
                 </span>
                 {c.editedAt ? <span className="text-ink-faint">edited</span> : null}
                 {mine && editingId !== c.id ? (
-                  <button type="button" className="ml-auto text-ink-faint opacity-0 transition-opacity hover:text-ink [li:hover_&]:opacity-100" onClick={() => setEditingId(c.id)}>
+                  <button
+                    type="button"
+                    aria-label="Edit comment"
+                    className="ml-auto text-ink-faint opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 [li:hover_&]:opacity-100 [@media(hover:none)]:opacity-100"
+                    onClick={() => setEditingId(c.id)}
+                  >
                     Edit
                   </button>
                 ) : null}
