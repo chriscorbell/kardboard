@@ -9,3 +9,4 @@ data/
 *.db
 *.db-*
 .pnpm-store/
+.claude/worktrees/
