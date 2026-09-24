@@ -15,34 +15,34 @@ import { buildAndRunPreview, PreviewError, removePreview, type PreviewRequest } 
 
 const env = {
   port: Number(process.env.PORT ?? "3071"),
-  token: process.env.CARDBOARD_RUNNER_TOKEN ?? "",
-  appUrl: (process.env.CARDBOARD_APP_URL ?? "http://app:3070").replace(/\/$/, ""),
-  mcpUrl: (process.env.CARDBOARD_MCP_URL ?? "http://app:3070/mcp").replace(/\/$/, ""),
-  egressUrl: (process.env.CARDBOARD_EGRESS_URL ?? "http://egress:8787").replace(/\/$/, ""),
-  defaultImage: process.env.CARDBOARD_AGENT_IMAGE ?? "ghcr.io/chriscorbell/cardboard-agent:latest",
-  workloadNetwork: process.env.CARDBOARD_WORKLOAD_NETWORK ?? "cardboard_workload",
+  token: process.env.KARDBOARD_RUNNER_TOKEN ?? "",
+  appUrl: (process.env.KARDBOARD_APP_URL ?? "http://app:3070").replace(/\/$/, ""),
+  mcpUrl: (process.env.KARDBOARD_MCP_URL ?? "http://app:3070/mcp").replace(/\/$/, ""),
+  egressUrl: (process.env.KARDBOARD_EGRESS_URL ?? "http://egress:8787").replace(/\/$/, ""),
+  defaultImage: process.env.KARDBOARD_AGENT_IMAGE ?? "ghcr.io/chriscorbell/kardboard-agent:latest",
+  workloadNetwork: process.env.KARDBOARD_WORKLOAD_NETWORK ?? "kardboard_workload",
   // Each Session gets a network of its own, holding only that Session and the containers on
   // `workload` it is meant to reach, so two Sessions cannot see each other. Set this to `shared`
   // to put Sessions back on `workload` together if the per-session wiring ever has to be backed out.
-  perSessionNetwork: (process.env.CARDBOARD_SESSION_NETWORK ?? "per-session") !== "shared",
+  perSessionNetwork: (process.env.KARDBOARD_SESSION_NETWORK ?? "per-session") !== "shared",
   // Previews are branch-controlled code, so they get their own network: the router can reach them
   // and they can reach the internet, but not the app, the egress proxy, or the runner.
-  previewNetwork: process.env.CARDBOARD_PREVIEW_NETWORK ?? "cardboard_preview",
-  logDir: process.env.CARDBOARD_LOG_DIR ?? "/data/logs",
-  logRetentionDays: Number(process.env.CARDBOARD_LOG_RETENTION_DAYS ?? "14"),
-  memoryBytes: Number(process.env.CARDBOARD_SESSION_MEMORY_BYTES ?? String(4 * 1024 * 1024 * 1024)),
-  nanoCpus: Number(process.env.CARDBOARD_SESSION_NANO_CPUS ?? String(2e9)),
-  pidsLimit: Number(process.env.CARDBOARD_SESSION_PIDS_LIMIT ?? "1024"),
-  previewMemoryBytes: Number(process.env.CARDBOARD_PREVIEW_MEMORY_BYTES ?? String(1024 * 1024 * 1024)),
-  previewNanoCpus: Number(process.env.CARDBOARD_PREVIEW_NANO_CPUS ?? String(1e9)),
-  previewPidsLimit: Number(process.env.CARDBOARD_PREVIEW_PIDS_LIMIT ?? "512"),
+  previewNetwork: process.env.KARDBOARD_PREVIEW_NETWORK ?? "kardboard_preview",
+  logDir: process.env.KARDBOARD_LOG_DIR ?? "/data/logs",
+  logRetentionDays: Number(process.env.KARDBOARD_LOG_RETENTION_DAYS ?? "14"),
+  memoryBytes: Number(process.env.KARDBOARD_SESSION_MEMORY_BYTES ?? String(4 * 1024 * 1024 * 1024)),
+  nanoCpus: Number(process.env.KARDBOARD_SESSION_NANO_CPUS ?? String(2e9)),
+  pidsLimit: Number(process.env.KARDBOARD_SESSION_PIDS_LIMIT ?? "1024"),
+  previewMemoryBytes: Number(process.env.KARDBOARD_PREVIEW_MEMORY_BYTES ?? String(1024 * 1024 * 1024)),
+  previewNanoCpus: Number(process.env.KARDBOARD_PREVIEW_NANO_CPUS ?? String(1e9)),
+  previewPidsLimit: Number(process.env.KARDBOARD_PREVIEW_PIDS_LIMIT ?? "512"),
   // A path on the Docker host: the runner never opens it, it only names it in a bind.
   codexAuthFile: process.env.CODEX_AUTH_FILE ?? "",
-  codexViaEgress: /^(1|true|yes)$/i.test(process.env.CARDBOARD_CODEX_VIA_EGRESS ?? ""),
+  codexViaEgress: /^(1|true|yes)$/i.test(process.env.KARDBOARD_CODEX_VIA_EGRESS ?? ""),
 };
 
 if (!env.token) {
-  console.error("CARDBOARD_RUNNER_TOKEN is required");
+  console.error("KARDBOARD_RUNNER_TOKEN is required");
   process.exit(1);
 }
 fs.mkdirSync(env.logDir, { recursive: true });
@@ -78,11 +78,11 @@ const startSchema = z.object({
   wallClockMinutes: z.number(),
   prompt: z.string(),
   githubToken: z.string().nullable().default(null),
-  gitName: z.string().default("cardboard"),
-  gitEmail: z.string().default("cardboard@users.noreply.github.com"),
+  gitName: z.string().default("kardboard"),
+  gitEmail: z.string().default("kardboard@users.noreply.github.com"),
 });
 
-const containerName = (sessionId: string) => `cardboard-session-${sessionId}`;
+const containerName = (sessionId: string) => `kardboard-session-${sessionId}`;
 
 // Nothing long-lived runs the agent image, so no watcher refreshes it. Pull before every start:
 // a no-op when the tag is current, and a fresh image the minute CI publishes one. If the registry
@@ -100,7 +100,7 @@ async function ensureImage(image: string): Promise<void> {
 
 // Session containers that exited while the runner was down never got their post-exit cleanup.
 async function pruneExitedSessions(): Promise<void> {
-  const list = await docker.listContainers({ all: true, filters: { label: ["cardboard.session"], status: ["exited", "dead"] } });
+  const list = await docker.listContainers({ all: true, filters: { label: ["kardboard.session"], status: ["exited", "dead"] } });
   for (const c of list) {
     await docker.getContainer(c.Id).remove({ force: true }).catch(() => {});
     console.log(`[runner] removed exited ${c.Names[0] ?? c.Id}`);
@@ -158,21 +158,21 @@ app.post("/sessions", async (c) => {
   const image = req.image ?? env.defaultImage;
   await ensureImage(image);
   const envList = [
-    `CARDBOARD_SESSION_ID=${req.sessionId}`,
-    `CARDBOARD_TOKEN=${req.token}`,
-    `CARDBOARD_MCP_URL=${env.mcpUrl}`,
-    `CARDBOARD_PROVIDER=${req.provider}`,
-    `CARDBOARD_MODEL=${req.model ?? ""}`,
-    `CARDBOARD_REASONING=${req.reasoning ?? ""}`,
-    `CARDBOARD_REPO_URL=${req.repoUrl ?? ""}`,
-    `CARDBOARD_BRANCH=${req.branch ?? ""}`,
-    `CARDBOARD_WALL_CLOCK_MINUTES=${req.wallClockMinutes}`,
-    `CARDBOARD_GIT_NAME=${req.gitName}`,
-    `CARDBOARD_GIT_EMAIL=${req.gitEmail}`,
+    `KARDBOARD_SESSION_ID=${req.sessionId}`,
+    `KARDBOARD_TOKEN=${req.token}`,
+    `KARDBOARD_MCP_URL=${env.mcpUrl}`,
+    `KARDBOARD_PROVIDER=${req.provider}`,
+    `KARDBOARD_MODEL=${req.model ?? ""}`,
+    `KARDBOARD_REASONING=${req.reasoning ?? ""}`,
+    `KARDBOARD_REPO_URL=${req.repoUrl ?? ""}`,
+    `KARDBOARD_BRANCH=${req.branch ?? ""}`,
+    `KARDBOARD_WALL_CLOCK_MINUTES=${req.wallClockMinutes}`,
+    `KARDBOARD_GIT_NAME=${req.gitName}`,
+    `KARDBOARD_GIT_EMAIL=${req.gitEmail}`,
     ...(req.githubToken ? [`GITHUB_TOKEN=${req.githubToken}`, `GH_TOKEN=${req.githubToken}`] : []),
     // Claude Code talks to the provider through the egress proxy, which holds the real credential.
     `ANTHROPIC_BASE_URL=${env.egressUrl}/anthropic`,
-    `ANTHROPIC_API_KEY=cardboard-egress`,
+    `ANTHROPIC_API_KEY=kardboard-egress`,
     `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`,
     ...codex.env,
   ];
@@ -199,8 +199,8 @@ app.post("/sessions", async (c) => {
       Env: envList,
       Labels: {
         "com.centurylinklabs.watchtower.enable": "false",
-        "cardboard.session": req.sessionId,
-        "cardboard.board": req.boardSlug,
+        "kardboard.session": req.sessionId,
+        "kardboard.board": req.boardSlug,
       },
       // The prompt is delivered on stdin so it never appears in `docker inspect` or process lists.
       OpenStdin: true,
@@ -235,7 +235,7 @@ app.delete("/sessions/:id", async (c) => {
   const container = docker.getContainer(id);
   const info = await container.inspect().catch(() => null);
   if (!info) return c.json({ ok: true, missing: true }, 404);
-  const sessionId = info.Config?.Labels?.["cardboard.session"];
+  const sessionId = info.Config?.Labels?.["kardboard.session"];
   await container.stop({ t: 10 }).catch(() => {});
   await container.remove({ force: true }).catch(() => {});
   // `watchContainer` also does this, but a runner that restarted mid-Session is no longer watching.
@@ -251,8 +251,8 @@ app.get("/sessions/:id/log", (c) => {
 });
 
 app.get("/sessions", async (c) => {
-  const list = await docker.listContainers({ all: true, filters: { label: ["cardboard.session"] } });
-  return c.json(list.map((x) => ({ containerId: x.Id, sessionId: x.Labels["cardboard.session"], state: x.State, status: x.Status })));
+  const list = await docker.listContainers({ all: true, filters: { label: ["kardboard.session"] } });
+  return c.json(list.map((x) => ({ containerId: x.Id, sessionId: x.Labels["kardboard.session"], state: x.State, status: x.Status })));
 });
 
 const previewSchema = z.object({
@@ -319,8 +319,8 @@ app.delete("/previews/:id", async (c) => {
 });
 
 app.get("/previews", async (c) => {
-  const list = await docker.listContainers({ all: true, filters: { label: ["cardboard.preview"] } });
-  return c.json(list.map((x) => ({ containerId: x.Id, previewId: x.Labels["cardboard.preview"], host: x.Labels["cardboard.preview.host"], state: x.State, status: x.Status })));
+  const list = await docker.listContainers({ all: true, filters: { label: ["kardboard.preview"] } });
+  return c.json(list.map((x) => ({ containerId: x.Id, previewId: x.Labels["kardboard.preview"], host: x.Labels["kardboard.preview.host"], state: x.State, status: x.Status })));
 });
 
 app.get("/previews/:id/log", (c) => {
@@ -342,4 +342,4 @@ void pruneExitedSessions()
   .then((removed) => removed.length && console.log(`[runner] removed ${removed.length} orphaned session network(s)`))
   .catch((err) => console.error("[runner] prune failed", err));
 
-serve({ fetch: app.fetch, port: env.port }, (info) => console.log(`cardboard runner listening on :${info.port}`));
+serve({ fetch: app.fetch, port: env.port }, (info) => console.log(`kardboard runner listening on :${info.port}`));

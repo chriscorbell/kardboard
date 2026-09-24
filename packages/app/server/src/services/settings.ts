@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { Settings, AgentProfile } from "@cardboard/shared";
+import type { Settings, AgentProfile } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 
 const DEFAULTS: Settings = {

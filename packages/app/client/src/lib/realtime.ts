@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { BoardEvent, BoardView, CardDetail } from "@cardboard/shared";
+import type { BoardEvent, BoardView, CardDetail } from "@kardboard/shared";
 import { keys, upsertCardInBoard, upsertSessionInBoard } from "./api";
 import { useAuth } from "./auth";
 

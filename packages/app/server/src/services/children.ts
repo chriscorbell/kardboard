@@ -1,5 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
-import type { ActorKind, CardOutcome, Column, Priority } from "@cardboard/shared";
+import type { ActorKind, CardOutcome, Column, Priority } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { recordEvent, SYSTEM_ACTOR } from "./events.js";
 

@@ -27,7 +27,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
-      - run: pnpm --filter @cardboard/app build
+      - run: pnpm --filter @kardboard/app build
 
   publish:
     needs: validate
@@ -61,7 +61,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/cardboard-${{ matrix.name }}
+          images: ghcr.io/${{ github.repository_owner }}/kardboard-${{ matrix.name }}
           tags: |
             type=raw,value=latest
             type=sha

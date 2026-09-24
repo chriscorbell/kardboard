@@ -1,5 +1,5 @@
 {
-  "name": "@cardboard/app",
+  "name": "@kardboard/app",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -17,7 +17,7 @@
     "seed": "tsx server/src/seed.ts"
   },
   "dependencies": {
-    "@cardboard/shared": "workspace:*",
+    "@kardboard/shared": "workspace:*",
     "@clerk/backend": "^2.7.0",
     "@hono/node-server": "^1.14.0",
     "@hono/zod-validator": "^0.5.0",

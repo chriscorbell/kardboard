@@ -4,18 +4,18 @@ import { cloneUrl, previewContainerName, previewContainerSpec, previewImageTag, 
 
 const req: PreviewRequest = {
   previewId: "pv1",
-  boardSlug: "cardboard",
+  boardSlug: "kardboard",
   cardId: "k6u39mjgb5j2w8",
   host: "k6u39mjg.preview.xode.cc",
   repoUrl: "https://github.com/chriscorbell/kardboard",
-  branch: "cardboard/k6u39mjg-runner-hosted-previews",
+  branch: "kardboard/k6u39mjg-runner-hosted-previews",
   githubToken: "ghs_secret",
   dockerfile: "Dockerfile",
   port: 3000,
-  env: { CARDBOARD_PREVIEW: "1" },
+  env: { KARDBOARD_PREVIEW: "1" },
 };
 
-const limits = { network: "cardboard_preview", memoryBytes: 1024, nanoCpus: 1000, pidsLimit: 16 };
+const limits = { network: "kardboard_preview", memoryBytes: 1024, nanoCpus: 1000, pidsLimit: 16 };
 
 describe("cloning a branch for a Preview", () => {
   it("puts the installation token in the clone URL", () => {
@@ -36,26 +36,26 @@ describe("the Preview container", () => {
   const spec = previewContainerSpec(req, limits);
 
   it("is named and tagged from the preview id", () => {
-    assert.equal(previewContainerName("pv1"), "cardboard-preview-pv1");
-    assert.equal(previewImageTag("pv1"), "cardboard-preview-pv1:latest");
-    assert.equal(spec.name, "cardboard-preview-pv1");
-    assert.equal(spec.Image, "cardboard-preview-pv1:latest");
+    assert.equal(previewContainerName("pv1"), "kardboard-preview-pv1");
+    assert.equal(previewImageTag("pv1"), "kardboard-preview-pv1:latest");
+    assert.equal(spec.name, "kardboard-preview-pv1");
+    assert.equal(spec.Image, "kardboard-preview-pv1:latest");
   });
 
   it("joins the preview network only, so branch code cannot reach the runner or the app", () => {
-    assert.equal(spec.HostConfig?.NetworkMode, "cardboard_preview");
+    assert.equal(spec.HostConfig?.NetworkMode, "kardboard_preview");
   });
 
   it("carries no host path and no credential", () => {
     assert.deepEqual(spec.HostConfig?.Binds, []);
     const envNames = (spec.Env ?? []).map((e) => e.split("=")[0]);
-    assert.deepEqual(envNames.sort(), ["CARDBOARD_PREVIEW", "NODE_ENV", "PORT"]);
+    assert.deepEqual(envNames.sort(), ["KARDBOARD_PREVIEW", "NODE_ENV", "PORT"]);
     assert.ok((spec.Env ?? []).includes("PORT=3000"));
   });
 
   it("is labelled for cleanup and opted out of Watchtower", () => {
-    assert.equal(spec.Labels?.["cardboard.preview"], "pv1");
-    assert.equal(spec.Labels?.["cardboard.preview.host"], req.host);
+    assert.equal(spec.Labels?.["kardboard.preview"], "pv1");
+    assert.equal(spec.Labels?.["kardboard.preview.host"], req.host);
     assert.equal(spec.Labels?.["com.centurylinklabs.watchtower.enable"], "false");
   });
 

@@ -12,7 +12,7 @@ describe("giving a Codex Session a credential", () => {
 
   it("points Codex at the proxy and mounts nothing when the proxy holds the sign-in file", () => {
     const wiring = codexWiring({ viaEgress: true, egressUrl, authFile: "" });
-    assert.deepEqual(wiring, { env: ["CARDBOARD_CODEX_EGRESS_URL=http://egress:8787/openai"], binds: [] });
+    assert.deepEqual(wiring, { env: ["KARDBOARD_CODEX_EGRESS_URL=http://egress:8787/openai"], binds: [] });
   });
 
   it("prefers the proxy over a mount when both are configured", () => {
@@ -23,7 +23,7 @@ describe("giving a Codex Session a credential", () => {
   it("stages the host sign-in file read-only when the proxy does not hold it", () => {
     const wiring = codexWiring({ viaEgress: false, egressUrl, authFile: "/host/codex-auth.json" });
     assert.deepEqual(wiring, {
-      env: [`CARDBOARD_CODEX_AUTH_STAGE=${CODEX_AUTH_STAGE}`],
+      env: [`KARDBOARD_CODEX_AUTH_STAGE=${CODEX_AUTH_STAGE}`],
       binds: [`/host/codex-auth.json:${CODEX_AUTH_STAGE}:ro`],
     });
   });
@@ -36,7 +36,7 @@ describe("giving a Codex Session a credential", () => {
   it("refuses a Session that would have no way to reach the provider", () => {
     const wiring = codexWiring({ viaEgress: false, egressUrl, authFile: "" });
     assert.equal("error" in wiring, true);
-    assert.match("error" in wiring ? wiring.error : "", /CARDBOARD_CODEX_VIA_EGRESS|CODEX_AUTH_FILE/);
+    assert.match("error" in wiring ? wiring.error : "", /KARDBOARD_CODEX_VIA_EGRESS|CODEX_AUTH_FILE/);
   });
 });
 
@@ -55,8 +55,8 @@ describe("the Session entrypoint's Codex invocation", () => {
   });
 
   it("carries the Session token in the environment rather than writing it into config.toml", () => {
-    assert.match(script, /bearer_token_env_var = "CARDBOARD_TOKEN"/);
-    assert.equal(/http_headers = .*CARDBOARD_TOKEN/.test(script), false);
+    assert.match(script, /bearer_token_env_var = "KARDBOARD_TOKEN"/);
+    assert.equal(/http_headers = .*KARDBOARD_TOKEN/.test(script), false);
   });
 
   it("asks Codex to reject configuration it does not recognise", () => {
@@ -64,7 +64,7 @@ describe("the Session entrypoint's Codex invocation", () => {
   });
 
   it("names a model provider when the proxy holds the credential, so the WebSocket transport is off", () => {
-    assert.match(script, /model_provider = "cardboard"/);
-    assert.match(script, /base_url = "\$CARDBOARD_CODEX_EGRESS_URL"/);
+    assert.match(script, /model_provider = "kardboard"/);
+    assert.match(script, /base_url = "\$KARDBOARD_CODEX_EGRESS_URL"/);
   });
 });

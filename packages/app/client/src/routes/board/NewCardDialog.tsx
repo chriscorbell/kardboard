@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type Column, type Priority } from "@cardboard/shared";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type Column, type Priority } from "@kardboard/shared";
 import { Dialog } from "../../components/Dialog";
 import { Button, Field, Input, Select, Textarea } from "../../components/ui";
 import { useCreateCard } from "../../lib/api";

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Provider } from "@cardboard/shared";
+import type { Provider } from "@kardboard/shared";
 import { env } from "../env.js";
 
 // The egress proxy is the only part of the stack that sees a provider's own answer, so it is where a

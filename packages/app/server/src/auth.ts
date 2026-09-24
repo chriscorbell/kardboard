@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { eq } from "drizzle-orm";
-import type { User } from "@cardboard/shared";
+import type { User } from "@kardboard/shared";
 import { db, schema } from "./db/index.js";
 import { env } from "./env.js";
 import { activateFromClerk, toUser } from "./services/users.js";

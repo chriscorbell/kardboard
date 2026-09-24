@@ -7,21 +7,21 @@ FROM base AS deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/app/package.json packages/app/
-RUN pnpm install --frozen-lockfile --filter @cardboard/app... --config.confirmModulesPurge=false
+RUN pnpm install --frozen-lockfile --filter @kardboard/app... --config.confirmModulesPurge=false
 
 FROM deps AS build
 COPY packages/shared packages/shared
 COPY packages/app packages/app
-RUN pnpm --filter @cardboard/app build
+RUN pnpm --filter @kardboard/app build
 
 FROM base AS prod-deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/app/package.json packages/app/
-RUN pnpm install --frozen-lockfile --prod --filter @cardboard/app... --config.confirmModulesPurge=false
+RUN pnpm install --frozen-lockfile --prod --filter @kardboard/app... --config.confirmModulesPurge=false
 
 FROM node:24-alpine AS runtime
-ENV NODE_ENV=production PORT=3070 CARDBOARD_DATA_DIR=/data
+ENV NODE_ENV=production PORT=3070 KARDBOARD_DATA_DIR=/data
 WORKDIR /repo/packages/app
 COPY --from=prod-deps /repo/node_modules /repo/node_modules
 COPY --from=prod-deps /repo/packages/app/node_modules ./node_modules

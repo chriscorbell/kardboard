@@ -1,5 +1,5 @@
 import { asc, eq, inArray } from "drizzle-orm";
-import { extractMentionHandles, type Attachment, type Comment } from "@cardboard/shared";
+import { extractMentionHandles, type Attachment, type Comment } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";

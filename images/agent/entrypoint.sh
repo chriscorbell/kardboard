@@ -4,51 +4,51 @@
 # through the egress proxy. Exit code 0 means the agent finished on its own terms.
 set -euo pipefail
 
-: "${CARDBOARD_SESSION_ID:?}" "${CARDBOARD_TOKEN:?}" "${CARDBOARD_MCP_URL:?}" "${CARDBOARD_PROVIDER:?}"
+: "${KARDBOARD_SESSION_ID:?}" "${KARDBOARD_TOKEN:?}" "${KARDBOARD_MCP_URL:?}" "${KARDBOARD_PROVIDER:?}"
 PROMPT="$(cat)"
-WALL_CLOCK_MINUTES="${CARDBOARD_WALL_CLOCK_MINUTES:-45}"
+WALL_CLOCK_MINUTES="${KARDBOARD_WALL_CLOCK_MINUTES:-45}"
 
-log() { printf '[session %s] %s\n' "$CARDBOARD_SESSION_ID" "$*" >&2; }
+log() { printf '[session %s] %s\n' "$KARDBOARD_SESSION_ID" "$*" >&2; }
 
-if [ -n "${CARDBOARD_REPO_URL:-}" ]; then
-  log "cloning $CARDBOARD_REPO_URL"
+if [ -n "${KARDBOARD_REPO_URL:-}" ]; then
+  log "cloning $KARDBOARD_REPO_URL"
   # GITHUB_TOKEN is a one-hour installation token minted by the app (not wired yet; falls back to anonymous clone).
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    git -c credential.helper='!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f' clone --depth=50 "$CARDBOARD_REPO_URL" repo
+    git -c credential.helper='!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f' clone --depth=50 "$KARDBOARD_REPO_URL" repo
     git -C repo config credential.helper '!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f'
   else
-    git clone --depth=50 "$CARDBOARD_REPO_URL" repo
+    git clone --depth=50 "$KARDBOARD_REPO_URL" repo
   fi
   cd repo
-  git config user.name "${CARDBOARD_GIT_NAME:-Milo}"
-  git config user.email "${CARDBOARD_GIT_EMAIL:-cardboard@xode.cc}"
-  if [ -n "${CARDBOARD_BRANCH:-}" ]; then
+  git config user.name "${KARDBOARD_GIT_NAME:-Milo}"
+  git config user.email "${KARDBOARD_GIT_EMAIL:-kardboard@users.noreply.github.com}"
+  if [ -n "${KARDBOARD_BRANCH:-}" ]; then
     # A shallow clone only has the default branch; fetch the card's branch if it already exists.
-    if git fetch --depth=50 origin "refs/heads/$CARDBOARD_BRANCH:refs/remotes/origin/$CARDBOARD_BRANCH" 2>/dev/null; then
-      log "resuming existing branch $CARDBOARD_BRANCH"
-      git checkout -B "$CARDBOARD_BRANCH" "origin/$CARDBOARD_BRANCH"
+    if git fetch --depth=50 origin "refs/heads/$KARDBOARD_BRANCH:refs/remotes/origin/$KARDBOARD_BRANCH" 2>/dev/null; then
+      log "resuming existing branch $KARDBOARD_BRANCH"
+      git checkout -B "$KARDBOARD_BRANCH" "origin/$KARDBOARD_BRANCH"
     else
-      git checkout -b "$CARDBOARD_BRANCH"
+      git checkout -b "$KARDBOARD_BRANCH"
     fi
   fi
 fi
 
-case "$CARDBOARD_PROVIDER" in
+case "$KARDBOARD_PROVIDER" in
   claude)
     log "starting claude code"
     cat > /tmp/mcp.json <<JSON
-{ "mcpServers": { "cardboard": { "type": "http", "url": "$CARDBOARD_MCP_URL", "headers": { "Authorization": "Bearer $CARDBOARD_TOKEN" } } } }
+{ "mcpServers": { "kardboard": { "type": "http", "url": "$KARDBOARD_MCP_URL", "headers": { "Authorization": "Bearer $KARDBOARD_TOKEN" } } } }
 JSON
-    MODEL_ARGS=(); [ -n "${CARDBOARD_MODEL:-}" ] && MODEL_ARGS=(--model "$CARDBOARD_MODEL")
+    MODEL_ARGS=(); [ -n "${KARDBOARD_MODEL:-}" ] && MODEL_ARGS=(--model "$KARDBOARD_MODEL")
     # Effort level: Claude Code reads CLAUDE_CODE_EFFORT_LEVEL (low, medium, high, max).
-    [ -n "${CARDBOARD_REASONING:-}" ] && export CLAUDE_CODE_EFFORT_LEVEL="$CARDBOARD_REASONING"
+    [ -n "${KARDBOARD_REASONING:-}" ] && export CLAUDE_CODE_EFFORT_LEVEL="$KARDBOARD_REASONING"
     # stream-json, not text: text prints nothing until the run ends, so the container log — which is
     # what the admin panel shows as the Session's transcript — would stay empty for the whole run.
     exec timeout --signal=TERM "${WALL_CLOCK_MINUTES}m" \
       claude -p "$PROMPT" "${MODEL_ARGS[@]}" \
         --mcp-config /tmp/mcp.json \
         --permission-mode acceptEdits \
-        --allowedTools "mcp__cardboard__*,Bash,Read,Edit,Write,Glob,Grep,WebFetch" \
+        --allowedTools "mcp__kardboard__*,Bash,Read,Edit,Write,Glob,Grep,WebFetch" \
         --output-format stream-json --verbose
     ;;
   codex)
@@ -57,25 +57,25 @@ JSON
     mkdir -p "$CODEX_HOME"; chmod 700 "$CODEX_HOME"
 
     # The runner gives the Session exactly one credential path (see packages/runner/src/codex.ts).
-    if [ -n "${CARDBOARD_CODEX_AUTH_STAGE:-}" ]; then
+    if [ -n "${KARDBOARD_CODEX_AUTH_STAGE:-}" ]; then
       # Copy rather than read the mount in place: Codex rewrites auth.json whenever it refreshes
       # its access token, and the mount is read-only so the Admin's file is never changed here.
       log "using the mounted codex sign-in file"
-      install -m 600 "$CARDBOARD_CODEX_AUTH_STAGE" "$CODEX_HOME/auth.json"
+      install -m 600 "$KARDBOARD_CODEX_AUTH_STAGE" "$CODEX_HOME/auth.json"
     fi
 
     {
-      if [ -n "${CARDBOARD_CODEX_EGRESS_URL:-}" ]; then
+      if [ -n "${KARDBOARD_CODEX_EGRESS_URL:-}" ]; then
         # A named model provider is what puts Codex on the proxy: the default provider prefers a
         # WebSocket to chatgpt.com that ignores any base URL, and naming one turns that transport
         # off. `requires_openai_auth` keeps Codex in subscription mode; the proxy holds the token.
         log "sending codex inference through the egress proxy"
         cat <<TOML
-model_provider = "cardboard"
+model_provider = "kardboard"
 
-[model_providers.cardboard]
+[model_providers.kardboard]
 name = "kardboard egress"
-base_url = "$CARDBOARD_CODEX_EGRESS_URL"
+base_url = "$KARDBOARD_CODEX_EGRESS_URL"
 wire_api = "responses"
 requires_openai_auth = true
 
@@ -84,19 +84,19 @@ TOML
       # Verified against codex-cli 0.154.0: this is what `codex mcp add --url --bearer-token-env-var`
       # writes, and it keeps the Session token in the environment instead of on disk.
       cat <<TOML
-[mcp_servers.cardboard]
-url = "$CARDBOARD_MCP_URL"
-bearer_token_env_var = "CARDBOARD_TOKEN"
+[mcp_servers.kardboard]
+url = "$KARDBOARD_MCP_URL"
+bearer_token_env_var = "KARDBOARD_TOKEN"
 TOML
     } > "$CODEX_HOME/config.toml"
 
     # --strict-config makes Codex fail on a key it does not recognise. A Session that cannot be
     # configured should stop loudly; silently ignored config is how this path broke before.
     CODEX_ARGS=(--strict-config --skip-git-repo-check)
-    [ -n "${CARDBOARD_MODEL:-}" ] && CODEX_ARGS+=(-m "$CARDBOARD_MODEL")
+    [ -n "${KARDBOARD_MODEL:-}" ] && CODEX_ARGS+=(-m "$KARDBOARD_MODEL")
     # Codex calls the top level "xhigh"; kardboard's "max" maps to it.
-    if [ -n "${CARDBOARD_REASONING:-}" ]; then
-      EFFORT="$CARDBOARD_REASONING"; [ "$EFFORT" = "max" ] && EFFORT="xhigh"
+    if [ -n "${KARDBOARD_REASONING:-}" ]; then
+      EFFORT="$KARDBOARD_REASONING"; [ "$EFFORT" = "max" ] && EFFORT="xhigh"
       CODEX_ARGS+=(-c "model_reasoning_effort=\"$EFFORT\"")
     fi
     # `--full-auto` was removed in codex-cli 0.154 and Codex exits 2 on it. The Session container is
@@ -106,5 +106,5 @@ TOML
       codex exec --dangerously-bypass-approvals-and-sandbox "${CODEX_ARGS[@]}" "$PROMPT" < /dev/null
     ;;
   *)
-    log "unknown provider $CARDBOARD_PROVIDER"; exit 64 ;;
+    log "unknown provider $KARDBOARD_PROVIDER"; exit 64 ;;
 esac

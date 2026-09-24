@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { after, beforeEach, describe, it } from "node:test";
 import { desc, eq } from "drizzle-orm";
-import type { User } from "@cardboard/shared";
+import type { User } from "@kardboard/shared";
 
 // The database module opens its file at import time, so point it at a scratch directory first.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cardboard-invitations-"));
-process.env.CARDBOARD_DATA_DIR = root;
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-invitations-"));
+process.env.KARDBOARD_DATA_DIR = root;
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { env } = await import("../src/env.js");

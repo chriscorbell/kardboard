@@ -77,7 +77,7 @@ describe("claude code events", () => {
   it("summarises a tool call by what it acts on", () => {
     const [bash] = parseTranscript(stamped({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "pnpm -r test", description: "run tests" } }] } }));
     assert.equal(bash?.body, "pnpm -r test");
-    const [other] = parseTranscript(stamped({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__cardboard__move_card", input: { column: "review" } }] } }));
+    const [other] = parseTranscript(stamped({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__kardboard__move_card", input: { column: "review" } }] } }));
     assert.equal(other?.body, '{"column":"review"}');
   });
 

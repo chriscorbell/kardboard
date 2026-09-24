@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, lt } from "drizzle-orm";
-import type { User } from "@cardboard/shared";
+import type { User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { newId } from "../ids.js";
@@ -25,7 +25,7 @@ export class PreviewError extends Error {}
 export const cardSlug = (cardId: string) => cardId.slice(0, 8);
 
 export function previewHostFor(cardId: string): string {
-  if (!env.previewDomain) throw new PreviewError("CARDBOARD_PREVIEW_DOMAIN is not set, so preview hostnames cannot be formed.");
+  if (!env.previewDomain) throw new PreviewError("KARDBOARD_PREVIEW_DOMAIN is not set, so preview hostnames cannot be formed.");
   return env.previewHostPattern.replace("{card}", cardSlug(cardId)).replace("{domain}", env.previewDomain).toLowerCase();
 }
 
@@ -71,7 +71,7 @@ export async function startPreview(cardId: string): Promise<PreviewRow> {
       githubToken: token,
       dockerfile: "Dockerfile",
       port: 3000,
-      env: { CARDBOARD_PREVIEW_HOST: host, CARDBOARD_PREVIEW_URL: previewUrlFor(host) },
+      env: { KARDBOARD_PREVIEW_HOST: host, KARDBOARD_PREVIEW_URL: previewUrlFor(host) },
     });
   } catch (err) {
     await applyPreviewState(id, { status: "failed", error: `the runner refused the build: ${(err as Error).message}` });

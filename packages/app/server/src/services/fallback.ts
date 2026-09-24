@@ -1,4 +1,4 @@
-import type { Provider, SessionStatus } from "@cardboard/shared";
+import type { Provider, SessionStatus } from "@kardboard/shared";
 import type { LimitSnapshot, UsageLimit } from "./provider-limits.js";
 
 // When a Provider runs out of subscription usage, the Card's work should continue on the other one

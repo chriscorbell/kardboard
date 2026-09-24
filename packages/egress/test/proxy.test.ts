@@ -64,7 +64,7 @@ describe("rewriting headers", () => {
   });
 
   it("replaces the Session's Anthropic credential with the real one", () => {
-    const headers = anthropicHeaders({ "x-api-key": "cardboard-egress", authorization: "Bearer fake" }, new URL("https://api.anthropic.com"), "real-token");
+    const headers = anthropicHeaders({ "x-api-key": "kardboard-egress", authorization: "Bearer fake" }, new URL("https://api.anthropic.com"), "real-token");
     assert.equal(headers["authorization"], "Bearer real-token");
     assert.equal(headers["x-api-key"], undefined);
     assert.equal(headers["host"], "api.anthropic.com");

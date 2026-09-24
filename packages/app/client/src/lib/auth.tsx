@@ -5,11 +5,11 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 // In production the server injects the key at request time; in dev Vite reads it from packages/app/.env.
 declare global {
   interface Window {
-    __CARDBOARD_CONFIG__?: { clerkPublishableKey?: string };
+    __KARDBOARD_CONFIG__?: { clerkPublishableKey?: string };
   }
 }
 export const clerkPublishableKey: string | undefined =
-  (window.__CARDBOARD_CONFIG__?.clerkPublishableKey ?? (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined)) || undefined;
+  (window.__KARDBOARD_CONFIG__?.clerkPublishableKey ?? (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined)) || undefined;
 
 type AuthValue = {
   mode: "dev" | "clerk";

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import type { Board } from "@cardboard/shared";
+import type { Board } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminUsers, type AdminBoard } from "../../lib/api";
 import { Avatar, Button, Chip, cx, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";

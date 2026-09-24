@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { UserPlus } from "lucide-react";
-import type { User } from "@cardboard/shared";
+import type { User } from "@kardboard/shared";
 import { keys, request, useAdminUsers, useMe } from "../../lib/api";
 import { Avatar, Button, Chip, Field, Input, Select, Skeleton } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";

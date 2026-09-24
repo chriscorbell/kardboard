@@ -10,7 +10,7 @@ importers:
 
   packages/app:
     dependencies:
-      '@cardboard/shared':
+      '@kardboard/shared':
         specifier: workspace:*
         version: link:../shared
       '@clerk/backend':

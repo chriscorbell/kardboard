@@ -85,22 +85,20 @@ pnpm db:generate # a new migration after editing the schema
 
 ## Configuration
 
-The product name is `kardboard`. The `CARDBOARD_*` environment variables, `@cardboard/*` package names, image names, and existing data paths remain stable for deployment compatibility.
-
 Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matter most:
 
 | Variable | Purpose |
 | --- | --- |
-| `CARDBOARD_PUBLIC_URL`, `CARDBOARD_REDIRECT_HOSTS` | Canonical app URL and comma-separated old hosts that redirect to it. |
-| `CARDBOARD_AUTH` | `dev` or `clerk`. |
+| `KARDBOARD_PUBLIC_URL`, `KARDBOARD_REDIRECT_HOSTS` | Canonical app URL and comma-separated old hosts that redirect to it. |
+| `KARDBOARD_AUTH` | `dev` or `clerk`. |
 | `CLERK_SECRET_KEY`, `VITE_CLERK_PUBLISHABLE_KEY` | Clerk credentials for `clerk` mode. |
-| `CARDBOARD_ADMIN_EMAIL` | The first admin, created on first start. |
-| `RESEND_API_KEY`, `CARDBOARD_EMAIL_FROM` | Email delivery. Without a key, emails are logged instead of sent. |
-| `CARDBOARD_RUNNER_URL`, `CARDBOARD_RUNNER_TOKEN` | Where the runner is and the shared secret between app and runner. |
+| `KARDBOARD_ADMIN_EMAIL` | The first admin, created on first start. |
+| `RESEND_API_KEY`, `KARDBOARD_EMAIL_FROM` | Email delivery. Without a key, emails are logged instead of sent. |
+| `KARDBOARD_RUNNER_URL`, `KARDBOARD_RUNNER_TOKEN` | Where the runner is and the shared secret between app and runner. |
 | `GITHUB_SESSIONS_APP_*`, `GITHUB_MERGE_APP_*` | The two GitHub Apps. See [deploy/github-apps.md](deploy/github-apps.md). |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Held by the egress proxy only. Create it with `claude setup-token`. |
-| `CARDBOARD_BACKUP_HOUR`, `CARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |
-| `CARDBOARD_PREVIEW_SECRET`, `CARDBOARD_PREVIEW_HOST_PATTERN` | Signs preview cookies, and the preview hostname shape. Needed only for boards in `runner` preview mode. |
+| `KARDBOARD_BACKUP_HOUR`, `KARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |
+| `KARDBOARD_PREVIEW_SECRET`, `KARDBOARD_PREVIEW_HOST_PATTERN` | Signs preview cookies, and the preview hostname shape. Needed only for boards in `runner` preview mode. |
 
 ## Deploying
 
@@ -116,7 +114,7 @@ External services you need to set up once:
 
 Runner-hosted previews require a root `Dockerfile` that listens on `$PORT`. This repository's root `Dockerfile` links to `packages/app/Dockerfile`, so previews build the branch's app with a separate, seeded database and no production credentials. Access is checked by the preview router before requests reach that app. See [the preview runbook](docs/runbooks/previews.md) for DNS, certificates, and host configuration.
 
-Each board points at one repository. To prepare one, run the `kardboard-onboard` skill from [chriscorbell/skills](https://github.com/chriscorbell/skills) in that repository with your coding agent, or follow the same steps by hand: give `AGENTS.md` a verified acceptance command, install both GitHub Apps, create the `cardboard` ruleset, and add the board in the admin panel.
+Each board points at one repository. To prepare one, run the `kardboard-onboard` skill from [chriscorbell/skills](https://github.com/chriscorbell/skills) in that repository with your coding agent, or follow the same steps by hand: give `AGENTS.md` a verified acceptance command, install both GitHub Apps, create the `kardboard` ruleset, and add the board in the admin panel.
 
 > [!NOTE]
 > kardboard is itself a board on kardboard. Some of its own changes arrive as pull requests from Milo.

@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { Approval } from "@cardboard/shared";
+import type { Approval } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { recordEvent, type Actor } from "./events.js";

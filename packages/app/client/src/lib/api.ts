@@ -15,7 +15,7 @@ import type {
   Settings,
   UpdateCardInput,
   User,
-} from "@cardboard/shared";
+} from "@kardboard/shared";
 
 let tokenProvider: () => Promise<string | null> = async () => null;
 export function setTokenProvider(fn: () => Promise<string | null>) {

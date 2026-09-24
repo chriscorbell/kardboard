@@ -5,7 +5,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Plus } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, type AgentProfile, type Card, type Column, type User } from "@cardboard/shared";
+import { COLUMNS, COLUMN_LABELS, type AgentProfile, type Card, type Column, type User } from "@kardboard/shared";
 import { useBoard, useMe, useMoveCard } from "../lib/api";
 import { useBoardEvents } from "../lib/realtime";
 import { Avatar, Button, cx, IconButton, Skeleton } from "../components/ui";

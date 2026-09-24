@@ -9,7 +9,7 @@ import * as schema from "./schema.js";
 
 fs.mkdirSync(env.dataDir, { recursive: true });
 
-export const dbFile = path.join(env.dataDir, "cardboard.db");
+export const dbFile = path.join(env.dataDir, "kardboard.db");
 
 export const client = createClient({ url: `file:${dbFile}` });
 export const db = drizzle(client, { schema });

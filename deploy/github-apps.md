@@ -51,7 +51,7 @@ app is installed on the board's repository.
 
 In the repository: Settings, Rules, Rulesets, **New branch ruleset**.
 
-- Name: `cardboard`, enforcement **Active**, target **Default branch**.
+- Name: `kardboard`, enforcement **Active**, target **Default branch**.
 - Bypass list: add the **Kardboard (Merge)** app, mode **Always**.
 - Rules: **Require a pull request before merging** with **Required approvals: 1**. Leave
   "Dismiss stale approvals" on. Optionally **Block force pushes** and **Restrict deletions**.
@@ -68,6 +68,6 @@ part of onboarding a Board, not an optional extra.
 Copy `deploy/.env` to minicore and recreate the app service:
 
 ```bash
-scp deploy/.env minicore:/home/chris/docker/stacks/cardboard/.env
-ssh minicore 'cd ~/docker/stacks/cardboard && docker compose up -d app'
+scp deploy/.env minicore:/home/chris/docker/stacks/kardboard/.env
+ssh minicore 'cd ~/docker/stacks/kardboard && docker compose up -d app'
 ```

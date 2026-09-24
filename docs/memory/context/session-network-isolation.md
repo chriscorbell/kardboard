@@ -1,6 +1,6 @@
 # Session and Preview network isolation
 
-Read when: changing which containers a Session may reach, adding a service to `cardboard_workload`,
+Read when: changing which containers a Session may reach, adding a service to `kardboard_workload`,
 naming a Docker bridge, or explaining why a Session failed with "could not create the session
 network".
 Status: verified in tests, unverified in production
@@ -8,14 +8,14 @@ Scope: component, `packages/runner`, `deploy/compose.yaml`, minicore host firewa
 Verified: 2026-09-15
 Source: [network isolation runbook](../runbooks/network-isolation.md),
 [packages/runner/src/networks.ts](../../../packages/runner/src/networks.ts)
-Recheck when: the runner stops reading `cardboard_workload` membership to decide a Session's peers,
+Recheck when: the runner stops reading `kardboard_workload` membership to decide a Session's peers,
 the `cbn` bridge prefix changes, or the firewall rule is applied and observed on minicore
 
 Two facts that are not visible from either file on its own.
 
-**`cardboard_workload` is now a list, not a place.** No Session container joins it. The runner
+**`kardboard_workload` is now a list, not a place.** No Session container joins it. The runner
 inspects its membership at every start and connects those containers — the app and the egress
-proxy — to a fresh `cardboard-session-<id>` bridge under the aliases they already answer to, then
+proxy — to a fresh `kardboard-session-<id>` bridge under the aliases they already answer to, then
 starts the Session there. A service a Session should reach is still added by putting it on
 `workload` in `deploy/compose.yaml` and nothing else, but a service put there expecting a Session
 to *find* it must carry a compose service name or a network alias, because that alias is what gets

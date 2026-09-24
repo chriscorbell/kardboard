@@ -1,4 +1,4 @@
-# kardboard stack for minicore. Copy this directory to chriscorbell/stacks/cardboard and run
+# kardboard stack for minicore. Copy this directory to chriscorbell/stacks/kardboard and run
 # `docker compose up -d`. Watchtower updates app, runner, egress, and preview-router on each push
 # to main; session and preview containers carry the opt-out label and are managed by the runner.
 #
@@ -13,29 +13,29 @@
 # `docs/runbooks/network-isolation.md`. Changing the preview bridge name needs the network
 # recreated: `docker compose down && docker compose up -d`.
 
-name: cardboard
+name: kardboard
 
 services:
   app:
-    image: ghcr.io/chriscorbell/cardboard-app:latest
+    image: ghcr.io/chriscorbell/kardboard-app:latest
     restart: unless-stopped
     init: true
     ports:
       - "3070:3070"
     environment:
       TZ: America/New_York
-      CARDBOARD_AUTH: clerk
-      CARDBOARD_PUBLIC_URL: https://kardboard.cc
-      CARDBOARD_REDIRECT_HOSTS: cardboard.xode.cc,app.kardboard.cc
-      CARDBOARD_ADMIN_EMAIL: ${CARDBOARD_ADMIN_EMAIL}
+      KARDBOARD_AUTH: clerk
+      KARDBOARD_PUBLIC_URL: https://kardboard.cc
+      KARDBOARD_REDIRECT_HOSTS: cardboard.xode.cc,app.kardboard.cc
+      KARDBOARD_ADMIN_EMAIL: ${KARDBOARD_ADMIN_EMAIL}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
       CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
       RESEND_API_KEY: ${RESEND_API_KEY}
-      CARDBOARD_EMAIL_FROM: "Milo <milo@kardboard.cc>"
-      CARDBOARD_RUNNER_URL: http://runner:3071
-      CARDBOARD_RUNNER_TOKEN: ${CARDBOARD_RUNNER_TOKEN}
+      KARDBOARD_EMAIL_FROM: "Milo <milo@kardboard.cc>"
+      KARDBOARD_RUNNER_URL: http://runner:3071
+      KARDBOARD_RUNNER_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
       # Only to read which Providers are out of usage, for fallback. No Session traffic comes here.
-      CARDBOARD_EGRESS_URL: http://egress:8787
+      KARDBOARD_EGRESS_URL: http://egress:8787
       GITHUB_SESSIONS_APP_ID: ${GITHUB_SESSIONS_APP_ID}
       GITHUB_SESSIONS_APP_SLUG: ${GITHUB_SESSIONS_APP_SLUG}
       GITHUB_SESSIONS_APP_PRIVATE_KEY_B64: ${GITHUB_SESSIONS_APP_PRIVATE_KEY_B64}
@@ -43,73 +43,73 @@ services:
       GITHUB_MERGE_APP_SLUG: ${GITHUB_MERGE_APP_SLUG}
       GITHUB_MERGE_APP_PRIVATE_KEY_B64: ${GITHUB_MERGE_APP_PRIVATE_KEY_B64}
       # Signs Preview cookies; the preview-router below verifies with the same secret.
-      CARDBOARD_PREVIEW_SECRET: ${CARDBOARD_PREVIEW_SECRET}
+      KARDBOARD_PREVIEW_SECRET: ${KARDBOARD_PREVIEW_SECRET}
       # Route `kardboard.cc` to port 3070 and `*.kardboard.cc` to port 3073.
       # The first-level wildcard covers card previews with free Universal SSL.
-      CARDBOARD_PREVIEW_HOST_PATTERN: ${CARDBOARD_PREVIEW_HOST_PATTERN}
+      KARDBOARD_PREVIEW_HOST_PATTERN: ${KARDBOARD_PREVIEW_HOST_PATTERN}
     volumes:
-      - ../../data/cardboard/app:/data
+      - ../../data/kardboard/app:/data
     networks: [control, workload]
 
   runner:
-    image: ghcr.io/chriscorbell/cardboard-runner:latest
+    image: ghcr.io/chriscorbell/kardboard-runner:latest
     restart: unless-stopped
     init: true
     environment:
-      CARDBOARD_RUNNER_TOKEN: ${CARDBOARD_RUNNER_TOKEN}
-      CARDBOARD_APP_URL: http://app:3070
-      CARDBOARD_MCP_URL: http://app:3070/mcp
-      CARDBOARD_EGRESS_URL: http://egress:8787
-      CARDBOARD_WORKLOAD_NETWORK: cardboard_workload
-      CARDBOARD_PREVIEW_NETWORK: cardboard_preview
+      KARDBOARD_RUNNER_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
+      KARDBOARD_APP_URL: http://app:3070
+      KARDBOARD_MCP_URL: http://app:3070/mcp
+      KARDBOARD_EGRESS_URL: http://egress:8787
+      KARDBOARD_WORKLOAD_NETWORK: kardboard_workload
+      KARDBOARD_PREVIEW_NETWORK: kardboard_preview
       # `per-session` gives every session its own bridge; `shared` puts them all back on
-      # cardboard_workload together, which is only for backing the isolation out in a hurry.
-      CARDBOARD_SESSION_NETWORK: ${CARDBOARD_SESSION_NETWORK:-per-session}
-      CARDBOARD_LOG_DIR: /data/logs
+      # kardboard_workload together, which is only for backing the isolation out in a hurry.
+      KARDBOARD_SESSION_NETWORK: ${KARDBOARD_SESSION_NETWORK:-per-session}
+      KARDBOARD_LOG_DIR: /data/logs
       # Set once the egress proxy below holds the Codex sign-in file; then Session containers get
       # no Codex credential of their own. Leave empty to fall back to mounting the file into them.
-      CARDBOARD_CODEX_VIA_EGRESS: ${CARDBOARD_CODEX_VIA_EGRESS:-}
+      KARDBOARD_CODEX_VIA_EGRESS: ${KARDBOARD_CODEX_VIA_EGRESS:-}
       # A path on the Docker host, not in this container: the runner only names it in a bind.
-      CODEX_AUTH_FILE: ${CARDBOARD_CODEX_AUTH_FILE:-}
+      CODEX_AUTH_FILE: ${KARDBOARD_CODEX_AUTH_FILE:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../../data/cardboard/runner:/data
+      - ../../data/kardboard/runner:/data
     networks: [control]
 
   egress:
-    image: ghcr.io/chriscorbell/cardboard-egress:latest
+    image: ghcr.io/chriscorbell/kardboard-egress:latest
     restart: unless-stopped
     init: true
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN}
       # A path in this container. The whole directory is mounted, not the one file, because the
       # proxy replaces the file when it refreshes the access token and a rename needs the directory.
-      CODEX_AUTH_FILE: ${CARDBOARD_CODEX_AUTH_FILE:+/secrets/codex-auth.json}
+      CODEX_AUTH_FILE: ${KARDBOARD_CODEX_AUTH_FILE:+/secrets/codex-auth.json}
       # Guards /limits, which the app reads to decide a Provider fallback. Session containers reach
       # this proxy too and do not hold the runner token, which is why it is reused here.
-      EGRESS_CONTROL_TOKEN: ${CARDBOARD_RUNNER_TOKEN}
+      EGRESS_CONTROL_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
     volumes:
-      - ../../data/cardboard/secrets:/secrets
+      - ../../data/kardboard/secrets:/secrets
     networks: [control, workload]
 
   preview-router:
-    image: ghcr.io/chriscorbell/cardboard-preview-router:latest
+    image: ghcr.io/chriscorbell/kardboard-preview-router:latest
     restart: unless-stopped
     init: true
     ports:
       - "3073:3072"
     environment:
-      CARDBOARD_APP_URL: http://app:3070
-      CARDBOARD_PUBLIC_URL: https://kardboard.cc
-      CARDBOARD_RUNNER_TOKEN: ${CARDBOARD_RUNNER_TOKEN}
-      CARDBOARD_PREVIEW_SECRET: ${CARDBOARD_PREVIEW_SECRET}
+      KARDBOARD_APP_URL: http://app:3070
+      KARDBOARD_PUBLIC_URL: https://kardboard.cc
+      KARDBOARD_RUNNER_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
+      KARDBOARD_PREVIEW_SECRET: ${KARDBOARD_PREVIEW_SECRET}
     networks: [control, preview]
 
 networks:
   control:
   workload:
-    name: cardboard_workload
+    name: kardboard_workload
   preview:
-    name: cardboard_preview
+    name: kardboard_preview
     driver_opts:
       com.docker.network.bridge.name: cbnprev

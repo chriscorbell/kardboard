@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { logPathFor, readLogSlice } from "../src/logs.js";
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cardboard-logs-"));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-logs-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 let n = 0;

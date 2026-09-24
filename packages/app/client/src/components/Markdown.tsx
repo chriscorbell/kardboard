@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { MENTION_RE } from "@cardboard/shared";
+import { MENTION_RE } from "@kardboard/shared";
 import { useMemo } from "react";
 
 // Mentions become links on a private "mention:" scheme so react-markdown can render them as names.

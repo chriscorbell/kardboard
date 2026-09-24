@@ -11,7 +11,7 @@ import type Docker from "dockerode";
 
 export const SESSION_BRIDGE_PREFIX = "cbn";
 
-export const sessionNetworkName = (sessionId: string) => `cardboard-session-${sessionId}`;
+export const sessionNetworkName = (sessionId: string) => `kardboard-session-${sessionId}`;
 
 // Linux caps an interface name at 15 characters, so the bridge carries a 32-bit FNV-1a hash of the
 // session id rather than the id itself. Eleven characters, and stable for a given Session.
@@ -32,8 +32,8 @@ export function sessionNetworkSpec(sessionId: string, boardSlug: string): Docker
     Internal: false,
     Attachable: false,
     Labels: {
-      "cardboard.session": sessionId,
-      "cardboard.board": boardSlug,
+      "kardboard.session": sessionId,
+      "kardboard.board": boardSlug,
     },
     Options: { "com.docker.network.bridge.name": sessionBridgeName(sessionId) },
   };
@@ -64,7 +64,7 @@ export async function workloadPeers(docker: Docker, workloadNetwork: string): Pr
   const peers: SessionPeer[] = [];
   for (const id of Object.keys(network.Containers ?? {})) {
     const info = await docker.getContainer(id).inspect().catch(() => null);
-    if (!info || info.Config?.Labels?.["cardboard.session"]) continue;
+    if (!info || info.Config?.Labels?.["kardboard.session"]) continue;
     peers.push({ id: info.Id, name: info.Name.replace(/^\//, ""), aliases: peerAliases(info, workloadNetwork) });
   }
   return peers;
@@ -104,12 +104,12 @@ export async function removeSessionNetwork(docker: Docker, sessionId: string): P
 // A Session whose container is gone leaves its network behind if the runner was down when it
 // exited. Networks are cheap but they hold the peers' endpoints open, so they are swept at boot.
 export async function pruneSessionNetworks(docker: Docker): Promise<string[]> {
-  const networks = await docker.listNetworks({ filters: { label: ["cardboard.session"] } });
-  const containers = await docker.listContainers({ filters: { label: ["cardboard.session"] } });
-  const live = new Set(containers.map((c) => c.Labels["cardboard.session"]));
+  const networks = await docker.listNetworks({ filters: { label: ["kardboard.session"] } });
+  const containers = await docker.listContainers({ filters: { label: ["kardboard.session"] } });
+  const live = new Set(containers.map((c) => c.Labels["kardboard.session"]));
   const removed: string[] = [];
   for (const network of networks) {
-    const sessionId = network.Labels?.["cardboard.session"];
+    const sessionId = network.Labels?.["kardboard.session"];
     if (!sessionId || live.has(sessionId)) continue;
     await removeSessionNetwork(docker, sessionId);
     removed.push(sessionId);

@@ -20,7 +20,7 @@ export interface PreviewCookie {
   exp: number;
 }
 
-export const COOKIE_NAME = "cardboard_preview";
+export const COOKIE_NAME = "kardboard_preview";
 
 export function readCookie(header: string | undefined, name = COOKIE_NAME): string | undefined {
   return (header ?? "")
