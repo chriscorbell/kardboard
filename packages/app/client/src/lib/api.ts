@@ -137,11 +137,16 @@ export function useMoveCard(slug: string) {
       qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, cards: v.cards.map((c) => (c.id === id ? { ...c, column, position } : c)) } : v));
       return { prev };
     },
-    onError: (_e, _v, ctx) => {
+    onError: (_e, vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(keys.board(slug), ctx.prev);
       void qc.invalidateQueries({ queryKey: keys.board(slug) });
+      void qc.invalidateQueries({ queryKey: keys.card(vars.id) });
     },
-    onSuccess: (card) => upsertCardInBoard(qc, slug, card),
+    // The open sheet reads the card-detail cache, so a move made from it must land there too.
+    onSuccess: (card) => {
+      upsertCardInBoard(qc, slug, card);
+      qc.setQueryData<CardDetail>(keys.card(card.id), (d) => (d ? { ...d, card } : d));
+    },
   });
 }
 
