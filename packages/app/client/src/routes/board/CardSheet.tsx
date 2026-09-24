@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUpRight, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, X } from "lucide-react";
+import { ArrowUpRight, ChevronDown, GitBranch, GitPullRequest, History, Pencil, X } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
 import { useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
@@ -14,6 +14,7 @@ import { WorkingDot } from "./CardTile";
 import { SessionBanner } from "./SessionBanner";
 import { ApiError } from "../../lib/errors";
 import { AttachmentView } from "./AttachmentView";
+import { PreviewLink } from "./PreviewLink";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
 import { isInnermostModal, useModalFocus } from "../../components/focus";
 import { ReviewBlock } from "./ReviewBlock";
@@ -186,12 +187,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
                 <ArrowUpRight className="size-3" strokeWidth={1.75} />
               </a>
             ) : null}
-            {card.previewUrl ? (
-              <a href={card.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-ink no-underline hover:text-accent">
-                <ExternalLink className="size-3.5" strokeWidth={1.75} />
-                Open preview
-              </a>
-            ) : null}
+            <PreviewLink card={card} />
           </div>
         ) : null}
 
