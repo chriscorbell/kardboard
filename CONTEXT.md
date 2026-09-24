@@ -67,7 +67,7 @@ The coding-agent product a Session runs on: Claude Code or Codex.
 _Avoid_: Model, backend, harness
 
 **Trigger**:
-A human change to a Board that starts or queues a Session on the affected Card: creating a Card, editing its description, posting a Comment, or moving it between Columns. kardboard itself writes three kinds and no more: `provider_fallback`, when a Session's Provider ran out of usage and the Card should be picked up again on the other one; `child_card_created`, on a Card a Session created as a child of another and left in Ready; and `children_done`, on a parent whose last child has reached Done.
+A human change to a Board that starts or queues a Session on the affected Card: creating a Card, editing its description, posting a Comment, moving it between Columns, or pressing Try again after its last Session failed. kardboard itself writes three kinds and no more: `provider_fallback`, when a Session's Provider ran out of usage and the Card should be picked up again on the other one; `child_card_created`, on a Card a Session created as a child of another and left in Ready; and `children_done`, on a parent whose last child has reached Done.
 _Avoid_: Event, webhook, action
 
 **Claim**:
@@ -93,6 +93,10 @@ _Avoid_: Sign-off, LGTM, acceptance
 **Pending re-run**:
 The state of a Card that received a Trigger while a Session held its Claim; a new Session starts when the current one ends.
 _Avoid_: Queued, dirty, stale
+
+**Pause**:
+The Admin's switch on a Board that stops new Sessions starting there. Its Triggers wait, Sessions already running finish, and resuming dispatches what waited.
+_Avoid_: Freeze, disable, hold
 
 **Hygiene sweep**:
 An Agent pass that checks every Card on a Board is in the right Column and corrects drift.

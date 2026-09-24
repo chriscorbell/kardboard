@@ -26,15 +26,16 @@ When the work is done, the Session opens a pull request and moves the card to Re
 ## Features
 
 - **Six fixed columns** with clear meanings: Inbox, Blocked, Ready, In Progress, Review, Done.
-- **Cards** with Markdown descriptions, priority, comments, `@mentions`, and file attachments.
+- **Cards** with Markdown descriptions, priority, comments, `@mentions`, and file attachments you can pick, paste, or drop, including on a new card. Search and filters, and a Done column that folds its older cards.
+- **Clear waiting states**: a card says when the agent will pick it up, pins the agent's question when it is blocked on you, and tells you in plain words when a run failed, with **Try again**.
 - **One agent identity** across all boards, with a configurable name and avatar (the default is Milo).
 - **Per-board settings** for the repository, provider, model, reasoning level, preview mode, member access, and extra instructions.
 - **Sessions that see the whole board**: an MCP server exposes the ledger of active Sessions, every card, comments, and attachments, plus tools to comment, move, and create cards.
 - **Safe by construction**: Sessions run with resource limits, a wall clock, a one-hour repository token, and no access to your provider credentials, which stay in a proxy.
-- **Approvals bound to code**: an Approval records the pull request commit the reviewer saw. A later push voids it.
+- **Approvals bound to code**: an Approval records the pull request commit the reviewer saw. A later push voids it, failing CI blocks it, and kardboard notices pull requests merged, closed, or pushed to on GitHub.
 - **Previews per card**: in runner preview mode kardboard builds the branch's Dockerfile and hosts it at the card's own hostname, open only to that board's members through a single-use code and a host-only cookie, and taken down when the card reaches Done.
 - **Provider fallback**: when a subscription runs out of usage, the proxy sees the refusal and the card is picked up again on the other provider.
-- **Notifications** for mentions and card moves: a bell with an unread badge in the app, and the same thing by email through Resend.
+- **Notifications** for mentions, failed runs, and the card moves that need you: a bell with an unread badge in the app, and email through Resend that each person can turn down or off.
 - **Invite-only access** with Clerk. Only email addresses you add can sign in, each member only sees their boards, and an invitation email tells them where to do it.
 - **Live session transcripts**: expand any run in the admin panel to watch the agent's messages, tool calls, and results arrive as they happen.
 - **Live updates** over server-sent events, verified nightly database snapshots, and an admin panel for users, boards, the agent, sessions, and backups.
