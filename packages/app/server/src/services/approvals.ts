@@ -303,6 +303,30 @@ async function checksGate(card: CardRow, repo: Repo, pr: PullRequest, headSha: s
   return summary;
 }
 
+/**
+ * Why Approve or a merge retry has to wait for the Agent, or null when it need not. A Session still
+ * at work can push again, so what the Member looked at is not settled yet. Nor is it while a Trigger
+ * waits to start one — a comment asking for a change, an edit, a move, held by the batching window,
+ * a paused Board, or full slots — since that Session may push too, and a merge now would close the
+ * Card and drop the request unanswered.
+ */
+async function agentHold(cardId: string, then: string): Promise<string | null> {
+  const card = await getCard(cardId);
+  if (!card) return null;
+  const agent = (await getAgentProfile()).name;
+  if (card.activeSession) return `${agent} is still working on this card. ${then} once the session has finished.`;
+  const pending = await db
+    .select({ kind: schema.triggers.kind })
+    .from(schema.triggers)
+    .where(and(eq(schema.triggers.cardId, cardId), eq(schema.triggers.status, "pending")));
+  if (pending.length === 0) return null;
+  const kinds = new Set(pending.map((t) => t.kind));
+  if (kinds.has("comment_posted") || kinds.has("comment_edited")) return `${agent} hasn't read the latest comment yet. ${then} once it has.`;
+  if (kinds.has("card_edited")) return `${agent} hasn't read the latest edit to this card yet. ${then} once it has.`;
+  if (kinds.has("card_moved") || kinds.has("card_created")) return `${agent} hasn't picked up the latest change to this card yet. ${then} once it has.`;
+  return `${agent} is about to pick this card up again. ${then} once that session has finished.`;
+}
+
 // Approval is bound to the pull request head the Member was shown: the client sends back the head
 // the Card displayed, and nothing merges unless that is still GitHub's head. The app then merges
 // with that SHA as GitHub's precondition. See ADR 0006 and ADR 0008. `overrideChecks` is the
@@ -316,8 +340,8 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
   if (!card) throw new Error("card not found");
   if (card.column !== "review") throw new ApprovalError("Only cards in Review can be approved.");
   if (!actor.id) throw new ApprovalError("Approval needs a signed-in user.");
-  // A Session still at work can push again, so what the Member looked at is not settled yet.
-  if (card.activeSession) throw new ApprovalError(`${(await getAgentProfile()).name} is still working on this card. Approve once the session has finished.`, 409);
+  const hold = await agentHold(cardId, "Approve");
+  if (hold) throw new ApprovalError(hold, 409);
   const board = (await getBoardById(card.boardId))!;
   const repo = parseRepoUrl(board.repoUrl);
   const mention = await mentionFor(actor.id);
@@ -343,6 +367,9 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
   } else if (card.prHeadSha && reviewedSha !== card.prHeadSha) {
     throw new ApprovalError("This card changed since you loaded it. Look again and approve if it still looks right.", 409);
   }
+  // Reading GitHub takes a moment, and a comment or a Session can arrive in it.
+  const late = await agentHold(cardId, "Approve");
+  if (late) throw new ApprovalError(late, 409);
 
   const id = newId();
   const headSha = pr?.headSha ?? reviewedSha;
@@ -380,7 +407,8 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
   if (!card) throw new Error("card not found");
   if (!actor.id) throw new ApprovalError("Retrying a merge needs a signed-in user.");
   if (card.column !== "review") throw new ApprovalError("Only cards in Review can be merged.");
-  if (card.activeSession) throw new ApprovalError(`${(await getAgentProfile()).name} is working on this card. Try the merge again once the session has finished.`, 409);
+  const hold = await agentHold(cardId, "Try the merge again");
+  if (hold) throw new ApprovalError(hold, 409);
 
   const approval = approvalAwaitingRetry(await listApprovals(cardId));
   if (!approval) throw new ApprovalError("No approval on this card is waiting on a refused merge.");
@@ -401,6 +429,8 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
   // A head that moved fails the merge's own precondition below, which voids the Approval and asks
   // for a fresh look; the checks of a commit nobody approved have nothing to say about that.
   const checks = pr.headSha === approval.headSha ? await checksGate(card, repo, pr, approval.headSha, overrideChecks) : null;
+  const late = await agentHold(cardId, "Try the merge again");
+  if (late) throw new ApprovalError(late, 409);
 
   const mention = await mentionFor(actor.id);
   await recordEvent({

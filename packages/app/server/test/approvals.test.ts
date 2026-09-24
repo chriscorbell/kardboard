@@ -26,7 +26,8 @@ githubAppEnv();
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { ApprovalError, approveCard, followUpFor, linkPullRequest, listApprovals, retryMerge } = await import("../src/services/approvals.js");
-const { getCard } = await import("../src/services/cards.js");
+const { getCard, updateCard } = await import("../src/services/cards.js");
+const { createComment } = await import("../src/services/comments.js");
 const { classifyMergeRefusal, summarizeChecks } = await import("../src/services/github.js");
 const { api } = await import("../src/routes/api.js");
 const { mcp } = await import("../src/routes/mcp.js");
@@ -199,6 +200,63 @@ describe("approving a card", () => {
     assert.equal(res.status, 409);
     assert.match(((await res.json()) as { error: string }).error, /moved on/);
     assert.deepEqual(github.merges, []);
+  });
+});
+
+describe("approving while the Agent has work on the card still to start", () => {
+  const pending = async () => (await db.select().from(schema.triggers).where(eq(schema.triggers.cardId, CARD))).map((t) => `${t.kind}:${t.status}`);
+
+  it("is refused while a change request waits for a session, and the request is kept", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    await createComment({ cardId: CARD, actor: MEMBER, body: "Please also rename the button" });
+
+    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), (err: unknown) => err instanceof ApprovalError && err.status === 409 && err.message === "Milo hasn't read the latest comment yet. Approve once it has.");
+
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await listApprovals(CARD), []);
+    assert.deepEqual(await pending(), ["comment_posted:pending"], "the comment still gets its session");
+    assert.equal((await getCard(CARD))!.column, "review");
+  });
+
+  it("is refused while an edit waits on a paused board", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    await db.update(schema.boards).set({ paused: true }).where(eq(schema.boards.id, "board-1"));
+    const card = (await getCard(CARD))!;
+    await updateCard(CARD, { description: "Also the footer.", revision: card.revision, actor: MEMBER });
+
+    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), /hasn't read the latest edit to this card yet/);
+    assert.deepEqual(github.merges, []);
+  });
+
+  it("is refused when a comment arrives while GitHub is being asked", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    const fake = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input instanceof Request ? input.url : input).includes("/check-runs")) await createComment({ cardId: CARD, actor: MEMBER, body: "Wait, one more thing" });
+      return fake(input, init);
+    }) as typeof fetch;
+    try {
+      await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), /hasn't read the latest comment yet/);
+    } finally {
+      globalThis.fetch = fake;
+    }
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await listApprovals(CARD), []);
+  });
+
+  it("refuses a merge retry the same way, through the API", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.refusal = { status: 403, message: "Resource not accessible by integration" };
+    await approveCard(CARD, MEMBER, HEAD_A);
+    github.refusal = null;
+    await createComment({ cardId: CARD, actor: MEMBER, body: "Actually, hold on" });
+
+    const res = await api.request(`/cards/${CARD}/retry-merge`, { method: "POST", headers: { "x-dev-user": "ada@example.com" } });
+
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { error: string }).error, "Milo hasn't read the latest comment yet. Try the merge again once it has.");
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await pending(), ["comment_posted:pending"]);
   });
 });
 
