@@ -61,6 +61,8 @@ export async function queueEmail(input: {
   linkLabel: string;
   footer?: string;
   commentId?: string;
+  /** Told once delivery settles whether the email went out: sent, or logged with no Resend key. */
+  onSettled?: (delivered: boolean) => void;
 }): Promise<void> {
   const html = `<!doctype html><html><body style="margin:0;background:#141311;font-family:ui-sans-serif,system-ui,sans-serif;color:#e7e2d9">
 <div style="max-width:560px;margin:0 auto;padding:40px 24px">
@@ -72,7 +74,14 @@ export async function queueEmail(input: {
 </div></body></html>`;
   const id = newId();
   await db.insert(schema.outboundEmails).values({ id, toUserId: input.toUserId, subject: input.subject, html, commentId: input.commentId ?? null });
-  void deliver(id).catch((err) => console.error("[email] delivery failed", err));
+  void deliver(id)
+    .catch((err) => console.error("[email] delivery failed", err))
+    .then(async () => {
+      if (!input.onSettled) return;
+      const row = await db.select({ status: schema.outboundEmails.status }).from(schema.outboundEmails).where(eq(schema.outboundEmails.id, id)).get();
+      input.onSettled(row?.status === "sent" || row?.status === "logged");
+    })
+    .catch(() => undefined);
 }
 
 // An invitation only puts an address on the allowlist; this is the only thing that tells the

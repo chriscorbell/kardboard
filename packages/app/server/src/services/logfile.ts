@@ -16,6 +16,10 @@ const FILE_RE = /^app-(\d{4}-\d{2}-\d{2})\.log$/;
 const ANSI_COLOUR = /\u001b\[[0-9;]*m/g;
 // About a minute of a busy server's output. Past it the disk is not keeping up.
 const MAX_QUEUED_BYTES = 8 * 1024 * 1024;
+// A day's file stops growing here, with one line saying so. The request logger writes a line for
+// every public request, and this disk also holds the database and its snapshots, so a flood of
+// requests must not be able to fill it.
+export const MAX_DAY_BYTES = 200 * 1024 * 1024;
 
 /** A logged URL with the value of any `token` parameter blanked out. */
 export function redactTokens(line: string): string {
@@ -63,6 +67,8 @@ export class DailyLogFile {
   private atLineStart = true;
   private dropped = 0;
   private failed = false;
+  private written = 0;
+  private full = false;
 
   constructor(
     private readonly dir: string,
@@ -70,6 +76,7 @@ export class DailyLogFile {
     private readonly now: () => Date = () => new Date(),
     // Where the tee reports its own trouble: the real stderr, never `console`.
     private readonly report: Write = (text) => void process.stderr.write(text),
+    private readonly maxDayBytes = MAX_DAY_BYTES,
   ) {}
 
   write(text: string): void {
@@ -84,6 +91,12 @@ export class DailyLogFile {
       return;
     }
     const stamp = now.toISOString();
+    if (this.full) return;
+    if (this.written >= this.maxDayBytes) {
+      this.full = true;
+      stream.write(`${stamp} [logfile] this file reached its ${Math.round(this.maxDayBytes / 1024 / 1024)} MB daily limit; nothing more is kept today\n`);
+      return;
+    }
     if (this.dropped > 0) {
       stream.write(`${stamp} [logfile] ${this.dropped} write(s) dropped while the disk was behind\n`);
       this.dropped = 0;
@@ -92,6 +105,7 @@ export class DailyLogFile {
     // The request logger colours its status codes, which a file shows as escape codes.
     const stamped = stampLines(text.replace(ANSI_COLOUR, ""), this.atLineStart, stamp);
     this.atLineStart = stamped.atLineStart;
+    this.written += Buffer.byteLength(stamped.text);
     stream.write(stamped.text);
   }
 
@@ -105,9 +119,12 @@ export class DailyLogFile {
     this.stream?.end();
     this.stream = null;
     this.day = day;
+    this.full = false;
     try {
       fs.mkdirSync(this.dir, { recursive: true });
       for (const name of expiredLogFiles(fs.readdirSync(this.dir), day, this.keepDays)) fs.rmSync(path.join(this.dir, name), { force: true });
+      // A restart the same day appends to what is there, which counts toward the day's limit.
+      this.written = fs.statSync(path.join(this.dir, logFileName(day)), { throwIfNoEntry: false })?.size ?? 0;
     } catch (err) {
       this.fail(err);
       return;

@@ -50,13 +50,18 @@ services:
       KARDBOARD_PREVIEW_HOST_PATTERN: ${KARDBOARD_PREVIEW_HOST_PATTERN}
       # Each verified snapshot, and every new attachment, is copied here as well: the NAS share,
       # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.
-      KARDBOARD_BACKUP_COPY_DIR: /backup-copy
+      KARDBOARD_BACKUP_COPY_DIR: /nas-backup/minicore/kardboard
     volumes:
       - ../../data/kardboard/app:/data
-      # The short form, so a share that is not mounted when Watchtower recreates the app never stops
-      # it starting. What Docker then binds is an empty local folder, and the app copies nothing into
-      # a directory without `.kardboard-backup-target`: it alerts the Admin instead.
-      - /nas/backup/minicore/kardboard:/backup-copy
+      # The whole share's mount point, which exists whether or not the share is mounted, so a NAS that
+      # is down when Watchtower recreates the app never stops it starting. `rslave` lets the share
+      # appear inside the container when the host mounts it later. While it is not mounted the copy
+      # directory has no `.kardboard-backup-target`, so the app copies nothing and alerts the Admin.
+      - type: bind
+        source: /nas/backup
+        target: /nas-backup
+        bind:
+          propagation: rslave
     networks: [control, workload]
     # /healthz reads the database and answers 503 when it cannot. The runner and the egress proxy
     # are reported in its body but never fail it.

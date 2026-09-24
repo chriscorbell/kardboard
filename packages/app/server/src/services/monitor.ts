@@ -100,7 +100,7 @@ export function egressAlerts(status: EgressStatus, now: Date): AdminAlert[] {
       key: `egress.refused.${last.provider}`,
       subject: `The egress proxy refused a call from ${name}`,
       body:
-        `At ${last.at} a Session asked the egress proxy for ${last.method} ${last.path} on ${name}, which is not on the proxy's allowlist, so it was refused ` +
+        `At ${last.at} a Session asked the egress proxy for ${codeSpan(`${last.method} ${last.path}`)} on ${name}, which is not on the proxy's allowlist, so it was refused ` +
         `(${status.refusals.count} refused since the proxy started).\n\n` +
         `After a CLI upgrade this usually means ${name} now calls something new, and its Sessions may fail; the path belongs in ALLOWED_CALLS in packages/egress/src/proxy.ts if it is a call a turn needs. ` +
         "Otherwise a Session tried to reach part of the account it has no use for.",
@@ -146,4 +146,10 @@ export function startMonitor(): void {
   };
   if (runner.mode !== "noop") every(RUNNER_CHECK_MS, 30_000, () => checkRunner());
   if (env.egressUrl) every(EGRESS_CHECK_MS, 45_000, () => checkEgress());
+}
+
+// A refused path is whatever a Session asked for, so it goes into the email as literal code: never
+// a link or formatting the Session chose. Characters a path has no need of are dropped first.
+function codeSpan(text: string): string {
+  return `\`${text.replace(/[^A-Za-z0-9/_.%~:@!$&'*+,;=?# -]/g, "").slice(0, 200)}\``;
 }

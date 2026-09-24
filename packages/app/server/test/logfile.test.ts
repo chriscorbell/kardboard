@@ -56,6 +56,27 @@ describe("the daily file", () => {
     assert.equal(fs.readFileSync(path.join(dir, "app-2026-09-24.log"), "utf8"), "2026-09-24T00:00:01.000Z  line\n2026-09-24T00:00:01.000Z after midnight\n");
   });
 
+  it("stops a day's file at its limit, counting what an earlier start wrote, and starts afresh the next day", async () => {
+    const dir = path.join(root, "capped");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, logFileName("2026-09-24")), "x".repeat(60));
+    let now = new Date(T);
+    const file = new DailyLogFile(dir, 14, () => now, () => undefined, 100);
+
+    file.write("kept\n");
+    file.write("over the limit\n");
+    file.write("not kept\n");
+    now = new Date("2026-09-25T00:00:01.000Z");
+    file.write("a new day\n");
+    await file.close();
+
+    const today = fs.readFileSync(path.join(dir, logFileName("2026-09-24")), "utf8");
+    assert.match(today, /kept\n/);
+    assert.match(today, /daily limit/);
+    assert.doesNotMatch(today, /not kept/);
+    assert.equal(fs.readFileSync(path.join(dir, logFileName("2026-09-25")), "utf8"), "2026-09-25T00:00:01.000Z a new day\n");
+  });
+
   it("copies what is written to a stream, bytes included, and cannot loop on its own output", () => {
     const written: string[] = [];
     const copied: string[] = [];
