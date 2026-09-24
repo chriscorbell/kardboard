@@ -35,6 +35,7 @@ export function reviewStage(card: Pick<Card, "activeSession" | "waiting" | "prNu
  */
 export function retryHold(card: Pick<Card, "activeSession" | "waiting">, agentName: string): string | null {
   if (card.activeSession) return `${agentName} is working on this card. You can try again once the session has finished.`;
+  if (card.waiting?.reason === "paused") return `${agentName} is paused on this board and hasn't read the latest change yet. You can try again once the Admin resumes it.`;
   if (card.waiting) return `${agentName} hasn't read the latest comment or change yet. You can try again once it has.`;
   return null;
 }

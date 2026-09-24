@@ -85,11 +85,18 @@ export async function startPreview(cardId: string): Promise<PreviewRow> {
     });
   } catch (err) {
     const error = `the runner refused the build: ${(err as Error).message}`;
-    // The runner never had this build, so no report of it will come, and the build log it holds is
-    // an earlier build's. Clearing the build id says both. Unless a newer request already replaced it.
+    // The runner never had this build, so no report of it will come. An earlier build it was still
+    // running is what the Preview waits on again, so its report is believed when it comes. With none,
+    // the build log the runner holds is an earlier build's, and clearing the build id says so. Unless
+    // a newer request already replaced this one.
+    const stillBuilding = existing?.status === "building" && existing.buildId !== null;
     const refused = await db
       .update(schema.previews)
-      .set({ status: "failed", error, failedSha: null, buildId: null, updatedAt: new Date().toISOString() })
+      .set(
+        stillBuilding
+          ? { status: "building", error: null, failedSha: existing.failedSha, buildId: existing.buildId, updatedAt: new Date().toISOString() }
+          : { status: "failed", error, failedSha: null, buildId: null, updatedAt: new Date().toISOString() },
+      )
       .where(and(eq(schema.previews.id, id), eq(schema.previews.buildId, buildId)))
       .returning({ id: schema.previews.id });
     if (refused.length) await publishCard(card.id);

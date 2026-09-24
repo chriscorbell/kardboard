@@ -274,7 +274,7 @@ describe("asking the runner for a build", () => {
     assert.equal(await applyPreviewState(second.id, { status: "running", target: "http://kardboard-preview-x:3000", sha: "d".repeat(40), buildId: requests[1]!.buildId }), true);
   });
 
-  it("records a refused build as failed with no build of its own, so no report or log is taken for it", async () => {
+  it("goes back to waiting on an earlier build still running when the runner refuses a newer one", async () => {
     let lastBuild = "";
     runner.startPreview = async (req) => void (lastBuild = req.buildId);
     const cardId = await card();
@@ -286,11 +286,30 @@ describe("asking the runner for a build", () => {
     };
     await assert.rejects(startPreview(cardId), /the runner refused the build: fetch failed/);
     const row = await previewRow(accepted.id);
+    assert.equal(row.status, "building");
+    assert.equal(row.buildId, earlier);
+
+    assert.equal(await applyPreviewState(accepted.id, { status: "running", target: "http://kardboard-preview-x:3000", sha: "e".repeat(40), buildId: earlier }), true, "the earlier build's report is the one the Preview now waits on");
+  });
+
+  it("records a refused build as failed with no build of its own when nothing else is building", async () => {
+    let lastBuild = "";
+    runner.startPreview = async (req) => void (lastBuild = req.buildId);
+    const cardId = await card();
+    const accepted = await startPreview(cardId);
+    const earlier = lastBuild;
+    assert.equal(await applyPreviewState(accepted.id, { status: "running", target: "http://kardboard-preview-x:3000", sha: "e".repeat(40), buildId: earlier }), true);
+
+    runner.startPreview = async () => {
+      throw new Error("fetch failed");
+    };
+    await assert.rejects(startPreview(cardId), /the runner refused the build: fetch failed/);
+    const row = await previewRow(accepted.id);
     assert.equal(row.status, "failed");
     assert.match(row.error ?? "", /refused/);
     assert.equal(row.buildId, null);
 
-    assert.equal(await applyPreviewState(accepted.id, { status: "failed", error: "build failed", sha: "e".repeat(40), buildId: earlier }), false, "the earlier build's late report does not replace the refusal");
+    assert.equal(await applyPreviewState(accepted.id, { status: "failed", error: "build failed", sha: "f".repeat(40), buildId: earlier }), false, "a late report of the earlier build does not replace the refusal");
   });
 });
 

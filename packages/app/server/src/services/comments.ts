@@ -144,6 +144,16 @@ export function uploadPath(sha256: string): string {
   return path.join(env.dataDir, "uploads", sha256.slice(0, 2), sha256);
 }
 
+// A file deleted for good, a pasted secret say, also leaves the off-disk copy of the uploads. In the
+// background, since the copy is often a network share; what the share's own snapshots already hold
+// is beyond the app's reach.
+function forgetBackupCopy(sha256: string): void {
+  if (!env.backupCopyDir) return;
+  void fs.promises
+    .rm(path.join(env.backupCopyDir, "uploads", sha256.slice(0, 2), sha256), { force: true })
+    .catch((err: Error) => console.error(`[backup] could not remove a deleted attachment from ${env.backupCopyDir}: ${err.message}`));
+}
+
 /**
  * Removes a Comment for good: its body, every earlier revision of it, its Mentions, its
  * Attachments, and each uploaded file no other Attachment still points at. A pasted secret is the
@@ -183,7 +193,10 @@ export async function deleteComment(id: string, actor: Actor): Promise<void> {
   for (const sha256 of hashes) {
     await underFileLock(sha256, async () => {
       const still = await db.select({ id: schema.attachments.id }).from(schema.attachments).where(eq(schema.attachments.sha256, sha256)).limit(1).get();
-      if (!still) fs.rmSync(uploadPath(sha256), { force: true });
+      if (!still) {
+        fs.rmSync(uploadPath(sha256), { force: true });
+        forgetBackupCopy(sha256);
+      }
     });
   }
   await recordEvent({

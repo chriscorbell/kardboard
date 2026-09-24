@@ -72,6 +72,12 @@ async function reconcileUnderLock(cardId: string): Promise<ReconcileResult> {
       await forgetMergedPullRequest(card.id, pr.number);
       return "skipped";
     }
+    // Merged on GitHub while the Card sat in Done, which the poll does not look at, and reopened
+    // since: the same new work, whose branch and Session must be left alone.
+    if (!mergedAt && pr.closedAt && (await leftDoneSince(card.id, pr.closedAt))) {
+      await forgetMergedPullRequest(card.id, pr.number);
+      return "skipped";
+    }
     await completeMerge(card, {
       prNumber: pr.number,
       headRef: pr.headRef,
@@ -79,6 +85,7 @@ async function reconcileUnderLock(cardId: string): Promise<ReconcileResult> {
       repo,
       actor: SYSTEM_ACTOR,
       onGitHub: !byKardboard,
+      mergedAt: pr.closedAt,
       comment: byKardboard ? `Merged pull request #${pr.number} and moved this card to Done.` : `Pull request #${pr.number} was merged on GitHub, so this card is Done.`,
     });
     return "merged";

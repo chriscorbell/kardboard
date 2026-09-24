@@ -248,6 +248,41 @@ describe("a start that keeps failing", () => {
   });
 });
 
+describe("a start that keeps failing, with a change made during the last round", () => {
+  it("sets aside only what the failed rounds were for", async () => {
+    fake.failStarts = 99;
+    const card = await makeCard();
+    const longAgo = new Date(Date.now() - 30 * 60_000).toISOString();
+    for (const id of ["early-1", "early-2"]) {
+      await db.insert(schema.sessions).values({ id, boardId: BOARD, cardId: card, provider: "claude", status: "failed", outcomeSummary: "Could not start: image not found", endedAt: longAgo, createdAt: longAgo });
+    }
+    await addTrigger(card);
+    scheduleDispatch(card, 0);
+    await until("the third round has started", async () => (await sessionsOn(card)).length === 3);
+    await db.insert(schema.triggers).values({ id: "later", boardId: BOARD, cardId: card, kind: "comment_posted", actorUserId: "ada", payload: {}, createdAt: new Date(Date.now() + 1_000).toISOString() });
+    await until("the card's people are told", async () => (await systemComments(card)).length === 1);
+
+    const pending = await db.select().from(schema.triggers).where(and(eq(schema.triggers.cardId, card), eq(schema.triggers.status, "pending")));
+    assert.deepEqual(pending.map((t) => t.id), ["later"]);
+  });
+});
+
+describe("a re-run whose change was taken back", () => {
+  it("clears the flag rather than promising a session that has nothing to do", async () => {
+    const card = await makeCard();
+    const session = await running(card);
+    await db.update(schema.cards).set({ pendingRerun: true }).where(eq(schema.cards.id, card));
+    const { endSession } = await import("../src/services/orchestrator.js");
+    await endSession(session, "failed", "It stopped unexpectedly (exit code 1).");
+    await until("the notice is posted", async () => (await systemComments(card)).length === 1);
+
+    assert.doesNotMatch((await systemComments(card))[0]!.body, /starting again/);
+    const after = (await getCard(card))!;
+    assert.equal(after.pendingRerun, false);
+    assert.equal(after.lastSession?.status, "failed", "so Try again is offered");
+  });
+});
+
 describe("a session that fails on a paused board", () => {
   it("does not promise a re-run that the pause holds back", async () => {
     const card = await makeCard();

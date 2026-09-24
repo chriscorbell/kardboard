@@ -91,6 +91,20 @@ describe("a pull request merged on GitHub", () => {
     assert.deepEqual(await db.select().from(schema.triggers), [], "nothing here is a Trigger");
   });
 
+  it("keeps a change someone made after the merge, so it opens the card again", async () => {
+    mergedOnGitHub();
+    await db.insert(schema.triggers).values([
+      { id: "before", boardId: "board-1", cardId: CARD, kind: "comment_posted", actorUserId: "ada", payload: {}, createdAt: "2026-09-24T09:59:00.000Z" },
+      { id: "after", boardId: "board-1", cardId: CARD, kind: "comment_posted", actorUserId: "ada", payload: {}, createdAt: "2026-09-24T10:01:00.000Z" },
+    ]);
+
+    assert.equal(await reconcileCard(CARD), "merged");
+
+    const status = new Map((await db.select().from(schema.triggers)).map((t) => [t.id, t.status]));
+    assert.equal(status.get("before"), "consumed", "what came before the merge was the merged work");
+    assert.equal(status.get("after"), "pending", "a comment on merged work reopens the card, as on any card in Done");
+  });
+
   it("wakes the parent of a split request with this piece counted as implemented", async () => {
     await db.insert(schema.cards).values({ id: "parent", boardId: "board-1", title: "The whole request", column: "blocked", creatorKind: "user", creatorId: "ada" });
     await db.update(schema.cards).set({ parentCardId: "parent", creatorKind: "agent", creatorId: null }).where(eq(schema.cards.id, CARD));
@@ -177,6 +191,26 @@ describe("a card reopened after its pull request merged", () => {
     );
     assert.deepEqual(await comments(), []);
     assert.equal(await reconcileCard(CARD), "skipped", "and the next poll has nothing to ask GitHub");
+  });
+});
+
+describe("a card reopened after its pull request merged on GitHub while it sat in Done", () => {
+  it("forgets the pull request rather than completing it over the new work", async () => {
+    // Closed in Done by a person, merged on GitHub afterwards, which the poll never saw, then reopened.
+    await db.update(schema.cards).set({ column: "in_progress" }).where(eq(schema.cards.id, CARD));
+    mergedOnGitHub();
+    const merged = github.pulls.get(7)!;
+    merged.closedAt = "2026-09-24T10:00:00.000Z";
+    await db.insert(schema.events).values({ id: "left-done", boardId: "board-1", cardId: CARD, actorKind: "user", actorId: "ada", type: "card.moved", payload: { from: "done", to: "in_progress" }, createdAt: "2026-09-24T11:00:00.000Z" });
+    await startSession();
+
+    assert.equal(await reconcileCard(CARD), "skipped");
+
+    const card = (await getCard(CARD))!;
+    assert.equal(card.column, "in_progress");
+    assert.notEqual(card.activeSession, null);
+    assert.equal(card.prNumber, null);
+    assert.deepEqual(github.requests.filter((r) => r.startsWith("DELETE")), []);
   });
 });
 

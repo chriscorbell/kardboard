@@ -84,6 +84,14 @@ fi
 
 # After the clone, which spends some of the token's life too.
 TIME_LIMIT="$(session_time_limit)"
+# The agent is told when it will be stopped, so it pushes and reports before then rather than losing
+# work it had not pushed; the stop may come before the wall clock when the GitHub token expires first.
+DEADLINE="$(date -u -d "@$(( $(date +%s) + TIME_LIMIT ))" '+%H:%M UTC' 2>/dev/null || true)"
+if [ -n "$DEADLINE" ]; then
+  PROMPT="${PROMPT}
+
+This session is stopped at ${DEADLINE}. Leave time before then to push your branch, record it with set_work_state, report on the card, and call finish."
+fi
 
 case "$KARDBOARD_PROVIDER" in
   claude)

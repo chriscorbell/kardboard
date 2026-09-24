@@ -218,15 +218,14 @@ export async function buildAndRunPreview(
     await buildImage(docker, dir, previewBuildOptions(req, limits, network, signal), req, signal, onLog);
     signal.throwIfAborted();
 
-    // Replace any earlier container for this preview: a new push rebuilds in place.
+    // Replace any earlier container for this preview: a new push rebuilds in place. Past this point
+    // a newer build replacing this one no longer stops it: the earlier container is gone, and this
+    // one serves under the same name until the newer build swaps it out, where stopping here would
+    // leave the Preview with nothing to serve for the length of that build.
     await removePreviewContainer(docker, req.previewId);
-    signal.throwIfAborted();
     const container = await docker.createContainer(previewContainerSpec(req, limits, network));
     try {
       await container.start();
-      // A newer build can replace this one while its container is created and started. Left up, this
-      // container would serve a commit nobody is waiting on until the newer build swaps it out.
-      signal.throwIfAborted();
     } catch (err) {
       await container.remove({ force: true }).catch(() => {});
       throw err;

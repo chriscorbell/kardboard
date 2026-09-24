@@ -186,7 +186,9 @@ export function ReviewBlock({
       stage.kind === "working"
         ? "You can approve once the session has finished."
         : stage.kind === "waiting"
-          ? `${agentName} hasn't read the latest comment or change yet. You can approve once it has.`
+          ? card.waiting?.reason === "paused"
+            ? `${agentName} is paused on this board and hasn't read the latest comment or change yet. You can approve once the Admin resumes it and ${agentName} has read it.`
+            : `${agentName} hasn't read the latest comment or change yet. You can approve once it has.`
           : stage.kind === "no_pr"
             ? `There's no pull request on this card, so there is nothing to merge. Ask ${agentName} for what's missing, or close the card.`
             : reviewGuidance(card);

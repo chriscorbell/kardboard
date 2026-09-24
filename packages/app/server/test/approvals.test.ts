@@ -224,7 +224,7 @@ describe("approving while the Agent has work on the card still to start", () => 
     const card = (await getCard(CARD))!;
     await updateCard(CARD, { description: "Also the footer.", revision: card.revision, actor: MEMBER });
 
-    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), /hasn't read the latest edit to this card yet/);
+    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), /is paused on this board, and hasn't read the latest change to this card yet. Approve once the Admin resumes the board/);
     assert.deepEqual(github.merges, []);
   });
 

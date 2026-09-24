@@ -267,11 +267,12 @@ describe("building and running a Preview", () => {
     assert.ok(!first.calls.includes("network remove kardboard_preview_pv1"), "nor takes the network from the one that replaced it");
   });
 
-  it("takes down its own container when a newer build replaced it while the container started", async () => {
-    const docker = fakeDocker({ onStart: () => cancelPreviewBuild("pv1", "a newer build of this preview replaced it") });
-    await assert.rejects(buildAndRunPreview(docker, branchReq, limits, () => {}), PreviewCancelled);
-    assert.ok(docker.calls.includes("container remove c-new"), "a superseded build leaves nothing serving under its commit");
-    assert.ok(!docker.calls.includes("network remove kardboard_preview_pv1"), "the network stays for the build that replaced it");
+  it("keeps its container serving when a newer build replaced it after the swap began", async () => {
+    const docker = fakeDocker({ image: "sha256:old", container: true, onStart: () => cancelPreviewBuild("pv1", "a newer build of this preview replaced it") });
+    const result = await buildAndRunPreview(docker, branchReq, limits, () => {});
+    assert.equal(result.containerId, "c-new");
+    assert.ok(!docker.calls.includes("container remove c-new"), "the earlier container is already gone, so this one serves until the newer build swaps it out");
+    assert.ok(!docker.calls.includes("network remove kardboard_preview_pv1"));
   });
 
   it("stops the build of a Preview that is removed while it builds", async () => {

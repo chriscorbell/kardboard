@@ -334,11 +334,13 @@ export async function moveCard(
       updatedAt: new Date().toISOString(),
       // What the Card came to is recorded as it closes, and forgotten when it is reopened.
       ...(enteringDone ? { outcome: await outcomeOnDone(id) } : leavingDone ? { outcome: null } : {}),
-      ...(forgetPullRequest ? NO_PULL_REQUEST : {}),
     })
     .where(and(eq(schema.cards.id, id), eq(schema.cards.revision, input.revision)))
     .returning({ id: schema.cards.id });
   if (written.length === 0) throw new ConflictError("card changed since you loaded it");
+  // Apart from the move, and only while the Card still names the merged pull request: a Session
+  // that reported a new one in the meantime keeps it, since reporting does not change the revision.
+  if (forgetPullRequest && current.prNumber) await forgetMergedPullRequest(id, current.prNumber);
   let card = (await getCard(id))!;
   if (columnChanged) {
     await recordEvent({

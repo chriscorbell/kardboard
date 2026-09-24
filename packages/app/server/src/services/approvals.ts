@@ -3,7 +3,7 @@ import { approvalAwaitingRetry, describeChecks, type Approval, type Card, type C
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { recordEvent, type Actor } from "./events.js";
-import { closeCardWork, enqueueTrigger } from "./orchestrator.js";
+import { closeCardWork, enqueueTrigger, scheduleDispatch } from "./orchestrator.js";
 import { publish } from "./realtime.js";
 import { getBoardById } from "./boards.js";
 import { createComment } from "./comments.js";
@@ -235,6 +235,8 @@ export function followUpFor(outcome: MergeOutcome, prNumber: number, mention: st
 // on the Card to say why nothing merged.
 async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: PullRequest; headSha: string; repo: Repo; mention: string; actorUserId: string }): Promise<void> {
   const { card, approvalId, pr, repo, mention } = input;
+  // Every hold was checked before this; a change made from here on is not what the merge was for.
+  const mergedAt = new Date().toISOString();
   const outcome: MergeOutcome = await mergePullRequest(repo.owner, repo.repo, pr.number, input.headSha, `${pr.title} (#${pr.number})`, pr.body).catch((err: Error) => ({
     ok: false as const,
     reason: "error" as const,
@@ -244,7 +246,7 @@ async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: P
 
   if (followUp.kind === "merged") {
     await db.update(schema.approvals).set({ mergeError: null }).where(eq(schema.approvals.id, approvalId));
-    await completeMerge(card, { prNumber: pr.number, headRef: pr.headRef, mergeSha: followUp.sha, repo, actor: AGENT, comment: `${mention} Merged pull request #${pr.number} and moved this card to Done.`.trim() });
+    await completeMerge(card, { prNumber: pr.number, headRef: pr.headRef, mergeSha: followUp.sha, repo, actor: AGENT, mergedAt, comment: `${mention} Merged pull request #${pr.number} and moved this card to Done.`.trim() });
     return;
   }
 
@@ -269,14 +271,16 @@ async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: P
  * still at work is ended and the Preview torn down, and the Card lands in Done whatever moved it
  * meanwhile. Safe to run again on a Card a restart left half way through.
  */
-export async function completeMerge(card: CardRow, input: { prNumber: number; headRef: string; mergeSha: string | null; repo: Repo; actor: Actor; comment: string; onGitHub?: boolean }): Promise<void> {
+export async function completeMerge(card: CardRow, input: { prNumber: number; headRef: string; mergeSha: string | null; repo: Repo; actor: Actor; comment: string; onGitHub?: boolean; mergedAt?: string | null }): Promise<void> {
   const merges = await db.select({ payload: schema.events.payload }).from(schema.events).where(and(eq(schema.events.cardId, card.id), eq(schema.events.type, "card.merged")));
   if (!merges.some((e) => e.payload.prNumber === input.prNumber)) {
     await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "card.merged", payload: { prNumber: input.prNumber, mergeSha: input.mergeSha, ...(input.onGitHub ? { onGitHub: true } : {}) } });
   }
   await deleteBranch(input.repo.owner, input.repo.repo, input.headRef).catch(() => {});
   // The merge is the end of this card's work: a Session still running on it must not reopen it.
-  await closeCardWork(card.id, AGENT);
+  // Except a change someone made after the merge went ahead: a comment then is about the merged
+  // work, and like a comment on any Card in Done it opens the Card again below.
+  await closeCardWork(card.id, AGENT, { keepTriggersAfter: input.mergedAt ?? undefined });
   // GitHub has accepted the merge, so the Card ends in Done whatever moved it in the meantime.
   for (let attempt = 1; ; attempt++) {
     const fresh = (await getCard(card.id))!;
@@ -289,6 +293,8 @@ export async function completeMerge(card: CardRow, input: { prNumber: number; he
     }
   }
   await createComment({ cardId: card.id, body: input.comment, actor: AGENT });
+  const late = await db.select({ id: schema.triggers.id }).from(schema.triggers).where(and(eq(schema.triggers.cardId, card.id), eq(schema.triggers.status, "pending"))).get();
+  if (late) scheduleDispatch(card.id, 1_000);
 }
 
 /**
@@ -334,6 +340,8 @@ async function agentHold(cardId: string, then: string): Promise<string | null> {
     .from(schema.triggers)
     .where(and(eq(schema.triggers.cardId, cardId), eq(schema.triggers.status, "pending")));
   if (pending.length === 0) return null;
+  // On a paused Board nothing will read it until the Admin resumes, which is worth saying.
+  if (card.waiting?.reason === "paused") return `${agent} is paused on this board, and hasn't read the latest change to this card yet. ${then} once the Admin resumes the board and ${agent} has read it.`;
   const kinds = new Set(pending.map((t) => t.kind));
   if (kinds.has("comment_posted") || kinds.has("comment_edited")) return `${agent} hasn't read the latest comment yet. ${then} once it has.`;
   if (kinds.has("card_edited")) return `${agent} hasn't read the latest edit to this card yet. ${then} once it has.`;
