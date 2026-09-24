@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { UserPlus } from "lucide-react";
+import { UserMinus, UserPlus } from "lucide-react";
 import type { User } from "@kardboard/shared";
 import { keys, request, useAdminUsers, useMe } from "../../lib/api";
 import { Avatar, Button, Chip, ErrorState, Field, Input, Select, Skeleton } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { Menu } from "../../components/Menu";
 import { relativeTime } from "../../lib/format";
+import { toast } from "../../lib/toast";
 import { TabHeader } from "./AdminPage";
 
 const STATUS_TONE = { invited: "info", active: "ok", revoked: "danger" } as const;
@@ -32,6 +33,18 @@ export function UsersTab() {
   const setStatus = useMutation({
     mutationFn: ({ id, action }: { id: string; action: "revoke" | "reinstate" }) => request(`/admin/users/${id}/${action}`, { method: "POST" }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.adminUsers }),
+  });
+  // The user stays set after closing, so the dialog keeps its words while it fades out.
+  const [removing, setRemoving] = useState<User | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const remove = useMutation({
+    mutationFn: (u: User) => request(`/admin/users/${u.id}`, { method: "DELETE" }),
+    onSuccess: (_data, u) => {
+      void qc.invalidateQueries({ queryKey: keys.adminUsers });
+      void qc.invalidateQueries({ queryKey: keys.adminBoards });
+      toast(`Removed ${u.name}.`);
+      setRemoveOpen(false);
+    },
   });
   // Resending changes nothing visible about the user, so the row says so for a moment instead.
   const [resentTo, setResentTo] = useState<string | null>(null);
@@ -82,7 +95,19 @@ export function UsersTab() {
                 trigger={<Button size="sm" variant="ghost">Manage</Button>}
                 items={
                   u.status === "revoked"
-                    ? [{ label: "Reinstate", onSelect: () => setStatus.mutate({ id: u.id, action: "reinstate" }) }]
+                    ? [
+                        { label: "Reinstate", onSelect: () => setStatus.mutate({ id: u.id, action: "reinstate" }) },
+                        {
+                          label: "Remove user",
+                          danger: true,
+                          disabled: u.id === me.data?.user.id,
+                          onSelect: () => {
+                            remove.reset();
+                            setRemoving(u);
+                            setRemoveOpen(true);
+                          },
+                        },
+                      ]
                     : [
                         ...(u.status === "invited" ? [{ label: "Resend invitation", onSelect: () => resend.mutate(u.id) }] : []),
                         { label: "Revoke access", danger: true, disabled: u.id === me.data?.user.id, onSelect: () => setStatus.mutate({ id: u.id, action: "revoke" }) },
@@ -93,6 +118,28 @@ export function UsersTab() {
           ))}
         </ul>
       )}
+      <Dialog open={removeOpen} onClose={() => setRemoveOpen(false)} title="Remove user">
+        {removing ? (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2 text-[13.5px] leading-relaxed text-ink-muted">
+              <p>
+                <span className="font-medium text-ink">{removing.name}</span> leaves this list for good. Their email address, sign-in, and board access are deleted, along with their
+                notifications.
+              </p>
+              <p>Cards, comments, and approvals they wrote stay, under their name. You can invite {removing.email} again later as a new account.</p>
+            </div>
+            {remove.isError ? <p className="text-[13px] text-danger">{remove.error.message}</p> : null}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setRemoveOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="danger" icon={<UserMinus className="size-4" strokeWidth={1.75} />} loading={remove.isPending} onClick={() => remove.mutate(removing)}>
+                Remove user
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Dialog>
       <Dialog open={inviting} onClose={() => setInviting(false)} title="Invite a user">
         <form
           className="flex flex-col gap-4"
