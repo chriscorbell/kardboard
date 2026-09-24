@@ -35,22 +35,29 @@ One snapshot is taken per day, at `KARDBOARD_BACKUP_HOUR` in the server's timezo
 
 ## The copy off the disk
 
-Snapshots on the data disk survive a corrupted database or a bad deploy, not a lost disk. With `KARDBOARD_BACKUP_COPY_DIR` set, the app copies each verified snapshot there as soon as it is written, through a `.partial` file that is renamed only once its size matches, then prunes the copies to the same keep count. It then copies every attachment in `uploads/` that the copy directory does not have yet. Attachments are named by the hash of their bytes and never change, so a file already there with the same size is the same file; nothing is ever deleted from the copy's `uploads/`.
+Snapshots on the data disk survive a corrupted database or a bad deploy, not a lost disk. With `KARDBOARD_BACKUP_COPY_DIR` set, the app copies each verified snapshot there once it is written, through a `.partial` file that is renamed only once its size matches, then prunes the copies to the same keep count. It then copies every attachment in `uploads/` that the copy directory does not have yet. Attachments are named by the hash of their bytes and never change, so a file already there with the same size is the same file; nothing is ever deleted from the copy's `uploads/`.
 
-A copy that fails, or does not finish within 15 minutes, is reported on the Backups tab and by email. It never removes or changes a snapshot on the data disk, and the next snapshot tries again.
+Copies run one at a time in the background, after the snapshot they copy: *Snapshot now* answers as soon as the snapshot is on the data disk, and the Backups tab shows the copy's result when it lands. A pre-migration snapshot is copied only once the app is serving, so a slow or missing share never holds up a boot.
+
+**The marker file.** The app copies only into a directory that holds a file named `.kardboard-backup-target`. A share that did not mount leaves an empty directory, or no directory, where it should be; without the marker the copy refuses rather than writing to the very disk it is meant to outlive and reporting success. The file's contents do not matter.
+
+A copy that fails, refuses, or does not finish within 15 minutes is reported on the Backups tab and by email. It never removes or changes a snapshot on the data disk, and the next snapshot tries again.
 
 On minicore the directory is `/nas/backup/minicore/kardboard`, on `nas`'s `backup` share, which `/etc/fstab` automounts beside Crafty's backups in `/nas/backup/minicore/crafty`. `nas` snapshots its pools daily and the `backup` machine replicates those snapshots nightly, so a copy there also outlives `nas` itself (see `~/Code/fleet/AGENTS.md`). The container runs as uid 1000, which must be able to write there.
+
+The Compose file binds it with `create_host_path: false`, so Docker never creates the directory itself. The flip side: while the share is not mounted, Docker cannot create the `app` container at all, which is what a Watchtower update does on every deploy. If the app is down and `docker compose ps -a` shows it failed with a bind-source error, mount the share, or remove that one volume entry until it is back; the marker check alone still keeps a copy from landing on the local disk.
 
 To set it up, or to check it after a change to the mount:
 
 ```bash
-ls -ld /nas/backup/minicore                    # the automount answers
+ls -ld /nas/backup/minicore                    # the share answers
 mkdir -p /nas/backup/minicore/kardboard
+touch /nas/backup/minicore/kardboard/.kardboard-backup-target
 sudo -u '#1000' touch /nas/backup/minicore/kardboard/.write-test && rm /nas/backup/minicore/kardboard/.write-test
 cd ~/docker/stacks/kardboard && docker compose up -d app
 ```
 
-Then press *Snapshot now*: the Backups tab should report the copy with the number of attachments it brought over.
+Create the marker only on the share itself, never in a directory on the local disk. Then press *Snapshot now*: the Backups tab should report the copy with the number of attachments it brought over.
 
 ## Check a snapshot
 

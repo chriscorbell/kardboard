@@ -53,7 +53,13 @@ services:
       KARDBOARD_BACKUP_COPY_DIR: /backup-copy
     volumes:
       - ../../data/kardboard/app:/data
-      - /nas/backup/minicore/kardboard:/backup-copy
+      # Never created by Docker: a share that did not mount must not become a folder on the local
+      # disk. The app also refuses to copy into a directory without `.kardboard-backup-target`.
+      - type: bind
+        source: /nas/backup/minicore/kardboard
+        target: /backup-copy
+        bind:
+          create_host_path: false
     networks: [control, workload]
     # /healthz reads the database and answers 503 when it cannot. The runner and the egress proxy
     # are reported in its body but never fail it.

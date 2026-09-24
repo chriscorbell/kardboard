@@ -170,13 +170,23 @@ async function saveState(): Promise<void> {
   }
 }
 
-/** Reads the last attempt and copy back after a restart, and from then on writes each one through. */
+/**
+ * Reads the last attempt and copy back after a restart, and from then on writes each one through.
+ * Persistence is switched on and the waiting alerts go out even when the read fails: a database
+ * that cannot be read now may be writable a minute later, and an alert about a failed backup is
+ * worth more than the Backups tab's memory of the last one.
+ */
 export async function restoreBackupState(): Promise<void> {
-  state.lastAttempt ??= parseState<BackupAttempt>(await getSettingValue(ATTEMPT_KEY));
-  state.lastCopy ??= parseState<BackupCopy>(await getSettingValue(COPY_KEY));
-  persistent = true;
-  await saveState();
-  for (const alert of deferred.splice(0)) raise(alert);
+  try {
+    const [attempt, copy] = [await getSettingValue(ATTEMPT_KEY), await getSettingValue(COPY_KEY)];
+    // Anything already in memory happened since the boot, so it is newer than what was saved.
+    state.lastAttempt ??= parseState<BackupAttempt>(attempt);
+    state.lastCopy ??= parseState<BackupCopy>(copy);
+  } finally {
+    persistent = true;
+    await saveState();
+    for (const alert of deferred.splice(0)) raise(alert);
+  }
 }
 
 function raise(alert: AdminAlert): void {
@@ -239,6 +249,13 @@ export async function mirrorUploads(from: string, to: string): Promise<number> {
 }
 
 /**
+ * The file that says a directory is where backups are meant to go. Without it the copy refuses: on a
+ * host whose network share did not mount, the copy directory is an empty folder on the very disk the
+ * copy exists to outlive, and writing there would report success for a copy that protects nothing.
+ */
+export const COPY_TARGET_MARKER = ".kardboard-backup-target";
+
+/**
  * Copies a verified snapshot to the copy directory, prunes the copies to the same count, and brings
  * the attachments up to date there. Never touches the snapshots on the data disk, whatever happens.
  */
@@ -247,7 +264,8 @@ export async function copyOffDisk(file: string, options: { copyDir: string; keep
   const name = path.basename(file);
   let uploadsCopied = 0;
   try {
-    await fsp.mkdir(options.copyDir, { recursive: true });
+    const marked = await fsp.stat(path.join(options.copyDir, COPY_TARGET_MARKER)).catch(() => null);
+    if (!marked) throw new Error(`${options.copyDir} has no ${COPY_TARGET_MARKER} file, so it is not taken for the backup target; is the share mounted?`);
     await copyFileSafely(file, path.join(options.copyDir, name));
     pruneSnapshots(options.keep, options.copyDir, now);
     uploadsCopied = await mirrorUploads(options.uploadsDir, path.join(options.copyDir, "uploads"));
@@ -255,6 +273,52 @@ export async function copyOffDisk(file: string, options: { copyDir: string; keep
   } catch (err) {
     return { at: now.toISOString(), ok: false, error: message(err), snapshot: name, uploadsCopied };
   }
+}
+
+// Copies run one at a time on a queue of their own, after the snapshot they copy is finished and
+// never in its way: a snapshot, the admin button's answer, and the app's boot never wait on the
+// network share, which can be slow or gone.
+let copyQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Queues the copy of a snapshot already on the data disk and resolves with its result, or with null
+ * when no copy directory is set or the snapshot was pruned before its turn came.
+ */
+export function copySnapshotOffDisk(
+  name: string,
+  options: { dir?: string; copyDir?: string | null; keep?: number; uploadsDir?: string; now?: Date } = {},
+): Promise<BackupCopy | null> {
+  const copyDir = options.copyDir === undefined ? env.backupCopyDir : options.copyDir;
+  if (!copyDir) return Promise.resolve(null);
+  const file = path.join(options.dir ?? env.backupDir, name);
+  const run = copyQueue.then(async (): Promise<BackupCopy | null> => {
+    if (!fs.existsSync(file)) return null;
+    const now = options.now ?? new Date();
+    const copy = await withTimeout(
+      copyOffDisk(file, { copyDir, keep: options.keep ?? env.backupKeep, uploadsDir: options.uploadsDir ?? path.join(env.dataDir, "uploads"), now }),
+      COPY_TIMEOUT_MS,
+      "the copy",
+    ).catch((err: unknown): BackupCopy => ({ at: now.toISOString(), ok: false, error: message(err), snapshot: name, uploadsCopied: 0 }));
+    state.lastCopy = copy;
+    await saveState();
+    if (copy.ok) {
+      console.log(`[backup] copied ${name} to ${copyDir}${copy.uploadsCopied ? ` with ${copy.uploadsCopied} new attachment(s)` : ""}`);
+    } else {
+      console.error(`[backup] could not copy ${name} to ${copyDir}: ${copy.error}`);
+      raise({
+        key: "backup.copy_failed",
+        subject: "A backup could not be copied off the disk",
+        body: `The snapshot ${name} was written and verified on the data disk, but copying it to ${copyDir} failed: ${copy.error}\n\nThe snapshots on the data disk are untouched. Check that the share is mounted, that ${COPY_TARGET_MARKER} is in the copy directory, and that the app, uid 1000, can write there.`,
+      });
+    }
+    return copy;
+  });
+  copyQueue = run.catch(() => undefined);
+  // Callers rarely wait for this, so it must never reject: an unhandled rejection ends the process.
+  return run.catch((err: unknown) => {
+    console.error(`[backup] the copy of ${name} stopped`, err);
+    return null;
+  });
 }
 
 // ---- taking snapshots ----
@@ -266,8 +330,11 @@ let queue: Promise<unknown> = Promise.resolve();
 export interface SnapshotResult {
   snapshot: BackupSnapshot;
   pruned: string[];
-  /** The copy off the disk, or null when no copy directory is set. A failed copy does not fail the snapshot. */
-  copy: BackupCopy | null;
+  /**
+   * The copy off the disk, which runs after the snapshot is done and is not waited for here; null
+   * when there is nothing to copy to. A failed copy does not fail the snapshot.
+   */
+  copy: Promise<BackupCopy | null>;
 }
 
 export function takeSnapshot(options: SnapshotOptions = {}): Promise<SnapshotResult> {
@@ -333,26 +400,7 @@ async function writeSnapshot(options: SnapshotOptions): Promise<SnapshotResult> 
   const name = path.basename(file);
   const snapshot: BackupSnapshot = { name, bytes: fs.statSync(file).size, takenAt: parseName(name)?.takenAt ?? at.toISOString(), kind };
   const pruned = pruneSnapshots(keep, dir, at);
-
-  const copyDir = options.copyDir === undefined ? env.backupCopyDir : options.copyDir;
-  let copy: BackupCopy | null = null;
-  if (copyDir) {
-    copy = await withTimeout(copyOffDisk(file, { copyDir, keep, uploadsDir: options.uploadsDir ?? path.join(env.dataDir, "uploads"), now: at }), COPY_TIMEOUT_MS, "the copy").catch(
-      (err: unknown): BackupCopy => ({ at: at.toISOString(), ok: false, error: message(err), snapshot: name, uploadsCopied: 0 }),
-    );
-    state.lastCopy = copy;
-    await saveState();
-    if (copy.ok) {
-      console.log(`[backup] copied ${name} to ${copyDir}${copy.uploadsCopied ? ` with ${copy.uploadsCopied} new attachment(s)` : ""}`);
-    } else {
-      console.error(`[backup] could not copy ${name} to ${copyDir}: ${copy.error}`);
-      raise({
-        key: "backup.copy_failed",
-        subject: "A backup could not be copied off the disk",
-        body: `The snapshot ${name} was written and verified on the data disk, but copying it to ${copyDir} failed: ${copy.error}\n\nThe snapshots on the data disk are untouched. Check that the copy directory is mounted and writable by the app, uid 1000.`,
-      });
-    }
-  }
+  const copy = copySnapshotOffDisk(name, { dir, copyDir: options.copyDir, keep, uploadsDir: options.uploadsDir, now: options.at });
   return { snapshot, pruned, copy };
 }
 
@@ -360,7 +408,9 @@ async function writeSnapshot(options: SnapshotOptions): Promise<SnapshotResult> 
  * Takes a snapshot at boot when the database has migrations still to apply, so the state from before
  * a new image changed the schema can be restored with the image before it. A failure is logged and
  * alerted once the app is up, and the migrations run anyway: refusing to start would take the whole
- * site down over a backup the daily ones already cover up to a day.
+ * site down over a backup the daily ones already cover up to a day. Nothing is copied off the disk
+ * here, so the boot never waits on the share; the caller copies it with `copySnapshotOffDisk` once
+ * the app is serving.
  */
 export async function snapshotBeforeMigrations(options: SnapshotOptions & { folder?: string } = {}): Promise<BackupSnapshot | null> {
   let pending: number;
@@ -372,7 +422,7 @@ export async function snapshotBeforeMigrations(options: SnapshotOptions & { fold
   }
   if (pending === 0) return null;
   try {
-    const { snapshot } = await takeSnapshot({ ...options, kind: "pre_migrate" });
+    const { snapshot } = await takeSnapshot({ ...options, kind: "pre_migrate", copyDir: null });
     console.log(`[backup] wrote ${snapshot.name} before applying ${pending} migration(s)`);
     return snapshot;
   } catch (err) {

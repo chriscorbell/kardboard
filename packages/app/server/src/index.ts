@@ -13,11 +13,11 @@ import { mcp } from "./routes/mcp.js";
 import { internal } from "./routes/internal.js";
 import { recoverOnBoot, startDispatchPump } from "./services/orchestrator.js";
 import { startSweepScheduler } from "./services/sweep.js";
-import { snapshotBeforeMigrations, startBackupScheduler } from "./services/backup.js";
+import { copySnapshotOffDisk, snapshotBeforeMigrations, startBackupScheduler } from "./services/backup.js";
 import { startPreviewReaper } from "./services/previews.js";
 import { startPullRequestReconciler } from "./services/reconcile.js";
 import { monitorSnapshot, startMonitor } from "./services/monitor.js";
-import { startLogFile } from "./services/logfile.js";
+import { redactTokens, startLogFile } from "./services/logfile.js";
 import { ensureSeed } from "./seed.js";
 
 // First, so the boot itself, migrations included, is in the kept log.
@@ -41,7 +41,9 @@ app.get("/healthz", async (c) => {
   }
   return c.json({ ok: true, db: "ok", ...monitorSnapshot() });
 });
-app.use("*", logger((msg) => console.log(msg)));
+// The board event stream authenticates with `?token=`, a Clerk session token, which must not sit in
+// a log for two weeks. The rest of the query stays: it says which page or offset was asked for.
+app.use("*", logger((msg) => console.log(redactTokens(msg))));
 // Keep bookmarked pages working after a domain move. The destination is deployment config,
 // never a request-supplied origin; API mutations remain on the origin that received them.
 app.use("*", async (c, next) => {
@@ -84,7 +86,7 @@ app.onError((err, c) => {
 });
 
 // A new image with schema changes gets a snapshot of the database as the old image left it.
-await snapshotBeforeMigrations();
+const preMigrate = await snapshotBeforeMigrations();
 await runMigrations();
 await ensureSeed();
 await recoverOnBoot();
@@ -97,4 +99,6 @@ startMonitor();
 
 serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.log(`kardboard app listening on http://localhost:${info.port} (auth=${env.authMode})`);
+  // Only once the app answers: the copy goes to a network share, which can be slow or gone.
+  if (preMigrate) void copySnapshotOffDisk(preMigrate.name);
 });
