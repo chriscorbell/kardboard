@@ -1,8 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUpRight, Check, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, RotateCcw, X } from "lucide-react";
-import { approvalAwaitingRetry, COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type Approval, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
-import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useRetryMerge, useUpdateCard, useUpdateComment } from "../../lib/api";
+import { ArrowUpRight, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, X } from "lucide-react";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
+import { useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
 import { Menu } from "../../components/Menu";
@@ -15,7 +15,8 @@ import { SessionBanner } from "./SessionBanner";
 import { ApiError } from "../../lib/errors";
 import { AttachmentView } from "./AttachmentView";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
-import { useModalFocus } from "../../components/focus";
+import { isInnermostModal, useModalFocus } from "../../components/focus";
+import { ReviewBlock } from "./ReviewBlock";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
 
@@ -28,7 +29,7 @@ export function CardSheet({ slug, cardId, view, onClose }: { slug: string; cardI
   useEffect(() => {
     if (!cardId) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLInputElement)) onClose();
+      if (e.key === "Escape" && isInnermostModal(sheet) && !(e.target instanceof HTMLTextAreaElement) && !(e.target instanceof HTMLInputElement)) onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -65,8 +66,6 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   const detail = useCard(cardId);
   const update = useUpdateCard(slug);
   const move = useMoveCard(slug);
-  const approve = useApproveCard(slug);
-  const retryMerge = useRetryMerge(slug);
   const members = useMemo(() => new Map(view.members.map((m) => [m.id, m])), [view.members]);
   const handles = useMemo(() => {
     const m = new Map(view.members.map((u) => [u.handle, u.name]));
@@ -75,6 +74,15 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   }, [view.members, view.agent.name]);
   const card = detail.data?.card ?? view.cards.find((c) => c.id === cardId);
   const isAdmin = me.data?.user.role === "admin";
+  const reduceMotion = useReducedMotion();
+  // Request changes in the Review block hands over to the comment composer, with a prompt for what to write.
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const [composerHint, setComposerHint] = useState<string | null>(null);
+  const requestChanges = () => {
+    setComposerHint("What should change?");
+    composer.current?.focus({ preventScroll: true });
+    composer.current?.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  };
 
   if (!card) {
     if (detail.isError) {
@@ -189,16 +197,13 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
 
         {card.column === "review" ? (
           <ReviewBlock
+            slug={slug}
             card={card}
             agentName={view.agent.name}
             approvals={detail.data?.approvals ?? []}
             members={members}
-            onApprove={() => approve.mutate({ id: card.id, headSha: card.prHeadSha })}
-            busy={approve.isPending}
-            error={approve.error?.message ?? null}
-            onRetryMerge={() => retryMerge.mutate(card.id)}
-            retrying={retryMerge.isPending}
-            retryError={retryMerge.error?.message ?? null}
+            isAdmin={isAdmin}
+            onRequestChanges={requestChanges}
           />
         ) : null}
 
@@ -215,7 +220,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           )}
         </div>
         <div className="px-6 pb-4">
-          <NewComment cardId={card.id} members={view.members} agent={view.agent} />
+          <NewComment cardId={card.id} members={view.members} agent={view.agent} inputRef={composer} placeholder={composerHint ?? undefined} onPosted={() => setComposerHint(null)} />
         </div>
         <Activity entries={detail.data?.activity ?? []} members={members} agentName={view.agent.name} />
       </div>
@@ -420,100 +425,6 @@ function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map
   );
 }
 
-// Approval is bound to the revision shown here: the short SHA is what Approve sends back, and the
-// server refuses it if the pull request has moved on or a Session is still at work. An Approval
-// GitHub refused to merge for a reason of its own still stands, so the block offers Retry merge.
-function ReviewBlock({
-  card,
-  agentName,
-  approvals,
-  members,
-  onApprove,
-  busy,
-  error,
-  onRetryMerge,
-  retrying,
-  retryError,
-}: {
-  card: Card;
-  agentName: string;
-  approvals: Approval[];
-  members: Map<string, User>;
-  onApprove: () => void;
-  busy: boolean;
-  error: string | null;
-  onRetryMerge: () => void;
-  retrying: boolean;
-  retryError: string | null;
-}) {
-  const reduce = useReducedMotion();
-  const live = approvals.filter((a) => !a.invalidatedAt);
-  const refused = approvalAwaitingRetry(approvals);
-  const working = Boolean(card.activeSession);
-  const shown = refused ? retryError : live.length === 0 ? error : null;
-  return (
-    <div className="mx-6 mt-4 rounded-card border border-line bg-raised px-4 py-3.5">
-      {refused ? (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="min-w-0 flex-1">
-            <p className="text-[13.5px] font-medium text-ink">GitHub refused the merge</p>
-            <p className="mt-0.5 text-[12.5px] text-ink-muted">
-              {refused.mergeError} The approval by {members.get(refused.userId)?.name ?? "a member"} {relativeTime(refused.createdAt)} still stands, so try again once the cause is fixed.
-            </p>
-          </div>
-          <Button variant="primary" className="w-full sm:w-auto" loading={retrying} disabled={working} icon={<RotateCcw className="size-4" strokeWidth={2} />} onClick={onRetryMerge}>
-            Retry merge
-          </Button>
-        </div>
-      ) : live.length > 0 ? (
-        <div className="flex items-center gap-2 text-[13px]">
-          <Check className="size-4 text-ok" strokeWidth={2} />
-          <span className="text-ink">
-            Approved by {members.get(live[0]!.userId)?.name ?? "a member"} {relativeTime(live[0]!.createdAt)}. {agentName} will merge it.
-          </span>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="min-w-0 flex-1">
-            <p className="text-[13.5px] font-medium text-ink">Ready for your review</p>
-            {working ? (
-              <p className="mt-0.5 text-[12.5px] text-ink-muted">{agentName} is still working on this card. You can approve once the session has finished.</p>
-            ) : (
-              <p className="mt-0.5 text-[12.5px] text-ink-muted">
-                Check the preview. Approving lets {agentName} merge {card.prNumber ? `pull request #${card.prNumber}` : "the change"}
-                {card.prHeadSha ? (
-                  <>
-                    {" "}at <code className="rounded-[4px] bg-overlay px-1 py-px font-mono text-[11.5px] text-ink" title={card.prHeadSha}>{card.prHeadSha.slice(0, 7)}</code>
-                  </>
-                ) : null}{" "}
-                and close this card. Ask for changes in a comment instead if it's not right.
-              </p>
-            )}
-          </div>
-          <Button variant="primary" className="w-full sm:w-auto" loading={busy} disabled={working} icon={<Check className="size-4" strokeWidth={2} />} onClick={onApprove}>
-            Approve
-          </Button>
-        </div>
-      )}
-      <AnimatePresence initial={false}>
-        {shown ? (
-          <motion.p
-            key="approve-error"
-            role="alert"
-            initial={reduce ? false : { opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            className="mt-3 border-t border-line pt-2.5 text-[12.5px] text-danger"
-          >
-            {shown}
-          </motion.p>
-        ) : null}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 function CommentList({ comments, members, agent, handles, meId, cardId }: { comments: Comment[]; members: Map<string, User>; agent: AgentProfile; handles: Map<string, string>; meId: string; cardId: string }) {
   const agentName = agent.name;
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -582,11 +493,35 @@ function CommentList({ comments, members, agent, handles, meId, cardId }: { comm
   );
 }
 
-function NewComment({ cardId, members, agent }: { cardId: string; members: User[]; agent: AgentProfile }) {
+function NewComment({
+  cardId,
+  members,
+  agent,
+  inputRef,
+  placeholder,
+  onPosted,
+}: {
+  cardId: string;
+  members: User[];
+  agent: AgentProfile;
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  placeholder?: string;
+  onPosted?: () => void;
+}) {
   const create = useCreateComment(cardId);
   return (
     <div className="mt-5 border-t border-line pt-4">
-      <Composer members={members} agent={agent} onSubmit={(body, files) => create.mutateAsync({ body, files }).then(() => undefined)} />
+      <Composer
+        members={members}
+        agent={agent}
+        inputRef={inputRef}
+        placeholder={placeholder}
+        onSubmit={(body, files) =>
+          create.mutateAsync({ body, files }).then(() => {
+            onPosted?.();
+          })
+        }
+      />
     </div>
   );
 }
@@ -606,6 +541,10 @@ const ACTIVITY_LABEL: Record<string, (p: Record<string, unknown>) => string> = {
   "session.timed_out": () => "session hit its time limit",
   "session.cancel_requested": () => "asked to cancel the session",
   "card.retry_requested": () => "asked to try again",
+  "card.merge_refused": (p) => `could not merge the pull request${p.error ? `: ${p.error as string}` : ""}`,
+  "card.merge_retried": () => "tried the merge again",
+  "pull_request.closed": (p) => `saw pull request #${p.prNumber as number} closed on GitHub without a merge`,
+  "pull_request.head_changed": (p) => `saw new commits on pull request #${p.prNumber as number}`,
 };
 
 function Activity({ entries, members, agentName }: { entries: ActivityEntry[]; members: Map<string, User>; agentName: string }) {

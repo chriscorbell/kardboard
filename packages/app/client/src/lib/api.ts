@@ -159,7 +159,8 @@ export function useApproveCard(slug: string) {
     void qc.invalidateQueries({ queryKey: keys.board(slug) });
   };
   return useMutation({
-    mutationFn: ({ id, headSha }: { id: string; headSha: string | null }) => request(`/cards/${id}/approve`, { method: "POST", body: JSON.stringify({ headSha }) }),
+    mutationFn: ({ id, headSha, overrideChecks }: { id: string; headSha: string | null; overrideChecks?: boolean }) =>
+      request(`/cards/${id}/approve`, { method: "POST", body: JSON.stringify({ headSha, ...(overrideChecks ? { overrideChecks } : {}) }) }),
     onSuccess: (_r, { id }) => refresh(id),
     onError: (_e, { id }) => refresh(id),
   });
@@ -173,9 +174,22 @@ export function useRetryMerge(slug: string) {
     void qc.invalidateQueries({ queryKey: keys.board(slug) });
   };
   return useMutation({
-    mutationFn: (id: string) => request(`/cards/${id}/retry-merge`, { method: "POST" }),
-    onSuccess: (_r, id) => refresh(id),
-    onError: (_e, id) => refresh(id),
+    mutationFn: ({ id, overrideChecks }: { id: string; overrideChecks?: boolean }) => request(`/cards/${id}/retry-merge`, { method: "POST", body: JSON.stringify(overrideChecks ? { overrideChecks } : {}) }),
+    onSuccess: (_r, { id }) => refresh(id),
+    onError: (_e, { id }) => refresh(id),
+  });
+}
+
+// Opening a Card in Review asks the server to read its pull request and checks from GitHub again.
+// Anything that changed also arrives over the event stream; the answer just lands it sooner here.
+export function useSyncCard(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<Card>(`/cards/${id}/sync`, { method: "POST" }),
+    onSuccess: (card) => {
+      upsertCardInBoard(qc, slug, card);
+      qc.setQueryData<CardDetail>(keys.card(card.id), (d) => (d ? { ...d, card } : d));
+    },
   });
 }
 
