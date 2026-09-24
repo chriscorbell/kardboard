@@ -276,6 +276,40 @@ export async function updateCard(
   return card;
 }
 
+/** When kardboard recorded the merge of this pull request of the Card, or null if it never did. */
+export async function mergeRecordedAt(cardId: string, prNumber: number | null): Promise<string | null> {
+  if (!prNumber) return null;
+  const merges = await db
+    .select({ payload: schema.events.payload, createdAt: schema.events.createdAt })
+    .from(schema.events)
+    .where(and(eq(schema.events.cardId, cardId), eq(schema.events.type, "card.merged")));
+  return merges.find((e) => e.payload.prNumber === prNumber)?.createdAt ?? null;
+}
+
+// Everything a Card records of its pull request, forgotten together.
+const NO_PULL_REQUEST = { prUrl: null, prNumber: null, prHeadSha: null, prBaseRef: null, checks: null };
+
+async function voidStandingApprovals(cardId: string): Promise<void> {
+  await db.update(schema.approvals).set({ invalidatedAt: new Date().toISOString() }).where(and(eq(schema.approvals.cardId, cardId), isNull(schema.approvals.invalidatedAt)));
+}
+
+/**
+ * What moveCard forgets of a reopened Card, for a Card that left Done before it did so: one still
+ * naming the pull request it merged, which the poll would otherwise read as merged and close again.
+ * Only while the Card still names that pull request, so a new one a Session has just reported stays.
+ */
+export async function forgetMergedPullRequest(cardId: string, prNumber: number): Promise<void> {
+  const written = await db
+    .update(schema.cards)
+    .set({ ...NO_PULL_REQUEST, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.cards.id, cardId), eq(schema.cards.prNumber, prNumber)))
+    .returning({ id: schema.cards.id });
+  if (written.length === 0) return;
+  await voidStandingApprovals(cardId);
+  const card = (await getCard(cardId))!;
+  publish(card.boardId, { type: "card.upserted", card });
+}
+
 export async function moveCard(
   id: string,
   input: { column: Column; position: number; revision: number; actor: Actor; silent?: boolean },
@@ -286,6 +320,10 @@ export async function moveCard(
   const columnChanged = current.column !== input.column;
   const enteringDone = columnChanged && input.column === "done";
   const leavingDone = columnChanged && current.column === "done";
+  // A reopened Card whose pull request was merged opens a new one from its own branch, so the merged
+  // one is forgotten: left on the Card, the poll would read it as merged and close the Card again,
+  // ending the Session that reopened it. One closed without a merge stays; the work may go on there.
+  const forgetPullRequest = leavingDone && (await mergeRecordedAt(id, current.prNumber)) !== null;
   // As in updateCard: of two moves made from the same revision, only the first is written.
   const written = await db
     .update(schema.cards)
@@ -296,6 +334,7 @@ export async function moveCard(
       updatedAt: new Date().toISOString(),
       // What the Card came to is recorded as it closes, and forgotten when it is reopened.
       ...(enteringDone ? { outcome: await outcomeOnDone(id) } : leavingDone ? { outcome: null } : {}),
+      ...(forgetPullRequest ? NO_PULL_REQUEST : {}),
     })
     .where(and(eq(schema.cards.id, id), eq(schema.cards.revision, input.revision)))
     .returning({ id: schema.cards.id });
@@ -309,10 +348,9 @@ export async function moveCard(
       type: "card.moved",
       payload: { from: current.column, to: input.column },
     });
-    // Leaving Review for anything but Done voids a standing Approval; Done is where a consumed Approval ends up.
-    if (current.column === "review" && input.column !== "done") {
-      await db.update(schema.approvals).set({ invalidatedAt: new Date().toISOString() }).where(and(eq(schema.approvals.cardId, id), isNull(schema.approvals.invalidatedAt)));
-    }
+    // Leaving Review for anything but Done voids a standing Approval, and Done is where an Approval
+    // ends: spent by its merge, or withdrawn by closing the Card. A reopened Card is approved afresh.
+    if ((current.column === "review" && input.column !== "done") || leavingDone) await voidStandingApprovals(id);
     // A human move to Done closes the card: the active Session is cancelled and nothing re-runs.
     if (input.column === "done" && input.actor.kind === "user") {
       await closeCardWork(id, input.actor);

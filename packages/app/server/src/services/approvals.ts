@@ -114,6 +114,30 @@ export async function recordPullRequest(cardId: string, pr: PullRequest): Promis
   return setCardWorkState(cardId, { prNumber: pr.number, prUrl: pr.url, prHeadSha: pr.headSha, prBaseRef: pr.baseRef || null, ...(stale ? { checks: null } : {}) });
 }
 
+/**
+ * recordPullRequest for a caller that read the pull request from GitHub some time ago: it is
+ * recorded only if the Card still names `expected` as its head, so an answer that was in flight
+ * while a Session reported a newer head cannot put the older one back over it. Returns whether it
+ * was recorded.
+ */
+export async function recordPullRequestIfUnchanged(cardId: string, pr: PullRequest, expected: string | null): Promise<boolean> {
+  const before = await db.select({ checks: schema.cards.checks }).from(schema.cards).where(eq(schema.cards.id, cardId)).get();
+  const stale = Boolean(before?.checks && before.checks.sha !== pr.headSha);
+  const written = await db
+    .update(schema.cards)
+    .set({ prNumber: pr.number, prUrl: pr.url, prHeadSha: pr.headSha, prBaseRef: pr.baseRef || null, ...(stale ? { checks: null } : {}), updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.cards.id, cardId), expected === null ? isNull(schema.cards.prHeadSha) : eq(schema.cards.prHeadSha, expected)))
+    .returning({ id: schema.cards.id });
+  if (written.length === 0) return false;
+  await db
+    .update(schema.approvals)
+    .set({ invalidatedAt: new Date().toISOString() })
+    .where(and(eq(schema.approvals.cardId, cardId), isNull(schema.approvals.invalidatedAt), or(isNull(schema.approvals.headSha), ne(schema.approvals.headSha, pr.headSha))));
+  const card = (await getCard(cardId))!;
+  publish(card.boardId, { type: "card.upserted", card });
+  return true;
+}
+
 /** Whether what the Card records of its pull request differs from what GitHub says now. */
 function recordedDiffers(card: CardRow, pr: PullRequest): boolean {
   return pr.headSha !== card.prHeadSha || pr.number !== card.prNumber || pr.url !== card.prUrl || (pr.baseRef || null) !== card.prBaseRef;

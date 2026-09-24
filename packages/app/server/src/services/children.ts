@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { ActorKind, CardOutcome, Column, Priority } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { recordEvent, SYSTEM_ACTOR } from "./events.js";
@@ -105,20 +105,56 @@ export async function childSummaries(parentCardId: string): Promise<ChildSummary
   return Promise.all(rows.map(async (r) => ({ id: r.id, title: r.title, outcome: r.outcome ?? (await outcomeOnDone(r.id)) })));
 }
 
+/** Whether two settlements are the same: the same children, each come to the same outcome. */
+export function sameSettlement(a: Pick<ChildSummary, "id" | "outcome">[], b: Pick<ChildSummary, "id" | "outcome">[]): boolean {
+  const key = (children: Pick<ChildSummary, "id" | "outcome">[]) =>
+    children
+      .map((c) => `${c.id}:${c.outcome}`)
+      .sort()
+      .join(",");
+  return key(a) === key(b);
+}
+
+const waking = new Map<string, Promise<unknown>>();
+
 /**
  * Called when a Card reaches Done. If it was the last child its parent was waiting on, the parent
  * leaves Blocked and receives a `children_done` Trigger carrying what each child came to. Nobody
  * has to touch anything for this to happen, which is the whole point.
+ *
+ * Once per settlement: a child that reaches Done again with nothing changed — reopened and closed
+ * the same way, or put back in Done by a merge being completed a second time — does not wake the
+ * parent again with news it already has. Two children finishing together are woken for one at a
+ * time, so they cannot both find the other done and both wake it.
  */
-export async function wakeParentIfSettled(child: { id: string; parentCardId: string | null }): Promise<void> {
-  if (!child.parentCardId) return;
-  const parentRow = await db.select().from(schema.cards).where(eq(schema.cards.id, child.parentCardId)).get();
+export function wakeParentIfSettled(child: { id: string; parentCardId: string | null }): Promise<void> {
+  const parentId = child.parentCardId;
+  if (!parentId) return Promise.resolve();
+  const run = (waking.get(parentId) ?? Promise.resolve()).then(() => wakeUnderLock(parentId));
+  const tail = run.catch(() => undefined);
+  waking.set(parentId, tail);
+  void tail.then(() => {
+    if (waking.get(parentId) === tail) waking.delete(parentId);
+  });
+  return run;
+}
+
+async function wakeUnderLock(parentId: string): Promise<void> {
+  const parentRow = await db.select().from(schema.cards).where(eq(schema.cards.id, parentId)).get();
   // A parent that is itself closed has nothing left to resume.
   if (!parentRow || parentRow.column === "done") return;
   const siblings = await db.select({ column: schema.cards.column }).from(schema.cards).where(eq(schema.cards.parentCardId, parentRow.id));
   if (!allChildrenDone(siblings)) return;
 
   const children = await childSummaries(parentRow.id);
+  const last = await db
+    .select({ payload: schema.events.payload })
+    .from(schema.events)
+    .where(and(eq(schema.events.cardId, parentRow.id), eq(schema.events.type, "card.children_done")))
+    .orderBy(desc(schema.events.createdAt))
+    .limit(1)
+    .get();
+  if (last && Array.isArray(last.payload.children) && sameSettlement(last.payload.children as ChildSummary[], children)) return;
   // Lazy imports: cards.ts and orchestrator.ts both reach back into this module.
   const { getCard, moveCard } = await import("./cards.js");
   const { enqueueTrigger } = await import("./orchestrator.js");
