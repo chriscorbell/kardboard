@@ -24,8 +24,8 @@ import { ensureSeed } from "./seed.js";
 startLogFile(env.logDir, env.logKeepDays);
 
 const app = new Hono();
-// Registered ahead of the request logger, which it answers before: the container's health check
-// calls it every 30 seconds and would otherwise be most of the log.
+// Registered ahead of the request logger, so the container's health check, which calls it every 30
+// seconds, does not fill the log.
 //
 // The app is healthy when it can read its database; that is the one thing it cannot serve without.
 // The runner and the egress proxy are reported as last seen, for a person reading the answer, and
