@@ -10,9 +10,6 @@ importers:
 
   packages/app:
     dependencies:
-      '@kardboard/shared':
-        specifier: workspace:*
-        version: link:../shared
       '@clerk/backend':
         specifier: ^2.7.0
         version: 2.33.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -22,6 +19,9 @@ importers:
       '@hono/zod-validator':
         specifier: ^0.5.0
         version: 0.5.0(hono@4.13.7)(zod@3.25.76)
+      '@kardboard/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@libsql/client':
         specifier: ^0.15.9
         version: 0.15.15
@@ -34,6 +34,12 @@ importers:
       hono:
         specifier: ^4.7.11
         version: 4.13.7
+      micromark:
+        specifier: ^4.0.2
+        version: 4.0.2(supports-color@8.1.1)
+      micromark-extension-gfm:
+        specifier: ^3.0.0
+        version: 3.0.0
       nanoid:
         specifier: ^5.1.5
         version: 5.1.16
@@ -305,6 +311,7 @@ packages:
   '@clerk/types@4.101.26':
     resolution: {integrity: sha512-tUeiElAZoXu9Dxom9t6IjkEfsfP7aWSVf5x5mCoHnSr2w+wV4EtEwoLl9vexT5LL0di4qidROSfcrOnorzczIQ==}
     engines: {node: '>=18.17.0'}
+    deprecated: 'This package is no longer supported. Please import types from @clerk/shared/types instead. See the upgrade guide for more info: https://clerk.com/docs/guides/development/upgrading/upgrade-guides/core-3'
 
   '@dnd-kit/accessibility@3.1.1':
     resolution: {integrity: sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==}

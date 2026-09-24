@@ -65,4 +65,26 @@ describe("composerKeyAction", () => {
       assert.deepEqual(composerKeyAction(key("Escape"), { mentionOpen: true, canCancel: true }), { action: { type: "mention-close" }, preventDefault: false });
     });
   });
+
+  describe("on a touch screen", () => {
+    const touch = { mentionOpen: false, canCancel: false, touch: true };
+
+    it("leaves Enter to the textarea, so a phone can write a second paragraph", () => {
+      assert.equal(composerKeyAction(key("Enter"), touch), null);
+    });
+
+    it("still posts on Cmd+Enter or Ctrl+Enter from an attached keyboard", () => {
+      for (const mods of [{ metaKey: true }, { ctrlKey: true }]) {
+        assert.deepEqual(composerKeyAction(key("Enter", mods), touch), { action: { type: "submit" }, preventDefault: true });
+      }
+    });
+
+    it("still picks a handle on Enter while the mention list is open", () => {
+      assert.deepEqual(composerKeyAction(key("Enter"), { ...touch, mentionOpen: true }), { action: { type: "mention-pick" }, preventDefault: true });
+    });
+
+    it("posts on Enter as before when the pointer is not a touch screen", () => {
+      assert.deepEqual(composerKeyAction(key("Enter"), { ...touch, touch: false }), { action: { type: "submit" }, preventDefault: true });
+    });
+  });
 });

@@ -1,14 +1,17 @@
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUpRight, ChevronDown, GitBranch, GitPullRequest, History, Pencil, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
-import { useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
+import { ArrowUpRight, Check, ChevronDown, GitBranch, GitPullRequest, History, Link2, Pencil, Reply, Trash2, Upload, X } from "lucide-react";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Person, type Priority, type Provider, type User } from "@kardboard/shared";
+import { useCard, useCreateComment, useDeleteComment, useMarkCardRead, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
+import { Dialog } from "../../components/Dialog";
 import { Menu } from "../../components/Menu";
 import { Markdown } from "../../components/Markdown";
 import { absoluteTime, relativeTime, shortId } from "../../lib/format";
-import { Composer } from "./Composer";
+import { useFileDrop } from "../../lib/fileInput";
+import { toast } from "../../lib/toast";
+import { Composer, type ComposerHandle } from "./Composer";
 import { COLUMN_TONES } from "./columns";
 import { WorkingDot } from "./CardTile";
 import { SessionBanner } from "./SessionBanner";
@@ -67,22 +70,27 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   const detail = useCard(cardId);
   const update = useUpdateCard(slug);
   const move = useMoveCard(slug);
-  const members = useMemo(() => new Map(view.members.map((m) => [m.id, m])), [view.members]);
+  const markRead = useMarkCardRead();
+  // Names come from everyone the Board has seen, so a removed Member still signs their Comments.
+  const people = useMemo(() => new Map<string, Person>(view.people.map((p) => [p.id, p])), [view.people]);
   const handles = useMemo(() => {
-    const m = new Map(view.members.map((u) => [u.handle, u.name]));
+    const m = new Map(view.people.map((u) => [u.handle, u.name]));
     m.set(view.agent.name.toLowerCase(), view.agent.name);
     return m;
-  }, [view.members, view.agent.name]);
+  }, [view.people, view.agent.name]);
   const card = detail.data?.card ?? view.cards.find((c) => c.id === cardId);
   const isAdmin = me.data?.user.role === "admin";
-  const reduceMotion = useReducedMotion();
+  const composer = useRef<ComposerHandle>(null);
+  const drop = useFileDrop((files) => composer.current?.addFiles(files), Boolean(card));
+  const markCardRead = markRead.mutate;
+  useEffect(() => {
+    markCardRead(cardId);
+  }, [cardId, markCardRead]);
   // Request changes in the Review block hands over to the comment composer, with a prompt for what to write.
-  const composer = useRef<HTMLTextAreaElement>(null);
   const [composerHint, setComposerHint] = useState<string | null>(null);
   const requestChanges = () => {
     setComposerHint("What should change?");
-    composer.current?.focus({ preventScroll: true });
-    composer.current?.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+    composer.current?.focus();
   };
 
   if (!card) {
@@ -127,7 +135,8 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   };
 
   return (
-    <>
+    // Files dropped anywhere on the sheet go to the comment being written.
+    <div className="relative flex min-h-0 flex-1 flex-col" {...drop.handlers}>
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
         <Menu
           trigger={
@@ -138,10 +147,15 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
               </Chip>
             </button>
           }
-          items={COLUMNS.map((c) => ({ label: COLUMN_LABELS[c], active: c === card.column, onSelect: () => c !== card.column && move.mutate({ id: card.id, column: c, position: Number.MAX_SAFE_INTEGER / 2, revision: card.revision }) }))}
+          items={COLUMNS.map((c) => ({
+            label: COLUMN_LABELS[c],
+            active: c === card.column,
+            onSelect: () => c !== card.column && move.mutate({ id: card.id, column: c, position: Number.MAX_SAFE_INTEGER / 2, revision: card.revision }, { onError: (err) => toast(`The card was not moved to ${COLUMN_LABELS[c]}. ${err.message}`) }),
+          }))}
         />
         <span className="font-mono text-[11.5px] text-ink-faint">{shortId(card.id)}</span>
         <span className="ml-auto" />
+        <CopyLink slug={slug} cardId={card.id} />
         <Menu
           align="right"
           trigger={
@@ -150,7 +164,11 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
               <ChevronDown className="size-3.5" strokeWidth={1.75} />
             </button>
           }
-          items={PRIORITIES.map((p) => ({ label: PRIORITY_LABELS[p], active: p === card.priority, onSelect: () => p !== card.priority && update.mutate({ id: card.id, priority: p, revision: card.revision }) }))}
+          items={PRIORITIES.map((p) => ({
+            label: PRIORITY_LABELS[p],
+            active: p === card.priority,
+            onSelect: () => p !== card.priority && update.mutate({ id: card.id, priority: p, revision: card.revision }, { onError: (err) => toast(`The priority was not changed. ${err.message}`) }),
+          }))}
         />
         <IconButton label="Close" onClick={onClose}>
           <X className="size-4" strokeWidth={1.75} />
@@ -161,10 +179,11 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
         <div className="px-6 pt-5">
           <TitleEditor card={card} labelId={titleId} onSave={(title, base) => saveField("title", title, base)} />
           <p className="mt-1.5 text-[12px] text-ink-faint">
-            Opened {relativeTime(card.createdAt)} by {card.creatorKind === "agent" ? view.agent.name : (card.creatorId && members.get(card.creatorId)?.name) || "someone"}
+            Opened {relativeTime(card.createdAt)} by {card.creatorKind === "agent" ? view.agent.name : (card.creatorId && people.get(card.creatorId)?.name) || "someone"}
             {card.parentCardId ? <> as part of a larger request</> : null}
           </p>
         </div>
+        <BlockedQuestion card={card} comments={detail.data?.comments} agent={view.agent} handles={handles} onReply={() => composer.current?.focus()} />
 
         <SessionBanner slug={slug} card={card} agentName={view.agent.name} isAdmin={isAdmin} />
 
@@ -197,7 +216,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
             card={card}
             agentName={view.agent.name}
             approvals={detail.data?.approvals ?? []}
-            members={members}
+            members={people}
             isAdmin={isAdmin}
             onRequestChanges={requestChanges}
           />
@@ -212,15 +231,16 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           ) : !detail.data ? (
             <ErrorState compact title="Could not load comments." error={detail.error} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
           ) : (
-            <CommentList comments={detail.data.comments} members={members} agent={view.agent} handles={handles} meId={me.data?.user.id ?? ""} cardId={card.id} />
+            <CommentList comments={detail.data.comments} people={people} mentionable={view.members} agent={view.agent} handles={handles} meId={me.data?.user.id ?? ""} isAdmin={Boolean(isAdmin)} cardId={card.id} />
           )}
         </div>
         <div className="px-6 pb-4">
-          <NewComment cardId={card.id} members={view.members} agent={view.agent} inputRef={composer} placeholder={composerHint ?? undefined} onPosted={() => setComposerHint(null)} />
+          <NewComment ref={composer} cardId={card.id} members={view.members} agent={view.agent} placeholder={composerHint ?? undefined} onPosted={() => setComposerHint(null)} />
         </div>
-        <Activity entries={detail.data?.activity ?? []} members={members} agentName={view.agent.name} />
+        <Activity entries={detail.data?.activity ?? []} people={people} agentName={view.agent.name} />
       </div>
-    </>
+      <DropHint show={drop.over} />
+    </div>
   );
 }
 
@@ -421,105 +441,262 @@ function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map
   );
 }
 
-function CommentList({ comments, members, agent, handles, meId, cardId }: { comments: Comment[]; members: Map<string, User>; agent: AgentProfile; handles: Map<string, string>; meId: string; cardId: string }) {
-  const agentName = agent.name;
+// Authors edit their own Comments. Authors and the Admin delete them; only the Admin can delete the
+// Agent's. The controls sit on the Comment's line and show on hover, or always on a touch screen.
+function CommentList({
+  comments,
+  people,
+  mentionable,
+  agent,
+  handles,
+  meId,
+  isAdmin,
+  cardId,
+}: {
+  comments: Comment[];
+  people: Map<string, Person>;
+  mentionable: User[];
+  agent: AgentProfile;
+  handles: Map<string, string>;
+  meId: string;
+  isAdmin: boolean;
+  cardId: string;
+}) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Comment | null>(null);
   const updateComment = useUpdateComment(cardId);
-  if (comments.length === 0) return <p className="text-[13px] text-ink-faint">No comments yet.</p>;
+  const deleteComment = useDeleteComment(cardId);
+  const closeDelete = () => {
+    setDeleting(null);
+    deleteComment.reset();
+  };
+  const control = "text-ink-faint opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 [li:hover_&]:opacity-100 [@media(hover:none)]:opacity-100";
   return (
-    <ol className="flex flex-col gap-5">
-      {comments.map((c) => {
-        // A kardboard notice, such as a Session that stopped short, is signed by kardboard itself.
-        const author = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? members.get(c.authorId) : undefined;
-        const mine = c.authorKind === "user" && c.authorId === meId;
-        return (
-          <li key={c.id} className="flex gap-3">
-            <Avatar name={author?.name ?? "Unknown"} url={author?.avatarUrl} size={26} tone={c.authorKind === "agent" ? "agent" : "neutral"} className="mt-0.5" />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2 text-[12.5px]">
-                <span className={cx("font-medium", c.authorKind === "agent" ? "text-accent" : "text-ink")}>{author?.name ?? "Unknown"}</span>
-                <span className="text-ink-faint" title={absoluteTime(c.createdAt)}>
-                  {relativeTime(c.createdAt)}
-                </span>
-                {c.editedAt ? <span className="text-ink-faint">edited</span> : null}
-                {mine && editingId !== c.id ? (
-                  <button
-                    type="button"
-                    aria-label="Edit comment"
-                    className="ml-auto text-ink-faint opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 [li:hover_&]:opacity-100 [@media(hover:none)]:opacity-100"
-                    onClick={() => setEditingId(c.id)}
-                  >
-                    Edit
-                  </button>
-                ) : null}
-              </div>
-              {editingId === c.id ? (
-                <div className="mt-1.5">
-                  <Composer
-                    members={[...members.values()]}
-                    agent={agent}
-                    initialBody={c.body}
-                    submitLabel="Save"
-                    allowFiles={false}
-                    autoFocus
-                    onCancel={() => setEditingId(null)}
-                    onSubmit={async (body) => {
-                      await updateComment.mutateAsync({ id: c.id, body });
-                      setEditingId(null);
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="mt-1">
-                  <Markdown body={c.body} handles={handles} />
-                  {c.attachments.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {c.attachments.map((a) => (
-                        <AttachmentView key={a.id} a={a} />
-                      ))}
-                    </div>
+    <>
+      {comments.length === 0 ? <p className="text-[13px] text-ink-faint">No comments yet.</p> : null}
+      <ol className="flex flex-col gap-5">
+        {comments.map((c) => {
+          // A kardboard notice, such as a Session that stopped short, is signed by kardboard itself.
+          const author = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? people.get(c.authorId) : undefined;
+          const mine = c.authorKind === "user" && c.authorId === meId;
+          const canDelete = mine || isAdmin;
+          return (
+            <li key={c.id} className="flex gap-3">
+              <Avatar name={author?.name ?? "Unknown"} url={author?.avatarUrl} size={26} tone={c.authorKind === "agent" ? "agent" : "neutral"} className="mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2 text-[12.5px]">
+                  <span className={cx("font-medium", c.authorKind === "agent" ? "text-accent" : "text-ink")}>{author?.name ?? "Unknown"}</span>
+                  <span className="text-ink-faint" title={absoluteTime(c.createdAt)}>
+                    {relativeTime(c.createdAt)}
+                  </span>
+                  {c.editedAt ? <span className="text-ink-faint">edited</span> : null}
+                  {editingId !== c.id && (mine || canDelete) ? (
+                    <span className="ml-auto flex items-center gap-3">
+                      {mine ? (
+                        <button type="button" aria-label="Edit comment" className={control} onClick={() => setEditingId(c.id)}>
+                          Edit
+                        </button>
+                      ) : null}
+                      {canDelete ? (
+                        <button type="button" aria-label="Delete comment" className={cx(control, "hover:text-danger")} onClick={() => setDeleting(c)}>
+                          Delete
+                        </button>
+                      ) : null}
+                    </span>
                   ) : null}
                 </div>
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+                {editingId === c.id ? (
+                  <div className="mt-1.5">
+                    <Composer
+                      members={mentionable}
+                      agent={agent}
+                      initialBody={c.body}
+                      submitLabel="Save"
+                      allowFiles={false}
+                      autoFocus
+                      onCancel={() => setEditingId(null)}
+                      onSubmit={async (body) => {
+                        await updateComment.mutateAsync({ id: c.id, body });
+                        setEditingId(null);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-1">
+                    <Markdown body={c.body} handles={handles} />
+                    {c.attachments.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {c.attachments.map((a) => (
+                          <AttachmentView key={a.id} a={a} />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      <Dialog open={deleting !== null} onClose={closeDelete} title="Delete this comment?" width={420}>
+        <p className="text-[13px] leading-relaxed text-ink-muted">
+          {deleting?.authorKind === "agent" ? `${agent.name}'s comment` : "The comment"}
+          {deleting?.attachments.length ? " and its attachments are" : " is"} removed for everyone. This cannot be undone.
+        </p>
+        {deleteComment.isError ? (
+          <p role="alert" className="mt-3 text-[13px] text-danger">
+            The comment was not deleted. {deleteComment.error.message}
+          </p>
+        ) : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={closeDelete}>
+            Cancel
+          </Button>
+          <Button variant="danger" loading={deleteComment.isPending} icon={<Trash2 className="size-4" strokeWidth={1.75} />} onClick={() => deleting && deleteComment.mutate(deleting.id, { onSuccess: closeDelete })}>
+            Delete
+          </Button>
+        </div>
+      </Dialog>
+    </>
   );
 }
 
-function NewComment({
-  cardId,
-  members,
-  agent,
-  inputRef,
-  placeholder,
-  onPosted,
-}: {
-  cardId: string;
-  members: User[];
-  agent: AgentProfile;
-  inputRef?: RefObject<HTMLTextAreaElement | null>;
-  placeholder?: string;
-  onPosted?: () => void;
-}) {
+const NewComment = forwardRef<ComposerHandle, { cardId: string; members: User[]; agent: AgentProfile; placeholder?: string; onPosted?: () => void }>(function NewComment(
+  { cardId, members, agent, placeholder, onPosted },
+  ref,
+) {
   const create = useCreateComment(cardId);
   return (
     <div className="mt-5 border-t border-line pt-4">
       <Composer
+        ref={ref}
         members={members}
         agent={agent}
-        inputRef={inputRef}
         placeholder={placeholder}
-        onSubmit={(body, files) =>
-          create.mutateAsync({ body, files }).then(() => {
-            onPosted?.();
-          })
-        }
+        onSubmit={(body, files, onProgress) => create.mutateAsync({ body, files, onProgress }).then(() => onPosted?.())}
       />
     </div>
   );
+});
+
+// A Card's address, for pasting into a chat or an email. Opening it lands on the Card over its Board.
+function CopyLink({ slug, cardId }: { slug: string; cardId: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/b/${slug}/c/${cardId}`);
+      setCopied(true);
+    } catch {
+      toast("The link was not copied. Copy it from the address bar instead.");
+    }
+  };
+  return (
+    <IconButton label={copied ? "Link copied" : "Copy link"} className="size-7" onClick={() => void copy()}>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span key={copied ? "done" : "link"} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }} transition={{ duration: 0.12 }} className="inline-flex">
+          {copied ? <Check className="size-4 text-ok" strokeWidth={2} /> : <Link2 className="size-4" strokeWidth={1.75} />}
+        </motion.span>
+      </AnimatePresence>
+      <span className="sr-only" aria-live="polite">
+        {copied ? "Link copied" : ""}
+      </span>
+    </IconButton>
+  );
+}
+
+function DropHint({ show }: { show: boolean }) {
+  return (
+    <AnimatePresence>
+      {show ? (
+        <motion.div
+          key="drop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.12 }}
+          className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-card border border-dashed border-accent/60 bg-surface/90 text-[13px] font-medium text-accent"
+        >
+          <Upload className="mr-2 size-4" strokeWidth={1.75} />
+          Drop to attach to your comment
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+// When the Agent's question is the last word on a Blocked Card it comes first, where nobody can miss
+// it, with a way straight to the reply box. The same Comment stays in the thread below.
+function BlockedQuestion({ card, comments, agent, handles, onReply }: { card: Card; comments: Comment[] | undefined; agent: AgentProfile; handles: Map<string, string>; onReply: () => void }) {
+  const reduce = useReducedMotion();
+  const question = card.column === "blocked" && card.awaitingReply ? [...(comments ?? [])].reverse().find((c) => c.authorKind === "agent") : undefined;
+  return (
+    <AnimatePresence initial={false}>
+      {question ? (
+        <motion.section
+          key="question"
+          aria-label={`${agent.name} is asking`}
+          initial={reduce ? false : { opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          className="mx-6 mt-4 rounded-card border border-warn/30 bg-[rgba(217,178,108,0.07)] px-4 py-3.5"
+        >
+          <div className="flex items-center gap-2">
+            <Avatar name={agent.name} url={agent.avatarUrl} size={22} tone="agent" />
+            <p className="text-[13px] font-medium text-warn">{agent.name} is asking:</p>
+            <span className="ml-auto text-[11.5px] text-ink-faint" title={absoluteTime(question.createdAt)}>
+              {relativeTime(question.createdAt)}
+            </span>
+          </div>
+          <ClampedMarkdown body={question.body} handles={handles} />
+          <Button size="sm" variant="primary" className="mt-3" icon={<Reply className="size-3.5" strokeWidth={2} />} onClick={onReply}>
+            Reply
+          </Button>
+        </motion.section>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+// A long question is cut to a few lines, fading out, with a control to read the rest in place.
+function ClampedMarkdown({ body, handles }: { body: string; handles: Map<string, string> }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  const [open, setOpen] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [body, open]);
+  return (
+    <>
+      <div ref={box} className={cx("mt-2 overflow-hidden", !open && "max-h-40", !open && overflows && "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}>
+        <Markdown body={body} handles={handles} />
+      </div>
+      {overflows || open ? (
+        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="mt-1 text-[12px] text-ink-muted transition-colors hover:text-ink">
+          {open ? "Show less" : "Read the whole question"}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+const PROVIDER_LABELS: Record<Provider, string> = { claude: "Claude Code", codex: "Codex" };
+
+function pieces(p: Record<string, unknown>): string {
+  const n = Array.isArray(p.children) ? p.children.length : 0;
+  return n === 1 ? "the one piece of this request is finished" : `all ${n} pieces of this request are finished`;
 }
 
 const ACTIVITY_LABEL: Record<string, (p: Record<string, unknown>) => string> = {
@@ -541,9 +718,15 @@ const ACTIVITY_LABEL: Record<string, (p: Record<string, unknown>) => string> = {
   "card.merge_retried": () => "tried the merge again",
   "pull_request.closed": (p) => `saw pull request #${p.prNumber as number} closed on GitHub without a merge`,
   "pull_request.head_changed": (p) => `saw new commits on pull request #${p.prNumber as number}`,
+  "session.reported": (p) => `reported${p.summary ? `: ${p.summary as string}` : ""}`,
+  "session.provider_fallback": (p) => `moved the work from ${PROVIDER_LABELS[p.from as Provider] ?? p.from} to ${PROVIDER_LABELS[p.to as Provider] ?? p.to}, which had usage left`,
+  "preview.requested": () => "started building a preview",
+  "card.merged": (p) => `merged pull request${p.prNumber ? ` #${p.prNumber as number}` : ""}`,
+  "card.children_done": (p) => `noted that ${pieces(p)}`,
+  "comment.deleted": () => "deleted a comment",
 };
 
-function Activity({ entries, members, agentName }: { entries: ActivityEntry[]; members: Map<string, User>; agentName: string }) {
+function Activity({ entries, people, agentName }: { entries: ActivityEntry[]; people: Map<string, Person>; agentName: string }) {
   const [open, setOpen] = useState(false);
   const visible = entries.filter((e) => e.type !== "comment.posted" && e.type !== "comment.edited");
   if (visible.length === 0) return null;
@@ -558,7 +741,7 @@ function Activity({ entries, members, agentName }: { entries: ActivityEntry[]; m
       {open ? (
         <ol className="mt-3 flex flex-col gap-1.5 text-[12.5px] text-ink-muted">
           {visible.map((e) => {
-            const who = e.actorKind === "agent" ? agentName : e.actorKind === "system" ? "kardboard" : e.actorId ? (members.get(e.actorId)?.name ?? "Someone") : "Someone";
+            const who = e.actorKind === "agent" ? agentName : e.actorKind === "system" ? "kardboard" : e.actorId ? (people.get(e.actorId)?.name ?? "Someone") : "Someone";
             const label = ACTIVITY_LABEL[e.type]?.(e.payload) ?? e.type;
             return (
               <li key={e.id} className="flex gap-2">

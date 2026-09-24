@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Archive, ArrowUpRight, Check, CircleCheck, CircleDashed, CircleHelp, CircleMinus, CircleX, MessageSquarePlus, RotateCcw, TriangleAlert, type LucideIcon } from "lucide-react";
-import { describeChecks, type Approval, type Card, type CheckState, type ChecksSummary, type User } from "@kardboard/shared";
+import { describeChecks, type Approval, type Card, type CheckState, type ChecksSummary, type Person } from "@kardboard/shared";
 import { Button, cx } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { relativeTime } from "../../lib/format";
@@ -29,7 +29,7 @@ export function ReviewBlock({
   card: Card;
   agentName: string;
   approvals: Approval[];
-  members: Map<string, User>;
+  members: Map<string, Person>;
   isAdmin: boolean;
   onRequestChanges: () => void;
 }) {

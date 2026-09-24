@@ -78,6 +78,13 @@
       "when": 1790259183176,
       "tag": "0010_preview-sha",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790259389188,
+      "tag": "0011_user-preferences",
+      "breakpoints": true
     }
   ]
 }

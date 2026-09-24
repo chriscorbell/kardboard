@@ -5,7 +5,7 @@ import { keys, upsertCardInBoard, upsertSessionInBoard } from "./api";
 import { useAuth } from "./auth";
 import { reconnectDelay } from "./backoff";
 
-const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "session.updated", "board.updated"] as const;
+const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comment.removed", "session.updated", "board.updated"] as const;
 
 // Server-sent events keep the board query fresh without polling. Clerk mode cannot set headers on
 // EventSource, so it falls back to a token query parameter over the same origin.
@@ -36,8 +36,18 @@ export function useBoardEvents(slug: string | undefined) {
         case "card.removed":
           qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, cards: v.cards.filter((c) => c.id !== event.cardId) } : v));
           break;
-        case "comment.upserted":
+        case "comment.upserted": {
           void qc.invalidateQueries({ queryKey: keys.card(event.comment.cardId) });
+          // Someone the board has not named yet, such as a Member added since it loaded: re-read the
+          // board so their Comment is signed with their name.
+          const authorId = event.comment.authorKind === "user" ? event.comment.authorId : null;
+          const view = qc.getQueryData<BoardView>(keys.board(slug));
+          if (authorId && view && !view.people.some((p) => p.id === authorId)) void qc.invalidateQueries({ queryKey: keys.board(slug) });
+          break;
+        }
+        // Dropped from the open sheet at once: a deleted Comment is often one nobody should keep reading.
+        case "comment.removed":
+          qc.setQueryData<CardDetail>(keys.card(event.cardId), (d) => (d ? { ...d, comments: d.comments.filter((c) => c.id !== event.commentId) } : d));
           break;
         case "session.updated":
           upsertSessionInBoard(qc, slug, event.session);

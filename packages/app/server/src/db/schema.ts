@@ -12,6 +12,12 @@ export const users = sqliteTable("users", {
   role: text("role", { enum: ["admin", "member"] }).notNull().default("member"),
   status: text("status", { enum: ["invited", "active", "revoked"] }).notNull().default("invited"),
   clerkUserId: text("clerk_user_id").unique(),
+  // How much this User wants by email: everything, only what asks something of them, or nothing.
+  // The bell records every notification whichever they choose.
+  emailPreference: text("email_preference", { enum: ["all", "important", "off"] }).notNull().default("all"),
+  // When the User dismissed the board explainer. Kept here rather than in the browser, since
+  // clients move between a laptop and a phone.
+  onboardedAt: text("onboarded_at"),
   createdAt: text("created_at").notNull().$defaultFn(now),
 });
 
@@ -199,7 +205,8 @@ export const events = sqliteTable(
   (t) => [index("events_card_idx").on(t.cardId), index("events_board_idx").on(t.boardId)],
 );
 
-// One row per thing that also sends the user an email, kept so the bell can show it in the app.
+// One row per thing a user is notified of, kept so the bell can show it in the app. Whether an email
+// goes with it is the user's email preference.
 export const notifications = sqliteTable(
   "notifications",
   {

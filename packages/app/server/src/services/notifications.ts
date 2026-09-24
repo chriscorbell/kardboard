@@ -3,7 +3,9 @@ import {
   COLUMN_LABELS,
   type Board,
   type Card,
+  type Column,
   type Comment,
+  type EmailPreference,
   type Notification,
   type NotificationKind,
   type NotificationsView,
@@ -14,7 +16,7 @@ import { env } from "../env.js";
 import { newId } from "../ids.js";
 import type { Actor } from "./events.js";
 import { canAccessBoard, getBoardById } from "./boards.js";
-import { getUser } from "./users.js";
+import { getPreferences, getUser } from "./users.js";
 import { getAgentProfile } from "./settings.js";
 import { queueEmail } from "./email.js";
 
@@ -38,7 +40,22 @@ export async function canBeNotified(user: User, boardId: string): Promise<boolea
   return user.status !== "revoked" && (await canAccessBoard(user, boardId));
 }
 
-// One notification is one row plus one email, so the bell and the inbox never disagree.
+// The moves that ask something of the Card's creator, or close the loop on it. The rest (a Card
+// going to Ready, or a Session picking it up) are the Agent's bookkeeping, and three to five emails
+// a Card taught people to ignore all of them.
+const MOVES_WORTH_NOTICE: ReadonlySet<Column> = new Set(["blocked", "review", "done"]);
+
+// Whether a notification also goes out by email. The bell records it either way. "important" keeps
+// what asks something of the reader: a Mention, a failed Session, and a Card moving to Blocked (a
+// question) or Review (a change to look at). A kind added later is routine until it is listed here.
+export function emailWanted(preference: EmailPreference, n: { kind: string; column: Column }): boolean {
+  if (preference === "off") return false;
+  if (preference === "all") return true;
+  if (n.kind === "mention" || n.kind === "session_failed") return true;
+  return n.kind === "card_moved" && (n.column === "blocked" || n.column === "review");
+}
+
+// One notification is one row, plus an email when the User wants that kind by email.
 async function notify(input: {
   userId: string;
   card: Card;
@@ -63,6 +80,8 @@ async function notify(input: {
     actorName: input.actor.name,
     actorAvatarUrl: input.actor.avatarUrl,
   });
+  const { emailPreference } = await getPreferences(input.userId);
+  if (!emailWanted(emailPreference, { kind: input.kind, column: input.card.column })) return;
   await queueEmail({
     toUserId: input.userId,
     subject: input.emailSubject,
@@ -73,8 +92,10 @@ async function notify(input: {
   });
 }
 
-// The Card's creator hears about column moves they did not make themselves.
+// The Card's creator hears about column moves they did not make themselves, when the move is one
+// that asks something of them or finishes the Card.
 export async function notifyCardMoved(card: Card, from: Card["column"], actor: Actor): Promise<void> {
+  if (!MOVES_WORTH_NOTICE.has(card.column)) return;
   if (card.creatorKind !== "user" || !card.creatorId) return;
   if (actor.kind === "user" && actor.id === card.creatorId) return;
   const board = await getBoardById(card.boardId);
@@ -146,6 +167,17 @@ export async function notifyMentions(card: Card, comment: Comment, userIds: stri
     .where(and(eq(schema.mentions.commentId, comment.id), inArray(schema.mentions.userId, userIds)));
 }
 
+// A deleted Comment's words also sit in the notifications that quoted it. A notification does not
+// record which Comment it came from, so it is matched by Card and by the preview it kept of any
+// version of the Comment's body.
+export async function forgetMentionNotifications(cardId: string, bodies: string[]): Promise<void> {
+  const previews = [...new Set(bodies.map((b) => b.slice(0, PREVIEW_CHARS)))];
+  if (previews.length === 0) return;
+  await db
+    .delete(schema.notifications)
+    .where(and(eq(schema.notifications.cardId, cardId), eq(schema.notifications.kind, "mention"), inArray(schema.notifications.body, previews)));
+}
+
 // A user who has lost access to a board must stop seeing its cards, including in the bell.
 async function visibleBoardIds(user: User): Promise<string[] | null> {
   if (user.role === "admin") return null;
@@ -206,5 +238,14 @@ export async function markNotificationsRead(user: User, ids?: string[]): Promise
       .set({ readAt: new Date().toISOString() })
       .where(and(target, isNull(schema.notifications.readAt)));
   }
+  return listNotifications(user);
+}
+
+// Opening a Card is reading what the bell had to say about it.
+export async function markCardNotificationsRead(user: User, cardId: string): Promise<NotificationsView> {
+  await db
+    .update(schema.notifications)
+    .set({ readAt: new Date().toISOString() })
+    .where(and(eq(schema.notifications.userId, user.id), eq(schema.notifications.cardId, cardId), isNull(schema.notifications.readAt)));
   return listNotifications(user);
 }

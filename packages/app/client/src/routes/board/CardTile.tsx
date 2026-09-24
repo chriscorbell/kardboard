@@ -1,6 +1,6 @@
 import { forwardRef, type HTMLAttributes } from "react";
-import { GitPullRequest, MessageSquare, Pause, RotateCcw } from "lucide-react";
-import type { AgentProfile, Card, User, WaitingReason } from "@kardboard/shared";
+import { GitPullRequest, MessageCircleQuestion, MessageSquare, Pause, RotateCcw } from "lucide-react";
+import type { AgentProfile, Card, Person, WaitingReason } from "@kardboard/shared";
 import { Avatar, cx } from "../../components/ui";
 import { tileWaiting } from "./sessionStatus";
 
@@ -30,7 +30,7 @@ export function WaitingMark({ reason, className }: { reason: WaitingReason; clas
 
 type Props = HTMLAttributes<HTMLDivElement> & {
   card: Card;
-  creator: User | undefined;
+  creator: Person | undefined;
   agent: AgentProfile;
   dragging?: boolean;
   overlay?: boolean;
@@ -53,6 +53,12 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
       {...rest}
     >
       <p className="line-clamp-3 text-[13.5px] font-medium leading-snug text-ink">{card.title}</p>
+      {card.column === "blocked" && card.awaitingReply ? (
+        <p className="mt-1.5 flex items-center gap-1 text-[12px] font-medium text-warn" title={`${agent.name} asked a question`}>
+          <MessageCircleQuestion className="size-3.5 shrink-0" strokeWidth={1.75} />
+          Needs your answer
+        </p>
+      ) : null}
       <div className="mt-2 flex items-center gap-2.5 text-[12px] text-ink-faint">
         {priority ? <span className={cx("font-medium", priority.className)}>{priority.label}</span> : null}
         {card.commentCount > 0 ? (

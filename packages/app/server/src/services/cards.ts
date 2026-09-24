@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Card, CardPreview, CardWaiting, ChecksSummary, Column, Priority, SessionSummary } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
@@ -50,6 +50,7 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
   const waitingMap = await waitingFor(rows, activeMap, lastMap);
   const previews = await db.select().from(schema.previews).where(inArray(schema.previews.cardId, ids));
   const previewMap = new Map<string, CardPreview>(previews.map((p) => [p.cardId, { status: p.status, error: p.error, sha: p.sha, updatedAt: p.updatedAt }]));
+  const awaiting = await awaitingReply(rows.filter((r) => r.column === "blocked").map((r) => r.id));
   return rows.map((r) => ({
     id: r.id,
     boardId: r.boardId,
@@ -76,6 +77,7 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     lastSession: lastMap.get(r.id) ?? null,
     waiting: waitingMap.get(r.id) ?? null,
     pendingRerun: r.pendingRerun,
+    awaitingReply: awaiting.has(r.id),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   }));
@@ -118,6 +120,26 @@ async function waitingFor(
     });
     if (state) out.set(r.id, state);
   }
+  return out;
+}
+
+// Of these Blocked Cards, the ones whose last word is the Agent's: its question, still unanswered.
+// kardboard's own system Comments are notices rather than a reply, so they are passed over. Two
+// Comments written in the same millisecond both count as last, and a person's among them is a reply.
+async function awaitingReply(blockedIds: string[]): Promise<Set<string>> {
+  if (blockedIds.length === 0) return new Set();
+  const last = await db
+    .select({ cardId: schema.comments.cardId, authorKind: schema.comments.authorKind })
+    .from(schema.comments)
+    .where(
+      and(
+        inArray(schema.comments.cardId, blockedIds),
+        ne(schema.comments.authorKind, "system"),
+        sql`not exists (select 1 from comments later where later.card_id = ${schema.comments.cardId} and later.author_kind != 'system' and later.created_at > ${schema.comments.createdAt})`,
+      ),
+    );
+  const out = new Set(last.filter((c) => c.authorKind === "agent").map((c) => c.cardId));
+  for (const c of last) if (c.authorKind === "user") out.delete(c.cardId);
   return out;
 }
 

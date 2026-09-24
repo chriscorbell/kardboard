@@ -14,6 +14,7 @@ import type {
   SessionTranscript,
   Settings,
   UpdateCardInput,
+  UpdateMeInput,
   User,
 } from "@kardboard/shared";
 import { useRef } from "react";
@@ -27,8 +28,9 @@ export function setTokenProvider(fn: () => Promise<string | null>) {
 
 export { ApiError };
 
-// Every call to the API goes through here, files included: the server authenticates the bearer
-// token and nothing else, so a plain <img src> or <a href> to /api is refused in production.
+// Every call to the API goes through here, or through uploadFile below, which sets the same header:
+// the server authenticates the bearer token and nothing else, so a plain <img src> or <a href> to
+// /api is refused in production.
 async function send(path: string, init: RequestInit): Promise<Response> {
   const token = await tokenProvider();
   const headers = new Headers(init.headers);
@@ -52,6 +54,38 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   if (res.status === 204) return undefined as T;
   if (!res.ok) throw await failure(res);
   return (await res.json().catch(() => ({}))) as T;
+}
+
+// An upload that reports how far it has got. fetch cannot say how much of a body it has sent, and a
+// 25 MB video over a phone connection is long enough that someone should see it moving.
+export async function uploadFile<T>(path: string, file: File, onProgress?: (fraction: number) => void): Promise<T> {
+  const token = await tokenProvider();
+  const form = new FormData();
+  form.append("file", file);
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api${path}`);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      let data: unknown = {};
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        // A proxy's HTML error page: the status still says what happened.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(1);
+        resolve(data as T);
+      } else {
+        reject(new ApiError(xhr.status, errorCode(data, xhr.status), data));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError(NO_RESPONSE, "network", null));
+    xhr.send(form);
+  });
 }
 
 export async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
@@ -222,21 +256,24 @@ export function useSetBoardPaused(slug: string) {
   });
 }
 
+export type UploadProgress = (file: File, fraction: number) => void;
+
+// The requests that post a Comment on a Card and upload its files, reporting each file's progress.
+export function commentRequests(cardId: string, opts: { silent?: boolean; onProgress?: UploadProgress } = {}): CommentRequests<File> {
+  return {
+    create: (text) => request<Comment>(`/cards/${cardId}/comments`, { method: "POST", body: JSON.stringify({ body: text, ...(opts.silent ? { silent: true } : {}) }) }),
+    edit: (id, text) => request<Comment>(`/comments/${id}`, { method: "PATCH", body: JSON.stringify({ body: text }) }),
+    upload: (id, file) => uploadFile(`/comments/${id}/attachments`, file, (fraction) => opts.onProgress?.(file, fraction)),
+  };
+}
+
 export function useCreateComment(cardId: string) {
   const qc = useQueryClient();
   // What a failed attempt already posted, so pressing Post again finishes it instead of duplicating it.
   const progress = useRef<PostProgress<File> | null>(null);
   return useMutation({
-    mutationFn: async ({ body, files }: { body: string; files: File[] }) => {
-      const requests: CommentRequests<File> = {
-        create: (text) => request<Comment>(`/cards/${cardId}/comments`, { method: "POST", body: JSON.stringify({ body: text }) }),
-        edit: (id, text) => request<Comment>(`/comments/${id}`, { method: "PATCH", body: JSON.stringify({ body: text }) }),
-        upload: (id, file) => {
-          const fd = new FormData();
-          fd.append("file", file);
-          return request(`/comments/${id}/attachments`, { method: "POST", body: fd });
-        },
-      };
+    mutationFn: async ({ body, files, onProgress }: { body: string; files: File[]; onProgress?: UploadProgress }) => {
+      const requests = commentRequests(cardId, { onProgress });
       try {
         await postComment(requests, body, files, progress.current, (p) => (progress.current = p));
       } catch (err) {
@@ -255,6 +292,35 @@ export function useUpdateComment(cardId: string) {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: string }) => request<Comment>(`/comments/${id}`, { method: "PATCH", body: JSON.stringify({ body }) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: keys.card(cardId) }),
+  });
+}
+
+// The author or the Admin removes a Comment for good. The sheet drops it at once; the event stream
+// tells everyone else.
+export function useDeleteComment(cardId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<void>(`/comments/${id}`, { method: "DELETE" }),
+    onSuccess: (_r, id) => qc.setQueryData<CardDetail>(keys.card(cardId), (d) => (d ? { ...d, comments: d.comments.filter((c) => c.id !== id) } : d)),
+    onSettled: () => void qc.invalidateQueries({ queryKey: keys.card(cardId) }),
+  });
+}
+
+// Opening a Card reads whatever the bell held about it.
+export function useMarkCardRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cardId: string) => request<NotificationsView>(`/cards/${cardId}/read`, { method: "POST" }),
+    onSuccess: (view) => qc.setQueryData(keys.notifications, view),
+  });
+}
+
+// The caller's own settings: how much email, and whether the board explainer has been dismissed.
+export function useUpdateMe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateMeInput) => request<Me>("/me", { method: "PATCH", body: JSON.stringify(input) }),
+    onSuccess: (me) => qc.setQueryData(keys.me, me),
   });
 }
 

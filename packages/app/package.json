@@ -17,14 +17,16 @@
     "seed": "tsx server/src/seed.ts"
   },
   "dependencies": {
-    "@kardboard/shared": "workspace:*",
     "@clerk/backend": "^2.7.0",
     "@hono/node-server": "^1.14.0",
     "@hono/zod-validator": "^0.5.0",
+    "@kardboard/shared": "workspace:*",
     "@libsql/client": "^0.15.9",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "drizzle-orm": "^0.44.2",
     "hono": "^4.7.11",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
     "nanoid": "^5.1.5",
     "zod": "^3.24.1"
   },

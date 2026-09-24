@@ -12,7 +12,7 @@ process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_PUBLIC_URL = "https://kardboard.test";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
-const { listNotifications, markNotificationsRead, notifyCardMoved, notifyMentions } = await import("../src/services/notifications.js");
+const { emailWanted, listNotifications, markCardNotificationsRead, markNotificationsRead, notifyCardMoved, notifyMentions } = await import("../src/services/notifications.js");
 const { createComment } = await import("../src/services/comments.js");
 
 await runMigrations();
@@ -274,5 +274,100 @@ describe("deleting a card", () => {
     await db.delete(schema.cards).where(eq(schema.cards.id, card.id));
 
     assert.deepEqual(await listNotifications(ada), { unread: 0, notifications: [] });
+  });
+});
+
+describe("which moves are worth a notification", () => {
+  it("tells the creator only about moves into Blocked, Review, or Done", async () => {
+    const creator = await member("Ada");
+    const card = await makeCard(BOARD, creator);
+    for (const to of ["ready", "in_progress", "inbox", "blocked", "review", "done"] as const) {
+      await notifyCardMoved({ ...card, column: to }, "inbox", { kind: "agent", id: null });
+    }
+    const titles = (await listNotifications(creator)).notifications.map((x) => x.title).sort();
+    assert.deepEqual(titles, ["Milo moved your card to Blocked", "Milo moved your card to Done", "Milo moved your card to Review"]);
+  });
+});
+
+describe("email preferences", () => {
+  async function emailSubjects(user: User): Promise<string[]> {
+    return (await db.select().from(schema.outboundEmails).where(eq(schema.outboundEmails.toUserId, user.id))).map((e) => e.subject).sort();
+  }
+  async function prefer(user: User, emailPreference: "all" | "important" | "off") {
+    await db.update(schema.users).set({ emailPreference }).where(eq(schema.users.id, user.id));
+  }
+
+  it("decides by kind, and by where a moved card went", () => {
+    for (const kind of ["mention", "session_failed", "card_moved"]) {
+      assert.equal(emailWanted("all", { kind, column: "done" }), true);
+      assert.equal(emailWanted("off", { kind, column: "blocked" }), false);
+    }
+    assert.equal(emailWanted("important", { kind: "mention", column: "done" }), true);
+    assert.equal(emailWanted("important", { kind: "session_failed", column: "in_progress" }), true);
+    assert.equal(emailWanted("important", { kind: "card_moved", column: "blocked" }), true);
+    assert.equal(emailWanted("important", { kind: "card_moved", column: "review" }), true);
+    assert.equal(emailWanted("important", { kind: "card_moved", column: "done" }), false);
+    assert.equal(emailWanted("important", { kind: "something_new", column: "review" }), false);
+  });
+
+  it("still records every notification in the bell when email is off", async () => {
+    const creator = await member("Ada");
+    const author = await member("Grace");
+    await prefer(creator, "off");
+    const card = await makeCard(BOARD, creator, "Quiet card");
+
+    await notifyCardMoved({ ...card, column: "review" }, "inbox", { kind: "user", id: author.id });
+    const c = comment(card.id, author, `@${creator.handle} look`);
+    await db.insert(schema.comments).values({ id: c.id, cardId: card.id, authorKind: "user", authorId: author.id, body: c.body });
+    await notifyMentions(card, c, [creator.id], { kind: "user", id: author.id });
+
+    assert.equal((await listNotifications(creator)).unread, 2);
+    assert.deepEqual(await emailSubjects(creator), []);
+  });
+
+  it("emails only what asks something of the reader when set to important", async () => {
+    const creator = await member("Ada");
+    const author = await member("Grace");
+    await prefer(creator, "important");
+    const card = await makeCard(BOARD, creator, "Pick a colour");
+
+    await notifyCardMoved({ ...card, column: "blocked" }, "inbox", { kind: "agent", id: null });
+    await notifyCardMoved({ ...card, column: "review" }, "blocked", { kind: "agent", id: null });
+    await notifyCardMoved({ ...card, column: "done" }, "review", { kind: "user", id: author.id });
+    const c = comment(card.id, author, `@${creator.handle} thanks`);
+    await db.insert(schema.comments).values({ id: c.id, cardId: card.id, authorKind: "user", authorId: author.id, body: c.body });
+    await notifyMentions(card, c, [creator.id], { kind: "user", id: author.id });
+
+    assert.equal((await listNotifications(creator)).unread, 4);
+    assert.deepEqual(await emailSubjects(creator), ['"Pick a colour" moved to Blocked', '"Pick a colour" moved to Review', 'Grace mentioned you on "Pick a colour"'].sort());
+  });
+
+  it("emails everything by default", async () => {
+    const creator = await member("Ada");
+    const card = await makeCard(BOARD, creator, "Ship it");
+
+    await notifyCardMoved({ ...card, column: "done" }, "review", { kind: "agent", id: null });
+
+    assert.deepEqual(await emailSubjects(creator), ['"Ship it" moved to Done']);
+  });
+});
+
+describe("markCardNotificationsRead", () => {
+  it("marks the opened card's notifications read, and nothing else", async () => {
+    const ada = await member("Ada");
+    const grace = await member("Grace");
+    const opened = await makeCard(BOARD, ada, "opened");
+    const other = await makeCard(BOARD, ada, "other");
+    const gracesCard = await makeCard(BOARD, grace, "hers");
+    await notifyCardMoved({ ...opened, column: "review" }, "inbox", { kind: "agent", id: null });
+    await notifyCardMoved({ ...opened, column: "blocked" }, "review", { kind: "agent", id: null });
+    await notifyCardMoved({ ...other, column: "review" }, "inbox", { kind: "agent", id: null });
+    await notifyCardMoved({ ...gracesCard, column: "review" }, "inbox", { kind: "agent", id: null });
+
+    const view = await markCardNotificationsRead(ada, opened.id);
+
+    assert.equal(view.unread, 1);
+    assert.deepEqual(view.notifications.filter((x) => x.readAt === null).map((x) => x.cardTitle), ["other"]);
+    assert.equal((await listNotifications(grace)).unread, 1);
   });
 });

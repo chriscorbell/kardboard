@@ -1,5 +1,7 @@
 // The Composer's keyboard rules, kept apart from the component so they can be tested directly.
 // Enter posts; Shift+Enter breaks the line. While the @mention list is open, Enter picks instead.
+// On a touch screen Enter breaks the line and the Post button posts: a phone keyboard has no
+// Shift+Enter, so otherwise nobody on a phone could write a second paragraph.
 
 export type ComposerKey = {
   key: string;
@@ -17,7 +19,7 @@ export type ComposerAction = { type: "mention-move"; delta: 1 | -1 } | { type: "
 // Null means the key belongs to the textarea: a plain character, or Shift+Enter's line break.
 export type ComposerKeyResult = { action: ComposerAction; preventDefault: boolean } | null;
 
-export function composerKeyAction(e: ComposerKey, state: { mentionOpen: boolean; canCancel: boolean }): ComposerKeyResult {
+export function composerKeyAction(e: ComposerKey, state: { mentionOpen: boolean; canCancel: boolean; touch?: boolean }): ComposerKeyResult {
   // Let the input method editor have every key it is composing with, including Enter.
   if (e.isComposing || e.key === "Process") return null;
 
@@ -31,6 +33,8 @@ export function composerKeyAction(e: ComposerKey, state: { mentionOpen: boolean;
 
   if (e.key === "Enter") {
     if (e.shiftKey || e.altKey) return null;
+    // A tablet with a keyboard attached still posts on Cmd+Enter or Ctrl+Enter.
+    if (state.touch && !e.metaKey && !e.ctrlKey) return null;
     return { action: { type: "submit" }, preventDefault: true };
   }
 
