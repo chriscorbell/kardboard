@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pause, Plus } from "lucide-react";
-import type { Board } from "@kardboard/shared";
+import { Pause, Plus, Trash2 } from "lucide-react";
+import type { Board, BoardDeletionImpact } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminUsers, useMe, type AdminBoard } from "../../lib/api";
 import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
 import { slugDraft, slugify } from "./slug";
+import { canDelete, deletionContents } from "./boardDeletion";
+import { toast } from "../../lib/toast";
 
 type Draft = {
   name: string;
@@ -35,6 +38,7 @@ export function BoardsTab() {
   const agentName = useMe().data?.agent.name ?? "The agent";
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AdminBoard | "new" | null>(null);
+  const [deleting, setDeleting] = useState<AdminBoard | null>(null);
   const [draft, setDraft] = useState<Draft>(empty);
   // A new board's slug follows its name until the slug is typed into by hand.
   const [slugTyped, setSlugTyped] = useState(false);
@@ -222,16 +226,31 @@ export function BoardsTab() {
             )}
           </div>
           {save.isError ? <p className="text-[13px] text-danger">{save.error.message}</p> : null}
-          <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" loading={save.isPending}>
-              {editing === "new" ? "Create board" : "Save changes"}
-            </Button>
+          <div className="flex items-center gap-2 pt-1">
+            {editing && editing !== "new" ? (
+              <Button type="button" variant="ghost" className="-ml-2 text-danger hover:bg-[rgba(217,130,116,0.1)] hover:text-danger" icon={<Trash2 className="size-4" strokeWidth={1.75} />} onClick={() => setDeleting(editing)}>
+                Delete board
+              </Button>
+            ) : null}
+            <div className="ml-auto flex gap-2">
+              <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" loading={save.isPending}>
+                {editing === "new" ? "Create board" : "Save changes"}
+              </Button>
+            </div>
           </div>
         </form>
       </Dialog>
+      <DeleteBoardDialog
+        board={deleting}
+        onClose={() => setDeleting(null)}
+        onDeleted={() => {
+          setDeleting(null);
+          setEditing(null);
+        }}
+      />
     </>
   );
 }
@@ -246,5 +265,96 @@ function GitHubStatus({ boardId }: { boardId: string }) {
       <Chip tone={tone(q.data.sessions)}>sessions {q.data.sessions}</Chip>
       <Chip tone={tone(q.data.merge)}>merge {q.data.merge}</Chip>
     </div>
+  );
+}
+
+// Deleting names the Board twice: once by opening this from its settings, once by typing its slug.
+function DeleteBoardDialog({ board, onClose, onDeleted }: { board: AdminBoard | null; onClose: () => void; onDeleted: () => void }) {
+  // The last Board shown stays through the closing animation, so the dialog does not empty as it
+  // fades; each opening starts the form afresh.
+  const [shown, setShown] = useState(board);
+  const [opening, setOpening] = useState(0);
+  useEffect(() => {
+    if (!board) return;
+    setShown(board);
+    setOpening((n) => n + 1);
+  }, [board]);
+  return (
+    <Dialog open={board !== null} onClose={onClose} title="Delete board" width={480}>
+      {shown ? <DeleteBoardForm key={opening} board={shown} onClose={onClose} onDeleted={onDeleted} /> : null}
+    </Dialog>
+  );
+}
+
+function DeleteBoardForm({ board, onClose, onDeleted }: { board: AdminBoard; onClose: () => void; onDeleted: () => void }) {
+  const qc = useQueryClient();
+  const [typed, setTyped] = useState("");
+  const impact = useQuery({
+    queryKey: ["admin", "board-deletion", board.id],
+    queryFn: () => request<BoardDeletionImpact>(`/admin/boards/${board.id}/deletion`),
+    // Asked again at every opening: a Session may have started or ended since.
+    gcTime: 0,
+  });
+  const remove = useMutation({
+    mutationFn: () => request(`/admin/boards/${board.id}`, { method: "DELETE", body: JSON.stringify({ slug: typed.trim() }) }),
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: keys.board(board.slug) });
+      for (const key of [keys.adminBoards, keys.boards, keys.adminSessions, keys.adminUsage, keys.adminBackups]) void qc.invalidateQueries({ queryKey: key });
+      toast(`Deleted ${board.name}.`);
+      onDeleted();
+    },
+  });
+  const ready = canDelete(impact.data, typed, board.slug);
+  const contents = impact.data ? deletionContents(impact.data) : null;
+  const running = impact.data?.activeSessions ?? 0;
+  return (
+    <form
+      className="flex flex-col gap-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) remove.mutate();
+      }}
+    >
+      {impact.isPending ? (
+        <Skeleton className="h-16" />
+      ) : !impact.data ? (
+        <ErrorState title="Could not check what this board holds." error={impact.error} onRetry={() => void impact.refetch()} retrying={impact.isFetching} />
+      ) : (
+        <div className="flex flex-col gap-2 text-[13.5px] leading-relaxed text-ink-muted">
+          <p>
+            <span className="font-medium text-ink">{board.name}</span>{" "}
+            {contents ? <>will be deleted with everything on it: {contents}, and its sessions and activity.</> : <>has no cards yet. Its settings and members will be deleted.</>}
+          </p>
+          <p>A snapshot is taken first, so it can be restored from Backups. The repository on GitHub is not touched.</p>
+        </div>
+      )}
+      {running > 0 ? (
+        <p className="rounded-control border border-warn/30 bg-[rgba(217,178,108,0.07)] px-3 py-2.5 text-[13px] leading-relaxed text-ink">
+          {running === 1 ? "A session is" : `${running} sessions are`} still running here.{" "}
+          <Link to={`/admin/sessions?board=${encodeURIComponent(board.id)}&status=active`} className="text-accent underline decoration-accent/40 underline-offset-[3px] hover:decoration-accent">
+            Cancel {running === 1 ? "it" : "them"} in Sessions
+          </Link>{" "}
+          or wait for {running === 1 ? "it" : "them"} to finish.
+        </p>
+      ) : null}
+      <Field
+        label={
+          <>
+            Type <span className="font-mono text-ink">{board.slug}</span> to confirm
+          </>
+        }
+      >
+        <Input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} autoCapitalize="off" className="font-mono text-[13px]" />
+      </Field>
+      {remove.isError ? <p className="text-[13px] text-danger">{remove.error.message}</p> : null}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="danger" icon={<Trash2 className="size-4" strokeWidth={1.75} />} loading={remove.isPending} disabled={!ready}>
+          Delete board
+        </Button>
+      </div>
+    </form>
   );
 }

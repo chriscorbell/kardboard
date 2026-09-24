@@ -107,7 +107,7 @@ In the app a bell beside the avatar carries a badge with the unread count and op
 ## Admin panel, v1 scope
 
 - Users: invite, revoke, grant and remove Board membership.
-- Boards: create, repository URL, GitHub App installation status for both apps, preview mode, Provider, model, reasoning level, image override, concurrency caps, prompt append text, pause. The Admin can also pause and resume a Board from its page.
+- Boards: create, repository URL, GitHub App installation status for both apps, preview mode, Provider, model, reasoning level, image override, concurrency caps, prompt append text, pause, delete. The Admin can also pause and resume a Board from its page. Deleting a Board removes its Cards and everything on them, its Sessions and event log, its Previews, and its memberships, after the Admin types its slug. It is refused while a Session is active on the Board, and refused when the snapshot taken first fails, so a deleted Board can be restored from Backups; for the same reason its attachments stay in the off-disk copy. The repository on GitHub is not touched. Anyone viewing the Board is sent back to their Boards.
 - Agent: name, avatar, global caps, and each Provider's state as the egress proxy last saw it: a usage window still shut, a rejected credential, a refused call.
 - Sessions: every run with its Card, duration, and usage, filtered by Board, status, and kind, fifty at a time, with thirty-day totals per Board; cancel, cancel and re-run.
 - Backups: snapshots, the last attempt, and the last off-disk copy.
@@ -145,4 +145,4 @@ As of 2026-09-15 UTC the stack runs on minicore at `https://kardboard.cc` and th
 
 ## Out of scope for v1
 
-Board archival or deletion, daily Session count caps, inbound email, Board-wide activity feeds, per-Board custom Columns, egress allowlists, and Git hosts other than GitHub.
+Board archival, daily Session count caps, inbound email, Board-wide activity feeds, per-Board custom Columns, egress allowlists, and Git hosts other than GitHub.

@@ -1,11 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { BoardEvent, BoardView, CardDetail } from "@kardboard/shared";
 import { keys, upsertCardInBoard, upsertSessionInBoard } from "./api";
 import { useAuth } from "./auth";
 import { reconnectDelay } from "./backoff";
+import { toast } from "./toast";
 
-const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comment.removed", "session.updated", "board.updated"] as const;
+const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comment.removed", "session.updated", "board.updated", "board.deleted"] as const;
 
 // Server-sent events keep the board query fresh without polling. Clerk mode cannot set headers on
 // EventSource, so it falls back to a token query parameter over the same origin.
@@ -18,6 +20,12 @@ const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comme
 export function useBoardEvents(slug: string | undefined) {
   const qc = useQueryClient();
   const { mode, getToken } = useAuth();
+  // Read through a ref, so a new navigate function never tears the stream down and reconnects it.
+  const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  useEffect(() => {
+    navigateRef.current = navigate;
+  }, [navigate]);
   useEffect(() => {
     if (!slug) return;
     let source: EventSource | null = null;
@@ -55,6 +63,15 @@ export function useBoardEvents(slug: string | undefined) {
           break;
         case "board.updated":
           qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, board: event.board } : v));
+          break;
+        // Nothing is left to show or reconnect to, so whoever is looking goes back to their boards.
+        case "board.deleted":
+          stopped = true;
+          source?.close();
+          qc.removeQueries({ queryKey: keys.board(slug) });
+          void qc.invalidateQueries({ queryKey: keys.boards });
+          toast("This board was deleted.");
+          void navigateRef.current("/", { replace: true });
           break;
       }
     };

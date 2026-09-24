@@ -438,6 +438,19 @@ export const upsertBoardSchema = z.object({
 
 export const boardMembersSchema = z.object({ userIds: z.array(z.string()) });
 
+// Deleting a Board names it again, so a request meant for another Board, or sent by mistake, fails.
+export const deleteBoardSchema = z.object({ slug: z.string() });
+
+// What deleting a Board would take with it, shown before the Admin confirms. A Board with an active
+// Session cannot be deleted until the Session ends.
+export interface BoardDeletionImpact {
+  cards: number;
+  comments: number;
+  attachments: number;
+  previews: number;
+  activeSessions: number;
+}
+
 // No ids means "mark everything read".
 export const markNotificationsReadSchema = z.object({ ids: z.array(z.string()).optional() });
 
@@ -579,7 +592,8 @@ export type BoardEvent =
   | { type: "comment.upserted"; comment: Comment }
   | { type: "comment.removed"; commentId: string; cardId: string }
   | { type: "session.updated"; session: SessionSummary }
-  | { type: "board.updated"; board: Board };
+  | { type: "board.updated"; board: Board }
+  | { type: "board.deleted"; boardId: string };
 
 // Mentions are @handle tokens. Handles are lowercase, from the user's email local part.
 // A handle can contain dots and hyphens but not end with one, so "thanks @chris." mentions chris.
