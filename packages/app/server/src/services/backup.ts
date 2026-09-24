@@ -1,24 +1,31 @@
 import { createClient, type Client } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
-import type { BackupSnapshot, BackupsView } from "@kardboard/shared";
+import type { BackupAttempt, BackupSnapshot, BackupsView } from "@kardboard/shared";
 import { client as liveClient, dbFile } from "../db/index.js";
 import { env } from "../env.js";
 
 // A snapshot is one self-contained file written by `VACUUM INTO`, never a copy of the live database
 // and its WAL: see docs/adr/0004-sqlite-in-a-single-server-process.md. Restoring is an operator
 // procedure with the app stopped, documented in docs/runbooks/backups.md.
-const SNAPSHOT_RE = /^kardboard-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z(?:-\d+)?\.db$/;
+const SNAPSHOT_RE = /^kardboard-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z(?:-(\d+))?\.db$/;
 const PARTIAL_SUFFIX = ".partial";
 const STALE_PARTIAL_MS = 60 * 60_000;
 const TICK_MS = 60_000;
+// Far longer than a snapshot of this database takes. Past it the run is abandoned, so one that hangs
+// cannot hold the queue, and with it every later snapshot.
+const SNAPSHOT_TIMEOUT_MS = 15 * 60_000;
 
 export interface SnapshotOptions {
   client?: Client;
   dir?: string;
   at?: Date;
   keep?: number;
+  timeoutMs?: number;
 }
+
+// Never fewer than one: the snapshot just written is always kept, whatever `keep` says.
+const atLeastOne = (keep: number) => (Number.isFinite(keep) ? Math.max(1, Math.floor(keep)) : 1);
 
 export function snapshotFilename(at: Date, attempt = 0): string {
   const stamp = at.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
@@ -47,15 +54,20 @@ export function listSnapshots(dir: string = env.backupDir): BackupSnapshot[] {
     if (!stat?.isFile()) continue;
     out.push({ name, bytes: stat.size, takenAt });
   }
-  // Names carry a UTC stamp, so lexical order is chronological. Newest first.
-  return out.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  // Newest first, by the UTC stamp and then by the suffix a second snapshot in the same second
+  // carries. Plain name order would put `…Z-1.db` before `…Z.db` and prune the newer one.
+  return out.sort((a, b) => (a.takenAt !== b.takenAt ? (a.takenAt < b.takenAt ? 1 : -1) : attemptOf(b.name) - attemptOf(a.name)));
+}
+
+function attemptOf(name: string): number {
+  return Number(SNAPSHOT_RE.exec(name)?.[7] ?? 0);
 }
 
 // Keeps the newest `keep` snapshots and removes the rest, along with abandoned partial files from
 // an interrupted run. Returns what it removed.
 export function pruneSnapshots(keep: number, dir: string = env.backupDir, now = new Date()): string[] {
   const removed: string[] = [];
-  for (const snapshot of listSnapshots(dir).slice(Math.max(keep, 0))) {
+  for (const snapshot of listSnapshots(dir).slice(atLeastOne(keep))) {
     fs.rmSync(path.join(dir, snapshot.name), { force: true });
     removed.push(snapshot.name);
   }
@@ -96,9 +108,20 @@ function removeSidecars(file: string): void {
   for (const suffix of ["-wal", "-shm"]) fs.rmSync(`${file}${suffix}`, { force: true });
 }
 
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`the snapshot did not finish within ${Math.round(ms / 1000)} s and was abandoned`)), ms);
+  });
+  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+}
+
 // The scheduler and the admin button share one queue: two snapshots started in the same second would
 // otherwise pick the same name and fight over the partial file.
 let queue: Promise<unknown> = Promise.resolve();
+
+// Kept for the Admin panel. A failed scheduled run otherwise shows only in the logs.
+let lastAttempt: BackupAttempt | null = null;
 
 export function takeSnapshot(options: SnapshotOptions = {}): Promise<{ snapshot: BackupSnapshot; pruned: string[] }> {
   const run = queue.then(
@@ -106,7 +129,16 @@ export function takeSnapshot(options: SnapshotOptions = {}): Promise<{ snapshot:
     () => writeSnapshot(options),
   );
   queue = run.catch(() => undefined);
-  return run;
+  return run.then(
+    (result) => {
+      lastAttempt = { at: new Date().toISOString(), ok: true, error: null };
+      return result;
+    },
+    (err: unknown) => {
+      lastAttempt = { at: new Date().toISOString(), ok: false, error: err instanceof Error ? err.message : String(err) };
+      throw err;
+    },
+  );
 }
 
 async function writeSnapshot(options: SnapshotOptions): Promise<{ snapshot: BackupSnapshot; pruned: string[] }> {
@@ -116,15 +148,25 @@ async function writeSnapshot(options: SnapshotOptions): Promise<{ snapshot: Back
   const keep = options.keep ?? env.backupKeep;
 
   fs.mkdirSync(dir, { recursive: true });
-  let file = path.join(dir, snapshotFilename(at));
-  for (let attempt = 1; fs.existsSync(file); attempt++) file = path.join(dir, snapshotFilename(at, attempt));
+  // Another snapshot from the same second takes the suffix after every one already there, so it is
+  // also the newest in listing order and the prune below keeps it.
+  const stamp = snapshotFilename(at).replace(/\.db$/, "");
+  const sameSecond = listSnapshots(dir).filter((s) => s.name.startsWith(stamp)).map((s) => attemptOf(s.name));
+  let attempt = sameSecond.length > 0 ? Math.max(...sameSecond) + 1 : 0;
+  let file = path.join(dir, snapshotFilename(at, attempt));
+  while (fs.existsSync(file)) file = path.join(dir, snapshotFilename(at, ++attempt));
   const partial = `${file}${PARTIAL_SUFFIX}`;
   fs.rmSync(partial, { force: true });
 
   try {
     // VACUUM INTO refuses to overwrite, so the partial name is both a lock and a crash marker.
-    await client.execute({ sql: "VACUUM INTO ?", args: [partial] });
-    await verifySnapshot(partial);
+    await withTimeout(
+      (async () => {
+        await client.execute({ sql: "VACUUM INTO ?", args: [partial] });
+        await verifySnapshot(partial);
+      })(),
+      options.timeoutMs ?? SNAPSHOT_TIMEOUT_MS,
+    );
     removeSidecars(partial);
     fs.renameSync(partial, file);
   } catch (err) {
@@ -177,5 +219,5 @@ function databaseBytes(): number {
 }
 
 export function backupsView(): BackupsView {
-  return { dir: env.backupDir, hour: env.backupHour, keep: env.backupKeep, databaseBytes: databaseBytes(), snapshots: listSnapshots() };
+  return { dir: env.backupDir, hour: env.backupHour, keep: env.backupKeep, databaseBytes: databaseBytes(), snapshots: listSnapshots(), lastAttempt };
 }

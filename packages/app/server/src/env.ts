@@ -41,6 +41,17 @@ export function resolveAuthMode(input: { auth: string; production: boolean; prev
   return "dev";
 }
 
+// A count that has to be at least one, such as how many snapshots to keep, where zero would prune
+// the snapshot just written. Below one is raised to one, and a value that is not a number falls back
+// to the default, with a warning either way.
+export function atLeastOne(name: string, raw: string, fallback: number): number {
+  if (raw.trim() === "") return fallback;
+  const n = Math.floor(Number(raw));
+  const value = Number.isFinite(n) ? Math.max(1, n) : fallback;
+  if (String(value) !== raw.trim()) console.warn(`[env] ${name}=${JSON.stringify(raw)} is not a whole number of at least 1; using ${value}`);
+  return value;
+}
+
 const isProduction = process.env.NODE_ENV === "production";
 const dataDir = path.resolve(str("KARDBOARD_DATA_DIR", "./data"));
 const publicUrl = str("KARDBOARD_PUBLIC_URL", "http://localhost:5173").replace(/\/$/, "");
@@ -84,6 +95,6 @@ export const env = {
   // Snapshots live beside the database on the data bind mount. Set the hour to -1 to take none.
   backupDir: path.resolve(str("KARDBOARD_BACKUP_DIR", path.join(dataDir, "backups"))),
   backupHour: Number(str("KARDBOARD_BACKUP_HOUR", "4")),
-  backupKeep: Number(str("KARDBOARD_BACKUP_KEEP", "14")),
+  backupKeep: atLeastOne("KARDBOARD_BACKUP_KEEP", str("KARDBOARD_BACKUP_KEEP"), 14),
   isProduction,
 };
