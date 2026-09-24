@@ -2,6 +2,9 @@ import { env } from "../env.js";
 
 export interface StartSessionRequest {
   sessionId: string;
+  // Names the Board's dependency cache volume, since the id never changes and the slug can. A sweep
+  // installs nothing and leaves it out, so it gets no cache.
+  boardId?: string;
   boardSlug: string;
   provider: "claude" | "codex";
   model: string | null;

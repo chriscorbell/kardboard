@@ -327,6 +327,7 @@ async function dispatch(cardId: string): Promise<void> {
     const bot = botIdentity("sessions");
     return {
       sessionId,
+      boardId: board.id,
       boardSlug: board.slug,
       provider: chosen.provider,
       // A Board's model names one Provider's model and means nothing to the other, so a run on the

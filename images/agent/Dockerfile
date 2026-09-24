@@ -34,6 +34,22 @@ RUN npm install -g @anthropic-ai/claude-code "@openai/codex@${CODEX_VERSION}"
 
 RUN useradd -m -u 1001 -s /bin/bash agent && mkdir -p /work /home/agent/.claude && chown -R agent:agent /work /home/agent \
     && printf '{ "includeCoAuthoredBy": false }\n' > /home/agent/.claude/settings.json && chown agent:agent /home/agent/.claude/settings.json
+
+# Per-Board dependency caches. The runner mounts the Board's own named volume at /cache, and Docker
+# seeds a new, empty volume from this directory, owner included, so it must exist and belong to the
+# agent user. Each variable is the tool's documented one; pnpm 11 reads only pnpm_config_*, not
+# npm_config_*. The volume is a different filesystem from /work, so uv, pnpm, and Bun copy from it
+# rather than hard-link; UV_LINK_MODE says so up front instead of warning on every install.
+RUN mkdir -p /cache && chown agent:agent /cache
+ENV npm_config_cache=/cache/npm \
+    pnpm_config_store_dir=/cache/pnpm/store \
+    pnpm_config_cache_dir=/cache/pnpm/metadata \
+    BUN_INSTALL_CACHE_DIR=/cache/bun \
+    GOMODCACHE=/cache/go/mod \
+    GOCACHE=/cache/go/build \
+    UV_CACHE_DIR=/cache/uv \
+    UV_LINK_MODE=copy \
+    PIP_CACHE_DIR=/cache/pip
 COPY --chmod=755 images/agent/entrypoint.sh /usr/local/bin/kardboard-session
 USER agent
 WORKDIR /work

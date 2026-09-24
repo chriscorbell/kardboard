@@ -4,6 +4,7 @@ import Docker from "dockerode";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { cacheMounts } from "./cache.js";
 import { codexWiring } from "./codex.js";
 import { pruneSupersededImages } from "./images.js";
 import { ID_PATTERN, readLogSlice } from "./logs.js";
@@ -73,6 +74,8 @@ app.get("/healthz", async (c) => {
 
 const startSchema = z.object({
   sessionId: z.string().regex(ID_PATTERN),
+  // Names the Board's cache volume. Absent from a sweep, and from an app older than this runner.
+  boardId: z.string().regex(ID_PATTERN).nullable().default(null),
   boardSlug: z.string(),
   provider: z.enum(["claude", "codex"]),
   model: z.string().nullable().default(null),
@@ -245,6 +248,7 @@ app.post("/sessions", async (c) => {
         NanoCpus: env.nanoCpus,
         PidsLimit: env.pidsLimit,
         Binds: binds,
+        Mounts: cacheMounts(req.boardId, req.boardSlug),
         NetworkMode: network,
         SecurityOpt: ["no-new-privileges:true"],
         CapDrop: ["ALL"],
