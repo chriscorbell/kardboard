@@ -19,8 +19,8 @@ type CardRow = typeof schema.cards.$inferSelect;
 type TriggerRow = typeof schema.triggers.$inferSelect;
 
 const at = "2026-09-24T10:00:00.000Z";
-const board = (previewMode: "runner" | "external" = "runner"): BoardRow => ({ id: "board-1", slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets", provider: "claude", model: null, reasoning: null, previewMode, previewEpoch: 1, agentImage: null, maxConcurrentSessions: 3, promptAppend: "", createdAt: at });
-const card: CardRow = { id: "card-1", boardId: "board-1", title: "Export invoices", description: "", priority: "none", column: "review", position: 1000, creatorKind: "user", creatorId: "ada", parentCardId: null, outcome: null, revision: 4, branch: "kardboard/card-1-export-invoices", prUrl: null, prNumber: 7, prHeadSha: null, previewUrl: null, pendingRerun: false, createdAt: at, updatedAt: at };
+const board = (previewMode: "runner" | "external" = "runner"): BoardRow => ({ id: "board-1", slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets", provider: "claude", model: null, reasoning: null, previewMode, previewEpoch: 1, agentImage: null, maxConcurrentSessions: 3, promptAppend: "", paused: false, createdAt: at });
+const card: CardRow = { id: "card-1", boardId: "board-1", title: "Export invoices", description: "", priority: "none", column: "review", position: 1000, creatorKind: "user", creatorId: "ada", parentCardId: null, outcome: null, revision: 4, branch: "kardboard/card-1-export-invoices", prUrl: null, prNumber: 7, prHeadSha: null, prBaseRef: null, checks: null, previewUrl: null, pendingRerun: false, createdAt: at, updatedAt: at };
 const trigger = (kind: string, payload: Record<string, unknown> = {}): TriggerRow => ({ id: `t-${kind}`, boardId: "board-1", cardId: "card-1", kind, actorUserId: "ada", payload, status: "consumed", sessionId: "s-1", createdAt: at });
 
 const prompt = (triggers: TriggerRow[], mode: "runner" | "external" = "runner") => buildSessionPrompt({ board: board(mode), card, sessionId: "s-1", triggers });
