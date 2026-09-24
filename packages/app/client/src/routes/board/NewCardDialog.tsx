@@ -70,6 +70,11 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slu
     onClose();
     onCreated(card.id);
   };
+  // Closing leaves whatever is still uploading to finish on its own, without opening the Card.
+  const dismiss = () => {
+    session.current += 1;
+    onClose();
+  };
 
   const sendFiles = async (state: Upload, at: number) => {
     setUploading(true);
@@ -114,7 +119,7 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slu
   const busy = create.isPending || uploading;
 
   return (
-    <Dialog open={open} onClose={onClose} title="New card">
+    <Dialog open={open} onClose={dismiss} title="New card">
       <form
         className="relative flex flex-col gap-4"
         {...drop.handlers}
@@ -210,7 +215,7 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slu
               Open the card
             </Button>
           ) : (
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="ghost" onClick={dismiss}>
               Cancel
             </Button>
           )}
