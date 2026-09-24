@@ -6,6 +6,7 @@ import { keys, request, useAdminBoards, useAdminUsers, type AdminBoard } from ".
 import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
+import { slugDraft, slugify } from "./slug";
 
 type Draft = {
   name: string;
@@ -33,16 +34,19 @@ export function BoardsTab() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AdminBoard | "new" | null>(null);
   const [draft, setDraft] = useState<Draft>(empty);
+  // A new board's slug follows its name until the slug is typed into by hand.
+  const [slugTyped, setSlugTyped] = useState(false);
   useEffect(() => {
     if (editing === "new") setDraft(empty);
     else if (editing) setDraft(fromBoard(editing));
+    setSlugTyped(false);
   }, [editing]);
 
   const save = useMutation({
     mutationFn: async () => {
       const body = {
         name: draft.name,
-        slug: draft.slug,
+        slug: slugify(draft.slug),
         repoUrl: draft.repoUrl || null,
         provider: draft.provider,
         model: draft.model.trim() || null,
@@ -113,10 +117,20 @@ export function BoardsTab() {
         >
           <div className="grid grid-cols-2 gap-3">
             <Field label="Name">
-              <Input required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value, slug: editing === "new" && !draft.slug ? slugify(e.target.value) : draft.slug })} />
+              <Input required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value, slug: editing === "new" && !slugTyped ? slugify(e.target.value) : draft.slug })} />
             </Field>
             <Field label="Slug" hint="Used in the URL.">
-              <Input required value={draft.slug} onChange={(e) => setDraft({ ...draft, slug: slugify(e.target.value) })} pattern="[a-z0-9][a-z0-9-]*" />
+              <Input
+                required
+                value={draft.slug}
+                onChange={(e) => {
+                  // Clearing the field hands it back to the name.
+                  setSlugTyped(e.target.value !== "");
+                  setDraft({ ...draft, slug: slugDraft(e.target.value) });
+                }}
+                onBlur={() => setDraft((d) => ({ ...d, slug: slugify(d.slug) }))}
+                pattern="[a-z0-9][a-z0-9\-]*"
+              />
             </Field>
           </div>
           <Field label="Repository URL" hint="GitHub only. Both kardboard GitHub Apps must be installed on it.">
@@ -211,8 +225,4 @@ function GitHubStatus({ boardId }: { boardId: string }) {
       <Chip tone={tone(q.data.merge)}>merge {q.data.merge}</Chip>
     </div>
   );
-}
-
-function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 }

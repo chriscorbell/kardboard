@@ -13,9 +13,11 @@ export function NewCardDialog({ slug, open, onClose, isAdmin }: { slug: string; 
   const [priority, setPriority] = useState<Priority>("none");
   const [column, setColumn] = useState<Column>("inbox");
   const [silent, setSilent] = useState(false);
-  const titleRef = useRef<HTMLInputElement>(null);
   const create = useCreateCard(slug);
   const navigate = useNavigate();
+  // Set in the same tick as the request starts, where `isPending` would still read false for a
+  // second Cmd+Enter or the form's own Enter submission.
+  const submitting = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -24,15 +26,23 @@ export function NewCardDialog({ slug, open, onClose, isAdmin }: { slug: string; 
       setPriority("none");
       setColumn("inbox");
       setSilent(false);
-      setTimeout(() => titleRef.current?.focus(), 30);
+      create.reset();
     }
+    // `create` is a new object each render; only reopening should clear it.
   }, [open]);
 
   const submit = async () => {
-    if (!title.trim()) return;
-    const card = await create.mutateAsync({ title, description, priority, column, silent: silent || undefined });
-    onClose();
-    navigate(`/b/${slug}/c/${card.id}`);
+    if (!title.trim() || submitting.current) return;
+    submitting.current = true;
+    try {
+      const card = await create.mutateAsync({ title, description, priority, column, silent: silent || undefined });
+      onClose();
+      navigate(`/b/${slug}/c/${card.id}`);
+    } catch {
+      // Shown below the form from the mutation's error.
+    } finally {
+      submitting.current = false;
+    }
   };
 
   return (
@@ -44,11 +54,14 @@ export function NewCardDialog({ slug, open, onClose, isAdmin }: { slug: string; 
           void submit();
         }}
         onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void submit();
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+            void submit();
+          }
         }}
       >
         <Field label="Title">
-          <Input ref={titleRef} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to change?" maxLength={200} />
+          <Input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs to change?" maxLength={200} />
         </Field>
         <Field label="Details" hint="Markdown works. Steps to reproduce, links, and what done looks like all help.">
           <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={6} placeholder="" />
@@ -81,7 +94,11 @@ export function NewCardDialog({ slug, open, onClose, isAdmin }: { slug: string; 
             Silent: don't start a session for this card yet
           </label>
         ) : null}
-        {create.isError ? <p className="text-[13px] text-danger">Could not create the card. {create.error.message}</p> : null}
+        {create.isError ? (
+          <p role="alert" className="text-[13px] text-danger">
+            Could not create the card. {create.error.message}
+          </p>
+        ) : null}
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
