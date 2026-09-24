@@ -1,7 +1,8 @@
 import { forwardRef, type HTMLAttributes } from "react";
-import { GitPullRequest, MessageSquare, RotateCcw } from "lucide-react";
-import type { AgentProfile, Card, User } from "@kardboard/shared";
+import { GitPullRequest, MessageSquare, Pause, RotateCcw } from "lucide-react";
+import type { AgentProfile, Card, User, WaitingReason } from "@kardboard/shared";
 import { Avatar, cx } from "../../components/ui";
+import { tileWaiting } from "./sessionStatus";
 
 const PRIORITY: Record<Card["priority"], { label: string; className: string } | null> = {
   none: null,
@@ -19,6 +20,14 @@ export function WorkingDot({ className }: { className?: string }) {
   );
 }
 
+// The working dot's quieter sibling: a hollow ring for a Card that will start, in the accent while
+// its batch collects and faint while it waits on a slot or a retry, and the pause glyph on a paused
+// Board. Still rather than pulsing, since nothing is running yet.
+export function WaitingMark({ reason, className }: { reason: WaitingReason; className?: string }) {
+  if (reason === "paused") return <Pause className={cx("size-3 text-ink-muted", className)} strokeWidth={2.25} aria-hidden="true" />;
+  return <span className={cx("inline-flex size-2 shrink-0 rounded-full border-[1.5px]", reason === "coalescing" ? "border-accent" : "border-ink-faint", className)} aria-hidden="true" />;
+}
+
 type Props = HTMLAttributes<HTMLDivElement> & {
   card: Card;
   creator: User | undefined;
@@ -31,6 +40,7 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
   const priority = PRIORITY[card.priority];
   const working = card.activeSession && card.activeSession.status !== "queued";
   const queued = card.activeSession?.status === "queued";
+  const waiting = tileWaiting(card, agent.name);
   return (
     <div
       ref={ref}
@@ -64,6 +74,11 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
             </span>
           ) : queued ? (
             <span className="text-ink-muted">Starting</span>
+          ) : waiting ? (
+            <span className="inline-flex size-3.5 items-center justify-center" title={waiting.label}>
+              <WaitingMark reason={waiting.reason} />
+              <span className="sr-only">{waiting.label}</span>
+            </span>
           ) : card.pendingRerun ? (
             <span className="inline-flex items-center gap-1 text-ink-muted" title="Changes queued for the next session">
               <RotateCcw className="size-3.5" strokeWidth={1.75} />
