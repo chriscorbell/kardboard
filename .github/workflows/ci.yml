@@ -1,12 +1,18 @@
-# Deployment contract: every push to main publishes five images to GHCR tagged :latest and :sha.
-# Watchtower on minicore polls GHCR every 60 s and restarts the running containers. Roll back by
-# pinning a :sha tag in the compose file or re-running this job from an older commit.
+# Deployment contract: a push to main publishes to GHCR, tagged :latest and :sha, each of the five
+# images whose inputs the push changed. Watchtower on minicore polls GHCR every 60 s and restarts
+# the containers whose image moved, so a push that touches only the app restarts only the app, and a
+# push of documentation restarts nothing. Pull requests build all five images without pushing, so a
+# broken Dockerfile fails before it reaches main. Running the workflow by hand on main publishes all
+# five whatever changed: the way to recover after an image failed to publish, since the next push
+# only rebuilds what it touches. Roll back by pinning a :sha tag in the compose file or re-running
+# this job from an older commit.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,31 +40,89 @@ jobs:
       - run: pnpm -r test
       - run: pnpm --filter @kardboard/app build
 
+  # Which images this run builds, as the publish job's matrix. A pull request or a manual run takes
+  # all five. A push to main takes the images whose inputs differ between the commit main was on
+  # before the push and the one it is on now, however many commits the push carried. A change to an
+  # input every image shares, this workflow included, takes all five; a push that changes no image's
+  # inputs takes none, and publish is skipped.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.pick.outputs.images }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The previous head of main has to be here to diff against.
+          fetch-depth: 0
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          IMAGES: >-
+            [{"name": "app", "dockerfile": "packages/app/Dockerfile"},
+            {"name": "runner", "dockerfile": "packages/runner/Dockerfile"},
+            {"name": "egress", "dockerfile": "packages/egress/Dockerfile"},
+            {"name": "preview-router", "dockerfile": "packages/preview-router/Dockerfile"},
+            {"name": "agent", "dockerfile": "images/agent/Dockerfile"}]
+        run: |
+          set -euo pipefail
+          all="app runner egress preview-router agent"
+          # The matrix entries named in a space-separated list, once each and in IMAGES order.
+          pick() { jq -c --arg names "$1" '($names | split(" ")) as $wanted | [.[] | select(.name as $n | $wanted | index($n))]' <<< "$IMAGES"; }
+          publish() {
+            echo "Images to build: $(jq -r 'map(.name) | join(" ") | if . == "" then "none" else . end' <<< "$1")"
+            echo "images=$1" >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "$EVENT" != "push" ]; then
+            publish "$(pick "$all")"
+            exit 0
+          fi
+          # A branch's first push has no previous commit, and a force push can leave one that no
+          # longer exists. Either way there is nothing trustworthy to diff against.
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "No previous commit to compare with."
+            publish "$(pick "$all")"
+            exit 0
+          fi
+
+          # A plain assignment, so a failed diff stops the job instead of reading as "nothing changed".
+          changed=$(git diff --name-only "$BEFORE" "$SHA")
+          # What goes into each image, read from its Dockerfile's COPY lines. Every image installs
+          # from the root lockfile and workspace files.
+          names=""
+          while IFS= read -r file; do
+            case "$file" in
+              pnpm-lock.yaml | pnpm-workspace.yaml | package.json | .npmrc | tsconfig.base.json | .dockerignore | .github/workflows/ci.yml | packages/shared/*) names="$names $all" ;;
+              packages/app/*) names="$names app" ;;
+              packages/runner/*) names="$names runner" ;;
+              packages/egress/*) names="$names egress" ;;
+              packages/preview-router/*) names="$names preview-router" ;;
+              images/agent/*) names="$names agent" ;;
+            esac
+          done <<< "$changed"
+          publish "$(pick "$names")"
+
   publish:
-    needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [validate, changes]
+    if: needs.changes.outputs.images != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    env:
+      # Only main publishes. A pull request, or a manual run on another branch, builds and stops.
+      PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: app
-            dockerfile: packages/app/Dockerfile
-          - name: runner
-            dockerfile: packages/runner/Dockerfile
-          - name: egress
-            dockerfile: packages/egress/Dockerfile
-          - name: preview-router
-            dockerfile: packages/preview-router/Dockerfile
-          - name: agent
-            dockerfile: images/agent/Dockerfile
+        include: ${{ fromJSON(needs.changes.outputs.images) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - if: env.PUSH == 'true'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -74,9 +138,11 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
+          push: ${{ env.PUSH == 'true' }}
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # A pull request reads main's layer cache but does not write to it, so its builds cannot
+          # crowd main's layers out of the repository's cache allowance.
+          cache-to: ${{ env.PUSH == 'true' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
