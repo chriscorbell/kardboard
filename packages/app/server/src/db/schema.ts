@@ -28,7 +28,7 @@ export const boards = sqliteTable("boards", {
   repoUrl: text("repo_url"),
   provider: text("provider", { enum: ["claude", "codex"] }).notNull().default("claude"),
   model: text("model"),
-  reasoning: text("reasoning", { enum: ["low", "medium", "high", "max"] }),
+  reasoning: text("reasoning", { enum: ["low", "medium", "high", "xhigh", "max"] }),
   previewMode: text("preview_mode", { enum: ["external", "runner"] }).notNull().default("external"),
   // Bumped whenever this Board's membership narrows. A Preview cookie carries the epoch it was
   // issued under, so losing membership invalidates every outstanding cookie for the Board at once.

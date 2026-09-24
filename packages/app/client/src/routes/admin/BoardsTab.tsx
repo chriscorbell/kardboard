@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pause, Plus, Trash2 } from "lucide-react";
-import type { Board, BoardDeletionImpact } from "@kardboard/shared";
+import { REASONING_LEVELS, type Board, type BoardDeletionImpact, type Reasoning } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminUsers, useMe, type AdminBoard } from "../../lib/api";
 import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
@@ -17,7 +17,7 @@ type Draft = {
   repoUrl: string;
   provider: "claude" | "codex";
   model: string;
-  reasoning: "" | "low" | "medium" | "high" | "max";
+  reasoning: "" | Reasoning;
   previewMode: "external" | "runner";
   agentImage: string;
   maxConcurrentSessions: number;
@@ -25,6 +25,8 @@ type Draft = {
   paused: boolean;
   memberIds: string[];
 };
+
+const REASONING_LABELS: Record<Reasoning, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 
 const empty: Draft = { name: "", slug: "", repoUrl: "", provider: "claude", model: "", reasoning: "", previewMode: "external", agentImage: "", maxConcurrentSessions: 3, promptAppend: "", paused: false, memberIds: [] };
 
@@ -177,13 +179,14 @@ export function BoardsTab() {
             <Field label="Model" hint={draft.provider === "claude" ? "Claude Code --model. Empty uses its default. Examples: opus, sonnet." : "Codex -m. Empty uses its default. Example: gpt-5.5."}>
               <Input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} placeholder="provider default" className="font-mono text-[13px]" />
             </Field>
-            <Field label="Reasoning" hint={draft.provider === "claude" ? "Claude Code effort level." : "Codex reasoning effort; max means xhigh."}>
+            <Field label="Reasoning" hint={draft.provider === "claude" ? "Claude Code effort level. A model without Extra high or Max runs the highest level it has." : "Codex reasoning effort. Max runs as Extra high."}>
               <Select value={draft.reasoning} onChange={(e) => setDraft({ ...draft, reasoning: e.target.value as Draft["reasoning"] })}>
                 <option value="">Provider default</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="max">Max</option>
+                {REASONING_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {REASONING_LABELS[level]}
+                  </option>
+                ))}
               </Select>
             </Field>
           </div>

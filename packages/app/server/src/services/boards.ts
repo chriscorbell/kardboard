@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
-import type { Board, Person, User } from "@kardboard/shared";
+import type { Board, Person, Reasoning, User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { toUser } from "./users.js";
@@ -115,7 +115,7 @@ export type BoardInput = {
   repoUrl?: string | null;
   provider: "claude" | "codex";
   model?: string | null;
-  reasoning?: "low" | "medium" | "high" | "max" | null;
+  reasoning?: Reasoning | null;
   previewMode: "external" | "runner";
   agentImage?: string | null;
   maxConcurrentSessions: number;

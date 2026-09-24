@@ -101,3 +101,17 @@ describe("editing a comment", () => {
     assert.equal((await triggerKinds(card.id)).includes("comment_edited"), true);
   });
 });
+
+describe("a board's reasoning level", () => {
+  it("can be xhigh, and is kept as it was sent", async () => {
+    const res = await call(ADMIN, "PATCH", `/admin/boards/${BOARD}`, { name: "Board one", slug: "board-one", reasoning: "xhigh" });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { reasoning: string }).reasoning, "xhigh");
+    assert.equal((await db.select().from(schema.boards).where(eq(schema.boards.id, BOARD)).get())?.reasoning, "xhigh");
+  });
+
+  it("refuses a level no Provider has", async () => {
+    const res = await call(ADMIN, "PATCH", `/admin/boards/${BOARD}`, { name: "Board one", slug: "board-one", reasoning: "ultra" });
+    assert.equal(res.status, 400);
+  });
+});
