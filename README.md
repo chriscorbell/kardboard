@@ -72,7 +72,7 @@ pnpm install
 pnpm dev
 ```
 
-Open http://localhost:5173. With no `.env` present, authentication runs in **dev mode**: every request is the seeded admin, and a demo board with cards and comments is created on first start. Sessions are recorded but nothing runs until a runner is configured.
+Open http://localhost:5173. With no `.env` present, authentication runs in **dev mode**, which is refused in production: every request is the seeded admin, and a demo board with cards and comments is created on first start. Sessions are recorded but nothing runs until a runner is configured.
 
 Other commands:
 
@@ -90,7 +90,7 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 | Variable | Purpose |
 | --- | --- |
 | `KARDBOARD_PUBLIC_URL`, `KARDBOARD_REDIRECT_HOSTS` | Canonical app URL and comma-separated old hosts that redirect to it. |
-| `KARDBOARD_AUTH` | `dev` or `clerk`. |
+| `KARDBOARD_AUTH` | `clerk`, or `dev` for local work. Dev mode signs every request in as the seeded admin, so with `NODE_ENV=production` the app refuses to start unless this is `clerk`; the one exception is a Preview container, which the runner marks with `KARDBOARD_PREVIEW_HOST`. |
 | `CLERK_SECRET_KEY`, `VITE_CLERK_PUBLISHABLE_KEY` | Clerk credentials for `clerk` mode. |
 | `KARDBOARD_ADMIN_EMAIL` | The first admin, created on first start. |
 | `RESEND_API_KEY`, `KARDBOARD_EMAIL_FROM` | Email delivery. Without a key, emails are logged instead of sent. |

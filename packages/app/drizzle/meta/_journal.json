@@ -43,6 +43,13 @@
       "when": 1789446666569,
       "tag": "0005_card-outcome",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790224965905,
+      "tag": "0006_card-pr-head-sha",
+      "breakpoints": true
     }
   ]
 }

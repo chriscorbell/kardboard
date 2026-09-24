@@ -48,8 +48,25 @@ export const api = new Hono<{ Variables: AuthVariables }>();
 
 api.use("*", requireUser);
 
+// A body that fails its schema is answered with the first thing wrong with it, in words the client
+// can show. Left to itself the validator answers with a serialised ZodError, which reaches a person
+// as "[object Object]".
+function json<T extends z.ZodTypeAny>(schema: T) {
+  return zValidator("json", schema, (result, c) => {
+    if (result.success) return;
+    const issue = result.error.issues[0];
+    const where = issue?.path.join(".");
+    return c.json({ error: issue ? (where ? `${where}: ${issue.message}` : issue.message) : "invalid request" }, 400);
+  });
+}
+
 function actorOf(c: { get: (k: "user") => { id: string } }) {
   return { kind: "user" as const, id: c.get("user").id };
+}
+
+// Silence is the Admin's option. A Member's change always reaches the Agent.
+function silentFor(c: { get: (k: "user") => { role: string } }, requested: boolean | undefined): boolean | undefined {
+  return c.get("user").role === "admin" ? requested : undefined;
 }
 
 async function boardForUser(c: Parameters<typeof actorOf>[0] & { json: (b: unknown, s: 403 | 404) => Response }, boardId: string) {
@@ -113,13 +130,13 @@ api.get("/boards/:slug/events", async (c) => {
   });
 });
 
-api.post("/boards/:slug/cards", zValidator("json", createCardSchema), async (c) => {
+api.post("/boards/:slug/cards", json(createCardSchema), async (c) => {
   const board = await getBoardBySlug(c.req.param("slug"));
   if (!board) return c.json({ error: "not_found" }, 404);
   if (!(await canAccessBoard(c.get("user"), board.id))) return c.json({ error: "forbidden" }, 403);
   const input = c.req.valid("json");
   const column = c.get("user").role === "admin" ? input.column : "inbox";
-  const card = await createCard({ boardId: board.id, ...input, column, actor: actorOf(c) });
+  const card = await createCard({ boardId: board.id, ...input, column, silent: silentFor(c, input.silent), actor: actorOf(c) });
   return c.json(card, 201);
 });
 
@@ -140,57 +157,67 @@ api.get("/cards/:id", async (c) => {
   return c.json(detail);
 });
 
-api.patch("/cards/:id", zValidator("json", updateCardSchema), async (c) => {
+api.patch("/cards/:id", json(updateCardSchema), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
   try {
-    return c.json(await updateCard(card.id, { ...c.req.valid("json"), actor: actorOf(c) }));
+    const input = c.req.valid("json");
+    return c.json(await updateCard(card.id, { ...input, silent: silentFor(c, input.silent), actor: actorOf(c) }));
   } catch (err) {
     if (err instanceof ConflictError) return c.json({ error: "conflict", card: await getCard(card.id) }, 409);
     throw err;
   }
 });
 
-api.post("/cards/:id/move", zValidator("json", moveCardSchema), async (c) => {
+api.post("/cards/:id/move", json(moveCardSchema), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
   try {
-    return c.json(await moveCard(card.id, { ...c.req.valid("json"), actor: actorOf(c) }));
+    const input = c.req.valid("json");
+    return c.json(await moveCard(card.id, { ...input, silent: silentFor(c, input.silent), actor: actorOf(c) }));
   } catch (err) {
     if (err instanceof ConflictError) return c.json({ error: "conflict", card: await getCard(card.id) }, 409);
     throw err;
   }
 });
 
-api.post("/cards/:id/approve", async (c) => {
+// `headSha` is the pull request head the Card showed the Member. Approval is bound to it, and is
+// refused if the pull request has moved on since.
+api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullable().optional() })), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
   try {
-    return c.json(await approveCard(card.id, actorOf(c)), 201);
+    return c.json(await approveCard(card.id, actorOf(c), c.req.valid("json").headSha ?? null), 201);
   } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message }, 400);
+    if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
     throw err;
   }
 });
 
-api.post("/cards/:id/comments", zValidator("json", createCommentSchema), async (c) => {
+api.post("/cards/:id/comments", json(createCommentSchema), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
-  const comment = await createComment({ cardId: card.id, ...c.req.valid("json"), actor: actorOf(c) });
+  const input = c.req.valid("json");
+  const comment = await createComment({ cardId: card.id, ...input, silent: silentFor(c, input.silent), actor: actorOf(c) });
   return c.json(comment, 201);
 });
 
-api.patch("/comments/:id", zValidator("json", updateCommentSchema), async (c) => {
+api.patch("/comments/:id", json(updateCommentSchema), async (c) => {
   const comment = await getComment(c.req.param("id"));
   if (!comment) return c.json({ error: "not_found" }, 404);
+  // Authorship alone is not enough: an edit is a Trigger on the Board, and a Member who has lost
+  // the Board must not be able to start work there by editing an old Comment.
+  const card = (await getCard(comment.cardId))!;
+  const access = await boardForUser(c as never, card.boardId);
+  if ("error" in access) return access.error;
   const user = c.get("user");
   if (!(comment.authorKind === "user" && comment.authorId === user.id)) return c.json({ error: "forbidden" }, 403);
   return c.json(await updateComment(comment.id, { body: c.req.valid("json").body, actor: actorOf(c) }));
@@ -249,7 +276,7 @@ api.get("/attachments/:id", async (c) => {
 // cookie. The page is behind the app's own sign-in, so by the time this runs the caller is known;
 // membership is checked against the Preview's Board and the answer is a single-use code that only
 // works on that one host.
-api.post("/previews/auth-code", zValidator("json", z.object({ host: z.string().min(1), next: z.string().default("/") })), async (c) => {
+api.post("/previews/auth-code", json(z.object({ host: z.string().min(1), next: z.string().default("/") })), async (c) => {
   const { host, next } = c.req.valid("json");
   try {
     const { code, redirectBase } = await issuePreviewCode(c.get("user"), host);
@@ -267,7 +294,7 @@ const admin = new Hono<{ Variables: AuthVariables }>();
 admin.use("*", requireAdmin);
 
 admin.get("/users", async (c) => c.json(await listUsers()));
-admin.post("/users", zValidator("json", inviteUserSchema), async (c) => {
+admin.post("/users", json(inviteUserSchema), async (c) => {
   const user = await inviteUser(c.req.valid("json"));
   await sendInvitation(user, c.get("user"));
   return c.json(user, 201);
@@ -298,11 +325,11 @@ admin.get("/boards", async (c) => {
   const withMembers = await Promise.all(boards.map(async (b) => ({ ...b, memberIds: (await listMembers(b.id)).filter((m) => m.role !== "admin").map((m) => m.id) })));
   return c.json(withMembers);
 });
-admin.post("/boards", zValidator("json", upsertBoardSchema), async (c) => {
+admin.post("/boards", json(upsertBoardSchema), async (c) => {
   if (await getBoardBySlug(c.req.valid("json").slug)) return c.json({ error: "slug already in use" }, 409);
   return c.json(await createBoard(c.req.valid("json")), 201);
 });
-admin.patch("/boards/:id", zValidator("json", upsertBoardSchema), async (c) => {
+admin.patch("/boards/:id", json(upsertBoardSchema), async (c) => {
   const existing = await getBoardBySlug(c.req.valid("json").slug);
   if (existing && existing.id !== c.req.param("id")) return c.json({ error: "slug already in use" }, 409);
   return c.json(await updateBoard(c.req.param("id"), c.req.valid("json")));
@@ -314,7 +341,7 @@ admin.get("/boards/:id/github", async (c) => {
   if (!repo) return c.json({ repo: null, sessions: "unconfigured", merge: "unconfigured" });
   return c.json({ repo: `${repo.owner}/${repo.repo}`, ...(await installationStatus(repo.owner, repo.repo)) });
 });
-admin.put("/boards/:id/members", zValidator("json", boardMembersSchema), async (c) => {
+admin.put("/boards/:id/members", json(boardMembersSchema), async (c) => {
   await setMembers(c.req.param("id"), c.req.valid("json").userIds);
   // Membership may have narrowed; outstanding Preview cookies for this Board stop working now.
   await bumpPreviewEpoch(c.req.param("id"));
@@ -322,7 +349,7 @@ admin.put("/boards/:id/members", zValidator("json", boardMembersSchema), async (
 });
 
 admin.get("/settings", async (c) => c.json(await getSettings()));
-admin.patch("/settings", zValidator("json", settingsSchema), async (c) => c.json(await updateSettings(c.req.valid("json"))));
+admin.patch("/settings", json(settingsSchema), async (c) => c.json(await updateSettings(c.req.valid("json"))));
 
 admin.get("/backups", (c) => c.json(backupsView()));
 admin.post("/backups", async (c) => {

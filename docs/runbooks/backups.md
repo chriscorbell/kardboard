@@ -14,15 +14,15 @@ Copying `kardboard.db` alone is not a backup. Recent commits live in the write-a
 
 The app writes a snapshot with SQLite's `VACUUM INTO`, which produces a consistent copy of the committed database without pausing writers. It then opens that file as its own database, runs `PRAGMA integrity_check`, and only publishes it under its final name if the check passes; a failed copy is deleted rather than kept. Snapshots are named from the UTC time they were taken, so they sort chronologically.
 
-One snapshot is taken per day, at `KARDBOARD_BACKUP_HOUR` in the server's timezone. The schedule holds no state in memory: on every tick the app compares the newest snapshot on disk with the last time the scheduled hour passed, so a restart, a deploy, or hours of downtime still produce the missed snapshot as soon as the app is back. After a successful snapshot the oldest files beyond `KARDBOARD_BACKUP_KEEP` are removed, along with any `.partial` file left behind by an interrupted run.
+One snapshot is taken per day, at `KARDBOARD_BACKUP_HOUR` in the server's timezone. The schedule holds no state in memory: on every tick the app compares the newest snapshot on disk with the last time the scheduled hour passed, so a restart, a deploy, or hours of downtime still produce the missed snapshot as soon as the app is back. After a successful snapshot the oldest files beyond `KARDBOARD_BACKUP_KEEP` are removed, along with any `.partial` file left behind by an interrupted run. The snapshot just written is always kept. A run that has not finished after 15 minutes is abandoned and its partial file removed, so one stuck run cannot hold up every later snapshot; the scheduler tries again on its next tick.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `KARDBOARD_BACKUP_HOUR` | `4` | Local hour of the daily snapshot. Negative turns scheduled snapshots off |
-| `KARDBOARD_BACKUP_KEEP` | `14` | How many snapshots to keep |
+| `KARDBOARD_BACKUP_KEEP` | `14` | How many snapshots to keep. Zero or less is read as 1, and a value that is not a number as 14, with a warning in the log |
 | `KARDBOARD_BACKUP_DIR` | `<data dir>/backups` | Where snapshots are written |
 
-**Admin → Backups** lists the snapshots with their size and age, and takes one on demand with *Snapshot now*. Take one before any risky change. The same is available as `GET` and `POST /api/admin/backups`.
+**Admin → Backups** lists the snapshots with their size and age, and takes one on demand with *Snapshot now*. Take one before any risky change. The same is available as `GET` and `POST /api/admin/backups`, whose `lastAttempt` says when the most recent snapshot since the app started finished and, if it failed, why. A failed scheduled snapshot is otherwise visible only in the app's log as `[backup] snapshot failed`.
 
 ## Check a snapshot
 

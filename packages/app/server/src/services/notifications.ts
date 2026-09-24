@@ -13,7 +13,7 @@ import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { newId } from "../ids.js";
 import type { Actor } from "./events.js";
-import { getBoardById } from "./boards.js";
+import { canAccessBoard, getBoardById } from "./boards.js";
 import { getUser } from "./users.js";
 import { getAgentProfile } from "./settings.js";
 import { queueEmail } from "./email.js";
@@ -32,6 +32,12 @@ async function actorProfile(actor: Actor): Promise<{ name: string; avatarUrl: st
   return { name: "kardboard", avatarUrl: null };
 }
 
+// Only someone who could open the Card hears about it: an active User who is the Admin or a Member
+// of its Board. A handle is global, so without this an @mention reaches anyone who has one.
+export async function canBeNotified(user: User, boardId: string): Promise<boolean> {
+  return user.status !== "revoked" && (await canAccessBoard(user, boardId));
+}
+
 // One notification is one row plus one email, so the bell and the inbox never disagree.
 async function notify(input: {
   userId: string;
@@ -44,6 +50,8 @@ async function notify(input: {
   emailSubject: string;
   emailHeading: string;
 }): Promise<void> {
+  const user = await getUser(input.userId);
+  if (!user || !(await canBeNotified(user, input.board.id))) return;
   await db.insert(schema.notifications).values({
     id: newId(),
     userId: input.userId,
@@ -69,14 +77,12 @@ async function notify(input: {
 export async function notifyCardMoved(card: Card, from: Card["column"], actor: Actor): Promise<void> {
   if (card.creatorKind !== "user" || !card.creatorId) return;
   if (actor.kind === "user" && actor.id === card.creatorId) return;
-  const creator = await getUser(card.creatorId);
-  if (!creator || creator.status === "revoked") return;
   const board = await getBoardById(card.boardId);
   if (!board) return;
   const who = await actorProfile(actor);
   const title = `${who.name} moved your card to ${COLUMN_LABELS[card.column]}`;
   await notify({
-    userId: creator.id,
+    userId: card.creatorId,
     card,
     board,
     kind: "card_moved",

@@ -12,12 +12,13 @@ import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { findSessionByToken, endSession, listBoardSessions } from "../services/orchestrator.js";
 import { getBoardById } from "../services/boards.js";
-import { createCard, getCard, listCards, moveCard, setCardWorkState, toSessionSummary } from "../services/cards.js";
+import { ConflictError, createCard, getCard, listCards, moveCard, setCardWorkState, toSessionSummary } from "../services/cards.js";
 import { createComment, getAttachment, listComments } from "../services/comments.js";
 import { getUsersByIds } from "../services/users.js";
 import { recordEvent } from "../services/events.js";
 import { publish } from "../services/realtime.js";
 import { previewUrlFor, startPreview } from "../services/previews.js";
+import { linkPullRequest, refreshPullRequestHead } from "../services/approvals.js";
 
 type SessionRow = typeof schema.sessions.$inferSelect;
 
@@ -56,19 +57,19 @@ function buildServer(session: SessionRow): McpServer {
 
   server.registerTool(
     "get_board",
-    { description: "The board's settings and every card on it, grouped by column, with creator names.", inputSchema: {} },
+    { description: "The board's settings and every card on it, grouped by column, with creator names and each card's revision.", inputSchema: {} },
     async () => {
       const board = await getBoardById(session.boardId);
       const cards = await listCards(session.boardId);
       const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
-      const grouped = Object.fromEntries(COLUMNS.map((col) => [col, cards.filter((c) => c.column === col).map((c) => ({ id: c.id, title: c.title, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt }))]));
+      const grouped = Object.fromEntries(COLUMNS.map((col) => [col, cards.filter((c) => c.column === col).map((c) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt }))]));
       return { content: [{ type: "text", text: JSON.stringify({ board: { name: board?.name, repoUrl: board?.repoUrl, previewMode: board?.previewMode }, columns: COLUMN_LABELS, cards: grouped }, null, 2) }] };
     },
   );
 
   server.registerTool(
     "get_card",
-    { description: "Full detail for one card: description, comments with author handles, attachments, and work state. Omit card_id for your own card.", inputSchema: { card_id: z.string().optional() } },
+    { description: "Full detail for one card: description, comments with author handles, attachments, work state, and the revision to pass to move_card. Omit card_id for your own card.", inputSchema: { card_id: z.string().optional() } },
     async ({ card_id }) => {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
@@ -111,15 +112,29 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // The revision is the one the agent read, not the Card's current one: a move decided on an old
+  // view of the Card, such as a report on a Card a person has since closed, must be refused.
   server.registerTool(
     "move_card",
-    { description: "Move a card to a column. Explain any move of someone else's card in a comment.", inputSchema: { card_id: z.string().optional(), column: z.enum(COLUMNS) } },
-    async ({ card_id, column }) => {
+    {
+      description: "Move a card to a column. Pass the revision from your latest get_card or get_board for that card: if the card has changed since, the move is refused, and you should read it again and decide whether the move still makes sense. Explain any move of someone else's card in a comment.",
+      inputSchema: { card_id: z.string().optional(), column: z.enum(COLUMNS), revision: z.number().int().nonnegative() },
+    },
+    async ({ card_id, column, revision }) => {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
       const card = await assertBoardCard(id);
-      await moveCard(id, { column, position: card.position, revision: card.revision, actor });
-      return { content: [{ type: "text", text: "ok" }] };
+      let moved;
+      try {
+        moved = await moveCard(id, { column, position: card.position, revision, actor });
+      } catch (err) {
+        if (!(err instanceof ConflictError)) throw err;
+        const now = (await getCard(id))!;
+        throw new Error(`card ${id} changed after revision ${revision}: it is now at revision ${now.revision} in ${COLUMN_LABELS[now.column]}. Read it again with get_card before deciding whether to move it.`);
+      }
+      // Entering Review fixes the revision a member is shown; the Session hears if it cannot be approved.
+      const note = column === "review" ? await refreshPullRequestHead(id).catch((err: Error) => `could not read the pull request from GitHub: ${err.message}`) : null;
+      return { content: [{ type: "text", text: JSON.stringify({ column: moved.column, revision: moved.revision, ...(note ? { note } : {}) }) }] };
     },
   );
 
@@ -133,13 +148,20 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // A reported pull request is checked on GitHub before it is recorded: it has to come from this
+  // Card's own branch, because Approval merges whatever the Card points at with the merge App.
   server.registerTool(
     "set_work_state",
-    { description: "Record the pull request and preview for your own card.", inputSchema: { pr_url: z.string().url().optional(), pr_number: z.number().int().optional(), preview_url: z.string().url().optional() } },
+    {
+      description: "Record the pull request and preview for your own card. The pull request must be the one opened from this card's branch in the board's repository; kardboard checks that on GitHub and records its current head, which is the revision a member approves. Call it again after pushing more commits.",
+      inputSchema: { pr_url: z.string().url().optional(), pr_number: z.number().int().optional(), preview_url: z.string().url().optional() },
+    },
     async ({ pr_url, pr_number, preview_url }) => {
       if (session.kind !== "card" || !session.cardId) throw new Error("only card sessions can set work state");
-      await setCardWorkState(session.cardId, { prUrl: pr_url, prNumber: pr_number, previewUrl: preview_url });
-      return { content: [{ type: "text", text: "ok" }] };
+      if (pr_number !== undefined || pr_url !== undefined) await linkPullRequest(session.cardId, { number: pr_number, url: pr_url });
+      if (preview_url !== undefined) await setCardWorkState(session.cardId, { previewUrl: preview_url });
+      const card = (await getCard(session.cardId))!;
+      return { content: [{ type: "text", text: JSON.stringify({ prNumber: card.prNumber, prUrl: card.prUrl, headSha: card.prHeadSha, previewUrl: card.previewUrl }) }] };
     },
   );
 

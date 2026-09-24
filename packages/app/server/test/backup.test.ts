@@ -8,8 +8,11 @@ import { createClient, type Client } from "@libsql/client";
 // The service reads the data directory at import time, so point it at a scratch directory first.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-backup-"));
 process.env.KARDBOARD_DATA_DIR = path.join(root, "data");
+// Zero would have the prune step remove the snapshot it had just written.
+process.env.KARDBOARD_BACKUP_KEEP = "0";
 
-const { lastScheduledTime, listSnapshots, pruneSnapshots, runDueBackup, snapshotFilename, takeSnapshot, verifySnapshot } = await import("../src/services/backup.js");
+const { backupsView, lastScheduledTime, listSnapshots, pruneSnapshots, runDueBackup, snapshotFilename, takeSnapshot, verifySnapshot } = await import("../src/services/backup.js");
+const { atLeastOne } = await import("../src/env.js");
 
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -113,6 +116,47 @@ describe("takeSnapshot", () => {
       listSnapshots(dir).map((s) => s.name),
       ["kardboard-20260914T040000Z.db", "kardboard-20260913T040000Z.db"],
     );
+    client.close();
+  });
+});
+
+describe("how many snapshots to keep", () => {
+  it("is never fewer than one, so the snapshot just written survives its own prune", async () => {
+    const { client, dir } = await sourceDb();
+    for (const day of [11, 12]) await takeSnapshot({ client, dir, at: new Date(`2026-09-${day}T04:00:00.000Z`), keep: 10 });
+    for (const keep of [0, -3, Number.NaN]) {
+      const { snapshot } = await takeSnapshot({ client, dir, keep });
+      assert.deepEqual(
+        listSnapshots(dir).map((s) => s.name),
+        [snapshot.name],
+      );
+    }
+    client.close();
+  });
+
+  it("reads KARDBOARD_BACKUP_KEEP as at least one, and a value that is not a number as the default", () => {
+    assert.equal(backupsView().keep, 1, "KARDBOARD_BACKUP_KEEP=0 in this test's environment");
+    assert.equal(atLeastOne("KEEP", "0", 14), 1);
+    assert.equal(atLeastOne("KEEP", "-2", 14), 1);
+    assert.equal(atLeastOne("KEEP", "fourteen", 14), 14);
+    assert.equal(atLeastOne("KEEP", "7", 14), 7);
+    assert.equal(atLeastOne("KEEP", "", 14), 14);
+  });
+});
+
+describe("a snapshot that hangs", () => {
+  it("is abandoned after its timeout, leaves nothing behind, and does not hold up the next one", async () => {
+    const { client, dir } = await sourceDb();
+    const stuck = { execute: () => new Promise(() => {}) } as unknown as Client;
+
+    await assert.rejects(takeSnapshot({ client: stuck, dir, keep: 10, timeoutMs: 50 }), /did not finish/);
+    assert.equal(backupsView().lastAttempt?.ok, false);
+    assert.match(backupsView().lastAttempt?.error ?? "", /did not finish/);
+
+    const { snapshot } = await takeSnapshot({ client, dir, keep: 10 });
+    assert.deepEqual(fs.readdirSync(dir), [snapshot.name]);
+    assert.equal(backupsView().lastAttempt?.ok, true);
+    assert.equal(backupsView().lastAttempt?.error, null);
     client.close();
   });
 });

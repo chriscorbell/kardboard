@@ -172,7 +172,7 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
         ) : null}
 
         {card.column === "review" ? (
-          <ReviewBlock card={card} agentName={view.agent.name} approvals={detail.data?.approvals ?? []} members={members} onApprove={() => approve.mutateAsync(card.id)} busy={approve.isPending} />
+          <ReviewBlock card={card} agentName={view.agent.name} approvals={detail.data?.approvals ?? []} members={members} onApprove={() => approve.mutate({ id: card.id, headSha: card.prHeadSha })} busy={approve.isPending} error={approve.error?.message ?? null} />
         ) : null}
 
         {detail.data?.children.length ? <ChildCards slug={slug} cards={detail.data.children} agentName={view.agent.name} /> : null}
@@ -318,8 +318,12 @@ function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map
   );
 }
 
-function ReviewBlock({ card, agentName, approvals, members, onApprove, busy }: { card: Card; agentName: string; approvals: { userId: string; createdAt: string; invalidatedAt: string | null }[]; members: Map<string, User>; onApprove: () => Promise<unknown>; busy: boolean }) {
+// Approval is bound to the revision shown here: the short SHA is what Approve sends back, and the
+// server refuses it if the pull request has moved on or a Session is still at work.
+function ReviewBlock({ card, agentName, approvals, members, onApprove, busy, error }: { card: Card; agentName: string; approvals: { userId: string; createdAt: string; invalidatedAt: string | null }[]; members: Map<string, User>; onApprove: () => void; busy: boolean; error: string | null }) {
+  const reduce = useReducedMotion();
   const live = approvals.filter((a) => !a.invalidatedAt);
+  const working = Boolean(card.activeSession);
   return (
     <div className="mx-6 mt-4 rounded-card border border-line bg-raised px-4 py-3.5">
       {live.length > 0 ? (
@@ -333,13 +337,40 @@ function ReviewBlock({ card, agentName, approvals, members, onApprove, busy }: {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="min-w-0 flex-1">
             <p className="text-[13.5px] font-medium text-ink">Ready for your review</p>
-            <p className="mt-0.5 text-[12.5px] text-ink-muted">Check the preview. Approving lets {agentName} merge {card.prNumber ? `pull request #${card.prNumber}` : "the change"} and close this card. Ask for changes in a comment instead if it's not right.</p>
+            {working ? (
+              <p className="mt-0.5 text-[12.5px] text-ink-muted">{agentName} is still working on this card. You can approve once the session has finished.</p>
+            ) : (
+              <p className="mt-0.5 text-[12.5px] text-ink-muted">
+                Check the preview. Approving lets {agentName} merge {card.prNumber ? `pull request #${card.prNumber}` : "the change"}
+                {card.prHeadSha ? (
+                  <>
+                    {" "}at <code className="rounded-[4px] bg-overlay px-1 py-px font-mono text-[11.5px] text-ink" title={card.prHeadSha}>{card.prHeadSha.slice(0, 7)}</code>
+                  </>
+                ) : null}{" "}
+                and close this card. Ask for changes in a comment instead if it's not right.
+              </p>
+            )}
           </div>
-          <Button variant="primary" className="w-full sm:w-auto" loading={busy} icon={<Check className="size-4" strokeWidth={2} />} onClick={() => void onApprove()}>
+          <Button variant="primary" className="w-full sm:w-auto" loading={busy} disabled={working} icon={<Check className="size-4" strokeWidth={2} />} onClick={onApprove}>
             Approve
           </Button>
         </div>
       )}
+      <AnimatePresence initial={false}>
+        {error && live.length === 0 ? (
+          <motion.p
+            key="approve-error"
+            role="alert"
+            initial={reduce ? false : { opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-3 border-t border-line pt-2.5 text-[12.5px] text-danger"
+          >
+            {error}
+          </motion.p>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

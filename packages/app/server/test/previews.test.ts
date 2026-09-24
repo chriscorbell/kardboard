@@ -82,6 +82,18 @@ describe("letting a member into a preview", () => {
     await assert.rejects(exchangePreviewCode(code, preview.host), /already used/, "the same code cannot be spent twice");
   });
 
+  it("lets only one of two simultaneous exchanges spend a code", async () => {
+    const preview = await makePreview();
+    const user = await makeUser();
+    await db.insert(schema.boardMembers).values({ boardId: BOARD, userId: user.id });
+    const { code } = await issuePreviewCode(user, preview.host);
+
+    const results = await Promise.allSettled([exchangePreviewCode(code, preview.host), exchangePreviewCode(code, preview.host)]);
+
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    assert.match(String((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason), /already used/);
+  });
+
   it("refuses a code aimed at a different preview host", async () => {
     const preview = await makePreview();
     const other = await makePreview();

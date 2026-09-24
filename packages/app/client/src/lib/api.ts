@@ -128,14 +128,18 @@ export function useMoveCard(slug: string) {
   });
 }
 
+// Approval names the pull request head the card showed; the server refuses it if that has moved on,
+// and may record the newer head, so the card is re-read either way.
 export function useApproveCard(slug: string) {
   const qc = useQueryClient();
+  const refresh = (id: string) => {
+    void qc.invalidateQueries({ queryKey: keys.card(id) });
+    void qc.invalidateQueries({ queryKey: keys.board(slug) });
+  };
   return useMutation({
-    mutationFn: (id: string) => request(`/cards/${id}/approve`, { method: "POST" }),
-    onSuccess: (_r, id) => {
-      void qc.invalidateQueries({ queryKey: keys.card(id) });
-      void qc.invalidateQueries({ queryKey: keys.board(slug) });
-    },
+    mutationFn: ({ id, headSha }: { id: string; headSha: string | null }) => request(`/cards/${id}/approve`, { method: "POST", body: JSON.stringify({ headSha }) }),
+    onSuccess: (_r, { id }) => refresh(id),
+    onError: (_e, { id }) => refresh(id),
   });
 }
 

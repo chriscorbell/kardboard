@@ -62,6 +62,11 @@ async function deliver(id: string): Promise<void> {
   if (!row) return;
   const user = await getUser(row.toUserId);
   if (!user) return;
+  // Revoked between queueing and sending: a revoked User is not written to at all.
+  if (user.status === "revoked") {
+    await db.update(schema.outboundEmails).set({ status: "failed", error: "recipient is revoked" }).where(eq(schema.outboundEmails.id, id));
+    return;
+  }
   if (!env.resendApiKey) {
     console.log(`[email] (logged, no RESEND_API_KEY) to=${user.email} subject=${JSON.stringify(row.subject)}`);
     await db

@@ -24,6 +24,35 @@ function githubApp(prefix: string) {
   };
 }
 
+/**
+ * Dev authentication signs every request in as the Admin and lets any caller pick a User with a
+ * header, so a missing or mistyped setting must never produce it in production. There it runs only
+ * in a Preview container, which the runner marks with KARDBOARD_PREVIEW_HOST: a Preview runs this
+ * image with its own seeded database, behind the preview router's membership check. Anywhere else a
+ * production process refuses to start.
+ */
+export function resolveAuthMode(input: { auth: string; production: boolean; preview: boolean }): "dev" | "clerk" {
+  const auth = input.auth.trim().toLowerCase();
+  if (auth === "clerk") return "clerk";
+  if (auth !== "" && auth !== "dev") throw new Error(`KARDBOARD_AUTH must be "clerk" or "dev", not ${JSON.stringify(input.auth)}.`);
+  if (input.production && !input.preview) {
+    throw new Error("Refusing to start: NODE_ENV is production and authentication would run in dev mode, which signs every request in as the Admin. Set KARDBOARD_AUTH=clerk with the Clerk keys.");
+  }
+  return "dev";
+}
+
+// A count that has to be at least one, such as how many snapshots to keep, where zero would prune
+// the snapshot just written. Below one is raised to one, and a value that is not a number falls back
+// to the default, with a warning either way.
+export function atLeastOne(name: string, raw: string, fallback: number): number {
+  if (raw.trim() === "") return fallback;
+  const n = Math.floor(Number(raw));
+  const value = Number.isFinite(n) ? Math.max(1, n) : fallback;
+  if (String(value) !== raw.trim()) console.warn(`[env] ${name}=${JSON.stringify(raw)} is not a whole number of at least 1; using ${value}`);
+  return value;
+}
+
+const isProduction = process.env.NODE_ENV === "production";
 const dataDir = path.resolve(str("KARDBOARD_DATA_DIR", "./data"));
 const publicUrl = str("KARDBOARD_PUBLIC_URL", "http://localhost:5173").replace(/\/$/, "");
 
@@ -42,7 +71,7 @@ export const env = {
   dataDir,
   publicUrl,
   redirectHosts: str("KARDBOARD_REDIRECT_HOSTS").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
-  authMode: (str("KARDBOARD_AUTH", "dev") === "clerk" ? "clerk" : "dev") as "dev" | "clerk",
+  authMode: resolveAuthMode({ auth: str("KARDBOARD_AUTH"), production: isProduction, preview: str("KARDBOARD_PREVIEW_HOST") !== "" }),
   clerkSecretKey: str("CLERK_SECRET_KEY"),
   clerkPublishableKey: str("CLERK_PUBLISHABLE_KEY") || str("VITE_CLERK_PUBLISHABLE_KEY"),
   resendApiKey: str("RESEND_API_KEY"),
@@ -66,6 +95,6 @@ export const env = {
   // Snapshots live beside the database on the data bind mount. Set the hour to -1 to take none.
   backupDir: path.resolve(str("KARDBOARD_BACKUP_DIR", path.join(dataDir, "backups"))),
   backupHour: Number(str("KARDBOARD_BACKUP_HOUR", "4")),
-  backupKeep: Number(str("KARDBOARD_BACKUP_KEEP", "14")),
-  isProduction: process.env.NODE_ENV === "production",
+  backupKeep: atLeastOne("KARDBOARD_BACKUP_KEEP", str("KARDBOARD_BACKUP_KEEP"), 14),
+  isProduction,
 };

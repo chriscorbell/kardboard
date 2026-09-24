@@ -121,6 +121,8 @@ export interface Card {
   branch: string | null;
   prUrl: string | null;
   prNumber: number | null;
+  /** The pull request head a Member is shown and approves. Approve sends it back. */
+  prHeadSha: string | null;
   previewUrl: string | null;
   commentCount: number;
   activeSession: SessionSummary | null;
@@ -351,12 +353,21 @@ export interface BackupSnapshot {
   takenAt: string;
 }
 
+// The most recent snapshot attempt since the app started, scheduled or on demand. A failure is
+// retried on the next tick, so `error` stays set until one succeeds.
+export interface BackupAttempt {
+  at: string;
+  ok: boolean;
+  error: string | null;
+}
+
 export interface BackupsView {
   dir: string;
   hour: number; // local hour of the daily snapshot; negative means scheduled snapshots are off
   keep: number;
   databaseBytes: number;
   snapshots: BackupSnapshot[];
+  lastAttempt: BackupAttempt | null;
 }
 
 // ---- realtime ----

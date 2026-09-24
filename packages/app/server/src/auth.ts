@@ -36,7 +36,9 @@ async function getClerk() {
   return clerk;
 }
 
-const clerkCache = new Map<string, { user: User | null; expires: number }>();
+// Only which User a Clerk identity is, never the User itself: status and role are read from the
+// database on every request, so revoking someone or changing their role takes effect at once.
+const clerkCache = new Map<string, { userId: string | null; expires: number }>();
 
 export class NotInvitedError extends Error {}
 
@@ -58,12 +60,13 @@ async function resolveUser(c: Context): Promise<User | null> {
   if (!verified) return null;
   const cached = clerkCache.get(verified.sub);
   if (cached && cached.expires > Date.now()) {
-    if (!cached.user) throw new NotInvitedError();
-    return cached.user;
+    if (!cached.userId) throw new NotInvitedError();
+    const row = await db.select().from(schema.users).where(eq(schema.users.id, cached.userId)).get();
+    if (row) return toUser(row);
   }
   const profile = await k.fetchUser(verified.sub);
   const user = await activateFromClerk({ clerkUserId: verified.sub, ...profile });
-  clerkCache.set(verified.sub, { user, expires: Date.now() + 5 * 60_000 });
+  clerkCache.set(verified.sub, { userId: user?.id ?? null, expires: Date.now() + 5 * 60_000 });
   if (!user) throw new NotInvitedError();
   return user;
 }
@@ -76,7 +79,7 @@ export async function refreshFromClerk(user: User): Promise<User> {
   const k = await getClerk();
   const profile = await k.fetchUser(row.clerkUserId);
   const updated = await activateFromClerk({ clerkUserId: row.clerkUserId, ...profile });
-  clerkCache.set(row.clerkUserId, { user: updated, expires: Date.now() + 5 * 60_000 });
+  clerkCache.set(row.clerkUserId, { userId: updated?.id ?? null, expires: Date.now() + 5 * 60_000 });
   return updated ?? user;
 }
 

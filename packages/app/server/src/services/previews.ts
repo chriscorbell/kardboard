@@ -49,9 +49,11 @@ export async function startPreview(cardId: string): Promise<PreviewRow> {
   const id = existing?.id ?? newId();
   const nowIso = new Date().toISOString();
   if (existing) {
+    // A rebuild is fresh work to review, so the idle window starts again; otherwise a Preview
+    // nobody had opened for a week would be reaped within the hour of being rebuilt.
     await db
       .update(schema.previews)
-      .set({ host, status: "building", branch: card.branch, error: null, updatedAt: nowIso })
+      .set({ host, status: "building", branch: card.branch, error: null, lastAccessAt: nowIso, updatedAt: nowIso })
       .where(eq(schema.previews.id, id));
   } else {
     await db.insert(schema.previews).values({ id, boardId: board.id, cardId: card.id, host, status: "building", branch: card.branch, port: 3000 });
@@ -186,11 +188,10 @@ export async function issuePreviewCode(user: User, host: string): Promise<{ code
 }
 
 // Step two, called by the router over the control network. Spending a code deletes it, and
-// membership is checked again here rather than trusted from step one.
+// membership is checked again here rather than trusted from step one. The delete is the read, one
+// statement, so two exchanges of the same code cannot both find it.
 export async function exchangePreviewCode(code: string, host: string): Promise<{ cookie: string; maxAgeSeconds: number }> {
-  const hashed = hashCode(code);
-  const row = await db.select().from(schema.previewCodes).where(eq(schema.previewCodes.code, hashed)).get();
-  await db.delete(schema.previewCodes).where(eq(schema.previewCodes.code, hashed));
+  const [row] = await db.delete(schema.previewCodes).where(eq(schema.previewCodes.code, hashCode(code))).returning();
   if (!row) throw new PreviewError("that sign-in link was already used or has expired");
   if (new Date(row.expiresAt).getTime() < Date.now()) throw new PreviewError("that sign-in link has expired");
 

@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `pr_head_sha` text;
