@@ -172,3 +172,14 @@ describe("the entrypoint's choice of CLI", () => {
     assert.equal(pathFor("codex"), "/usr/bin:/bin", "a version without the checked marker is never used");
   });
 });
+
+describe("the agent image's copied scripts", () => {
+  it("are copied with a mode that leaves their directory enterable", () => {
+    // BuildKit applies COPY --chmod to the directories it creates too, and a 644 directory locked
+    // every Codex Session out of codex-config.sh on 2026-09-24.
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "images/agent/Dockerfile"), "utf8");
+    const modes = [...dockerfile.matchAll(/^COPY --chmod=(\d+)/gm)].map((m) => m[1]);
+    assert.ok(modes.length > 0);
+    for (const mode of modes) assert.equal(mode, "755");
+  });
+});
