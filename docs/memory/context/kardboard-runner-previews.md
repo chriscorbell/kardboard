@@ -11,4 +11,4 @@ The Board uses `runner` preview mode. DNS, the tunnel, the shared secret, and th
 
 [PR 12](https://github.com/chriscorbell/kardboard/pull/12) merged and deployed as `f6b868b`, including PR 11's root Dockerfile and port-aware health check. New branches inherit them. A Preview builds the requested branch, so an old branch without the Dockerfile still needs that change even after main has it.
 
-A Session container still has no installed browser, as checked on 2026-09-14. It can request a preview URL for the Admin to inspect, but should not claim a visual check it did not perform.
+A Session container still has no installed browser, as checked on 2026-09-14 and again in `images/agent/Dockerfile` on 2026-09-24. It can request a preview URL for the Admin to inspect, but should not claim a visual check it did not perform.

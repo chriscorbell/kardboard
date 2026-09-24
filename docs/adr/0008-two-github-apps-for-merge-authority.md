@@ -32,6 +32,16 @@ with the reason recorded, and the Card offers Retry merge. The retry sends the s
 as its precondition, so a push in the meantime turns it into the 409 case and asks for a fresh
 Approval rather than merging something nobody saw.
 
+## Amendment, 2026-09-24
+
+kardboard now also reads each pull request every two minutes and when a Card in Review is opened,
+so the head a Card shows can change while a Member looks at it. The rule above holds by moving the
+pin into the Review block: it keeps the head it first showed and sends that, and when the head moves
+it says so and waits for the Member to choose to look at the new commit. The Merge app's bypass also
+skips any required checks, so kardboard reads CI itself: Approve and Try merging again are refused
+while checks are failing or cannot be read for the moment, unless the Admin overrides, and while the
+Card has a Trigger waiting, since the Session it starts may push.
+
 ## Consequences
 
 - Both apps must be installed on every project repository, including client-owned ones. The
