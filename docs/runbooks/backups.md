@@ -35,7 +35,7 @@ One snapshot is taken per day, at `KARDBOARD_BACKUP_HOUR` in the server's timezo
 
 ## The copy off the disk
 
-Snapshots on the data disk survive a corrupted database or a bad deploy, not a lost disk. With `KARDBOARD_BACKUP_COPY_DIR` set, the app copies each verified snapshot there once it is written, through a `.partial` file that is renamed only once its size matches, then prunes the copies to the same keep count. It then copies every attachment in `uploads/` that the copy directory does not have yet. Attachments are named by the hash of their bytes and never change, so a file already there with the same size is the same file; nothing is ever deleted from the copy's `uploads/`.
+Snapshots on the data disk survive a corrupted database or a bad deploy, not a lost disk. With `KARDBOARD_BACKUP_COPY_DIR` set, the app copies each verified snapshot there once it is written, through a `.partial` file that is renamed only once its size matches, then prunes the copies to the same keep count. It then copies every attachment in `uploads/` that the copy directory does not have yet. Attachments are named by the hash of their bytes and never change, so a file already there with the same size is the same file. The one removal is a deleted Comment's file, once no other Attachment uses it, so a pasted secret does not outlive its deletion in the copy; the share's own snapshots of it are beyond the app's reach.
 
 Copies run one at a time in the background, after the snapshot they copy: *Snapshot now* answers as soon as the snapshot is on the data disk, and the Backups tab shows the copy's result when it lands. A pre-migration snapshot is copied only once the app is serving, so a slow or missing share never holds up a boot.
 
