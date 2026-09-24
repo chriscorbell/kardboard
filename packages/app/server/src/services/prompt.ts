@@ -1,4 +1,4 @@
-import { COLUMN_LABELS } from "@cardboard/shared";
+import { COLUMN_LABELS } from "@kardboard/shared";
 import type { schema } from "../db/index.js";
 import { getSettings } from "./settings.js";
 

@@ -8,4 +8,4 @@ Spawning disposable Session and Preview containers requires control of Docker on
 
 ## Considered options
 
-Mounting the socket into the app was rejected because a web-facing process becomes the host. A generic socket proxy was rejected because it filters endpoints, not intent; the runner's API can refuse anything that is not one of the two container shapes Cardboard needs.
+Mounting the socket into the app was rejected because a web-facing process becomes the host. A generic socket proxy was rejected because it filters endpoints, not intent; the runner's API can refuse anything that is not one of the two container shapes kardboard needs.

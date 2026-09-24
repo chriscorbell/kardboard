@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { after, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import type { Card, Comment, User } from "@cardboard/shared";
+import type { Card, Comment, User } from "@kardboard/shared";
 
 // The database module opens its file at import time, so point it at a scratch directory first.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cardboard-notifications-"));
-process.env.CARDBOARD_DATA_DIR = root;
-process.env.CARDBOARD_PUBLIC_URL = "https://cardboard.test";
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-notifications-"));
+process.env.KARDBOARD_DATA_DIR = root;
+process.env.KARDBOARD_PUBLIC_URL = "https://kardboard.test";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { listNotifications, markNotificationsRead, notifyCardMoved, notifyMentions } = await import("../src/services/notifications.js");

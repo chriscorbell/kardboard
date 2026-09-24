@@ -1,4 +1,4 @@
-import type { BoardEvent } from "@cardboard/shared";
+import type { BoardEvent } from "@kardboard/shared";
 
 type Listener = (event: BoardEvent) => void;
 

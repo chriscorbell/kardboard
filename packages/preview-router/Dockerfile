@@ -6,9 +6,9 @@ WORKDIR /repo
 FROM base AS build
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc tsconfig.base.json ./
 COPY packages/preview-router/package.json packages/preview-router/
-RUN pnpm install --frozen-lockfile --filter @cardboard/preview-router --config.confirmModulesPurge=false
+RUN pnpm install --frozen-lockfile --filter @kardboard/preview-router --config.confirmModulesPurge=false
 COPY packages/preview-router packages/preview-router
-RUN pnpm --filter @cardboard/preview-router build && pnpm install --frozen-lockfile --prod --filter @cardboard/preview-router --config.confirmModulesPurge=false && mkdir -p packages/preview-router/node_modules
+RUN pnpm --filter @kardboard/preview-router build && pnpm install --frozen-lockfile --prod --filter @kardboard/preview-router --config.confirmModulesPurge=false && mkdir -p packages/preview-router/node_modules
 
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production PORT=3072

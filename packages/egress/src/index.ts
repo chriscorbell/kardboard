@@ -50,4 +50,4 @@ const server = http.createServer(
   }),
 );
 
-server.listen(port, () => console.log(`cardboard egress listening on :${port}`));
+server.listen(port, () => console.log(`kardboard egress listening on :${port}`));

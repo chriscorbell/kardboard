@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Settings } from "@cardboard/shared";
+import type { Settings } from "@kardboard/shared";
 import { keys, request, useAdminSettings } from "../../lib/api";
 import { Avatar, Button, Field, Input, Skeleton } from "../../components/ui";
 import { TabHeader } from "./AdminPage";

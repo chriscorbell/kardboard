@@ -50,7 +50,7 @@ async function gh<T>(token: string, path: string, init: RequestInit = {}): Promi
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
       Authorization: `Bearer ${token}`,
-      "User-Agent": "cardboard",
+      "User-Agent": "kardboard",
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers ?? {}),
     },
@@ -111,7 +111,7 @@ export async function mintInstallationToken(kind: GitHubAppKind, owner: string, 
 
 export function botIdentity(kind: GitHubAppKind): { name: string; email: string } {
   const cfg = appConfig(kind);
-  const slug = cfg?.slug ?? "cardboard";
+  const slug = cfg?.slug ?? "kardboard";
   return { name: `${slug}[bot]`, email: `${cfg?.id ?? "0"}+${slug}[bot]@users.noreply.github.com` };
 }
 

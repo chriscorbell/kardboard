@@ -6,9 +6,9 @@ WORKDIR /repo
 FROM base AS build
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc tsconfig.base.json ./
 COPY packages/runner/package.json packages/runner/
-RUN pnpm install --frozen-lockfile --filter @cardboard/runner --config.confirmModulesPurge=false
+RUN pnpm install --frozen-lockfile --filter @kardboard/runner --config.confirmModulesPurge=false
 COPY packages/runner packages/runner
-RUN pnpm --filter @cardboard/runner build && pnpm install --frozen-lockfile --prod --filter @cardboard/runner --config.confirmModulesPurge=false && mkdir -p packages/runner/node_modules
+RUN pnpm --filter @kardboard/runner build && pnpm install --frozen-lockfile --prod --filter @kardboard/runner --config.confirmModulesPurge=false && mkdir -p packages/runner/node_modules
 
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production PORT=3071

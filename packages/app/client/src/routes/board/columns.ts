@@ -1,4 +1,4 @@
-import type { Column } from "@cardboard/shared";
+import type { Column } from "@kardboard/shared";
 
 export const COLUMN_TONES: Record<Column, "neutral" | "accent" | "ok" | "warn" | "danger" | "info"> = {
   inbox: "neutral",

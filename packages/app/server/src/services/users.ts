@@ -1,5 +1,5 @@
 import { eq, inArray } from "drizzle-orm";
-import type { User } from "@cardboard/shared";
+import type { User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 

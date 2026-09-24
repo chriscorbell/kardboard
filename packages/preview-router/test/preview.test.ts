@@ -5,7 +5,7 @@ import { COOKIE_NAME, cookieHeader, forwardHeaders, holdingPage, readCookie, saf
 
 const secret = "test-secret";
 const host = "k6u39mjg.kardboard.cc";
-const route: Route = { host, target: "http://cardboard-preview-pv1:3000", status: "running", error: null, epoch: 3 };
+const route: Route = { host, target: "http://kardboard-preview-pv1:3000", status: "running", error: null, epoch: 3 };
 
 function cookie(payload: Partial<PreviewCookie>, withSecret = secret): string {
   const body = Buffer.from(
@@ -42,7 +42,7 @@ describe("the preview cookie", () => {
 
   it("is host-only and unreadable from JavaScript", () => {
     const header = cookieHeader("value", 3600, true);
-    assert.match(header, /^cardboard_preview=value; Path=\/; HttpOnly; SameSite=Lax; Max-Age=3600; Secure$/);
+    assert.match(header, /^kardboard_preview=value; Path=\/; HttpOnly; SameSite=Lax; Max-Age=3600; Secure$/);
     assert.ok(!header.includes("Domain="), "no Domain attribute, so siblings under the parent domain never see it");
   });
 
@@ -56,12 +56,12 @@ describe("what reaches branch-controlled code", () => {
   it("strips every kardboard credential before proxying", () => {
     const headers = forwardHeaders(
       { host, cookie: `${COOKIE_NAME}=abc; __session=clerk`, authorization: "Bearer secret", "proxy-authorization": "Basic x", "user-agent": "curl" },
-      "cardboard-preview-pv1:3000",
+      "kardboard-preview-pv1:3000",
     );
     assert.equal(headers.cookie, undefined);
     assert.equal(headers.authorization, undefined);
     assert.equal(headers["proxy-authorization"], undefined);
-    assert.equal(headers.host, "cardboard-preview-pv1:3000", "the upstream sees its own host");
+    assert.equal(headers.host, "kardboard-preview-pv1:3000", "the upstream sees its own host");
     assert.equal(headers["user-agent"], "curl", "ordinary headers are left alone");
   });
 });

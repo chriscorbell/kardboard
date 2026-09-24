@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Paperclip, Send, X } from "lucide-react";
-import type { AgentProfile, User } from "@cardboard/shared";
+import type { AgentProfile, User } from "@kardboard/shared";
 import { Avatar, Button, cx, IconButton, Textarea } from "../../components/ui";
 import { composerKeyAction } from "./composerKeys";
 

@@ -10,7 +10,7 @@ import { publish } from "./realtime.js";
 import { providerForDispatch } from "./fallback.js";
 import { readProviderLimits } from "./provider-limits.js";
 
-const SWEEP_HOUR = Number(process.env.CARDBOARD_SWEEP_HOUR ?? "3");
+const SWEEP_HOUR = Number(process.env.KARDBOARD_SWEEP_HOUR ?? "3");
 const WAIT_LIMIT_MS = 60 * 60_000;
 const ACTIVE = ["queued", "starting", "running"] as const;
 
@@ -66,7 +66,7 @@ async function startSweep(board: typeof schema.boards.$inferSelect, wallClockMin
   await recordEvent({ boardId: board.id, actor: SYSTEM_ACTOR, type: "session.queued", payload: { sessionId, kind: "sweep" } });
   const prompt = `You are running the nightly hygiene sweep for the "${board.name}" board in kardboard. Read the ledger and the board. For every card, check that its column matches its state: Blocked cards wait on a human, Ready cards are triaged and unclaimed, In Progress cards have an active session or an open branch, Review cards have a pull request and preview, Done cards are merged or closed. Move cards that drifted, explaining each move in a one-line comment. For cards that have sat in Blocked for 14 days with no human reply, post one reminder mentioning the card's author. Do not open pull requests or change code. Finish with a one-sentence summary.${board.promptAppend ? `\n\nBoard-specific instructions from the Admin:\n${board.promptAppend}` : ""}`;
   try {
-    const { containerId } = await runner.start({ sessionId, boardSlug: board.slug, provider: chosen.provider, model: chosen.switched ? null : board.model, reasoning: board.reasoning, image: board.agentImage, repoUrl: null, branch: null, token, wallClockMinutes, prompt, githubToken: null, gitName: "cardboard", gitEmail: "cardboard@users.noreply.github.com" });
+    const { containerId } = await runner.start({ sessionId, boardSlug: board.slug, provider: chosen.provider, model: chosen.switched ? null : board.model, reasoning: board.reasoning, image: board.agentImage, repoUrl: null, branch: null, token, wallClockMinutes, prompt, githubToken: null, gitName: "kardboard", gitEmail: "kardboard@users.noreply.github.com" });
     await db.update(schema.sessions).set({ status: "running", containerId, startedAt: new Date().toISOString() }).where(eq(schema.sessions.id, sessionId));
     const row = (await db.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId)).get())!;
     publish(board.id, { type: "session.updated", session: { id: row.id, kind: row.kind, status: row.status, provider: row.provider, fallbackFrom: row.fallbackFrom, intent: row.intent, branch: row.branch, cardId: row.cardId, startedAt: row.startedAt, endedAt: row.endedAt, outcomeSummary: row.outcomeSummary, createdAt: row.createdAt } });

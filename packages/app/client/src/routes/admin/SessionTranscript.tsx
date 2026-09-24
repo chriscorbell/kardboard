@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Wrench, CornerDownRight } from "lucide-react";
-import type { TranscriptEntry } from "@cardboard/shared";
+import type { TranscriptEntry } from "@kardboard/shared";
 import { fetchSessionTranscript } from "../../lib/api";
 import { Skeleton, cx } from "../../components/ui";
 import { clockTime } from "../../lib/format";

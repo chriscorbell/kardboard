@@ -8,7 +8,7 @@ The `homelab` tunnel points the apex at minicore port 3070 and the wildcard at p
 
 Cloudflare creates an explicit DNS record when adding a tunnel route, and refuses an existing record with the same name. Wildcard routes do not create DNS records; add their proxied wildcard CNAME separately. The apex and first-level previews fit Universal SSL.
 
-`CARDBOARD_PUBLIC_URL=https://kardboard.cc` controls app links, preview sign-in redirects, and accepted Clerk token origins. `CARDBOARD_REDIRECT_HOSTS=cardboard.xode.cc,app.kardboard.cc` preserves old app links with a 308 redirect, retaining the path and query. GET and HEAD requests redirect; API mutations do not.
+`KARDBOARD_PUBLIC_URL=https://kardboard.cc` controls app links, preview sign-in redirects, and accepted Clerk token origins. `KARDBOARD_REDIRECT_HOSTS=cardboard.xode.cc,app.kardboard.cc` preserves old app links with a 308 redirect, retaining the path and query. GET and HEAD requests redirect; API mutations do not.
 
 ## Authentication
 
@@ -32,14 +32,14 @@ A [Clerk primary-domain change](https://clerk.com/docs/guides/development/deploy
 
 Resend sends as `Milo <milo@kardboard.cc>`. Verify `resend._domainkey` (TXT), `send` (MX and SPF TXT), and `_dmarc` (TXT) using the values in Resend. These records are DNS-only. The existing sending key can be renamed and restricted to the new domain without changing its value. Change that restriction with the deployed sender address so mail delivery stays aligned.
 
-## Deployment compatibility
+## Compose alignment
 
-The repository's `CARDBOARD_*` variables, `@cardboard/*` package names, GHCR image names, Docker networks, database filename, and existing storage paths remain stable. Rebranding does not move or replace production data. `deploy/compose.yaml` and `chriscorbell/stacks/cardboard/compose.yaml` must remain aligned; Watchtower applies image updates but does not apply Compose edits.
+`deploy/compose.yaml` and `chriscorbell/stacks/kardboard/compose.yaml` must remain aligned; Watchtower applies image updates but does not apply Compose edits.
 
 ## Migration verification
 
-On 2026-09-15 UTC, the existing Clerk instance moved to the root with all DNS records verified and both certificates issued. Google sign-in and Admin email-code sign-in succeeded. The Admin opened the rebuilt Preview on its new hostname. Clerk denied Preview origins on `/v1/client`; unknown Preview hosts returned 404. Resend verified the new domain and the existing sending key was restricted to it. Both GitHub Apps remained installed after the repository rename. The apps were later renamed to Kardboard (Sessions) and Kardboard (Merge), with slugs `kardboard-sessions` and `kardboard-merge`; their IDs, and so the `cardboard` ruleset bypass, did not change. Production switched to the new slugs on 2026-09-15 and both apps still reported as installed on both project repositories.
+On 2026-09-15 UTC, the existing Clerk instance moved to the root with all DNS records verified and both certificates issued. Google sign-in and Admin email-code sign-in succeeded. The Admin opened the rebuilt Preview on its new hostname. Clerk denied Preview origins on `/v1/client`; unknown Preview hosts returned 404. Resend verified the new domain and the existing sending key was restricted to it. Both GitHub Apps remained installed after the repository rename. The apps were later renamed to Kardboard (Sessions) and Kardboard (Merge), with slugs `kardboard-sessions` and `kardboard-merge`; their IDs, and so the `kardboard` ruleset bypass, did not change. Production switched to the new slugs on 2026-09-15 and both apps still reported as installed on both project repositories.
 
 [PR 12](https://github.com/chriscorbell/kardboard/pull/12) deployed as `f6b868b`. [CI](https://github.com/chriscorbell/kardboard/actions/runs/34926475377) passed validation and published all five images; all four production services were verified at that revision. Production browser checks confirmed the lowercase wordmark, authenticated Board access, and a fresh Preview authorization exchange. Both legacy app aliases returned path- and query-preserving 308 redirects.
 
-Card mq729n reached Done after verification and its Preview was retired. New Cards use the same `{card}.kardboard.cc` pattern. The local checkout, Compose stack folder, Board slug, and integration identifiers keep their existing names for compatibility.
+Card mq729n reached Done after verification and its Preview was retired. New Cards use the same `{card}.kardboard.cc` pattern.

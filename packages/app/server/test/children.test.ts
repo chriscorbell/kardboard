@@ -4,14 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { after, beforeEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
-import type { Card, Column, Priority } from "@cardboard/shared";
+import type { Card, Column, Priority } from "@kardboard/shared";
 
 // The database module opens its file at import time, so point it at a scratch directory first.
 // The coalesce delay is pushed out of the way: these tests are about what is written down for a
 // Session to pick up, not about the container that eventually picks it up.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cardboard-children-"));
-process.env.CARDBOARD_DATA_DIR = root;
-process.env.CARDBOARD_TRIGGER_COALESCE_MS = "600000";
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-children-"));
+process.env.KARDBOARD_DATA_DIR = root;
+process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { createCard, getCard, moveCard } = await import("../src/services/cards.js");

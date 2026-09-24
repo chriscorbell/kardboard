@@ -44,7 +44,7 @@ if (fs.existsSync(path.join(clientDir, "index.html"))) {
   const runtimeConfig = JSON.stringify({ clerkPublishableKey: env.authMode === "clerk" ? env.clerkPublishableKey : "" });
   const indexHtml = fs
     .readFileSync(path.join(clientDir, "index.html"), "utf8")
-    .replace("<!--cardboard-config-->", `<script>window.__CARDBOARD_CONFIG__=${runtimeConfig}</script>`);
+    .replace("<!--kardboard-config-->", `<script>window.__KARDBOARD_CONFIG__=${runtimeConfig}</script>`);
   app.use("/assets/*", serveStatic({ root: path.relative(process.cwd(), clientDir) }));
   app.use("/brand/*", serveStatic({ root: path.relative(process.cwd(), clientDir) }));
   app.get("*", async (c) => {

@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
-import { PROVIDERS, slugifyBranch, type Card, type Provider, type SessionStatus, type SessionSummary, type TriggerKind } from "@cardboard/shared";
+import { PROVIDERS, slugifyBranch, type Card, type Provider, type SessionStatus, type SessionSummary, type TriggerKind } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { newId } from "../ids.js";

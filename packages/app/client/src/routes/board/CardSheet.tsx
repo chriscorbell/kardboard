@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, ExternalLink, FileText, GitBranch, GitPullRequest, History, Pencil, RotateCcw, Square, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type Attachment, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@cardboard/shared";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type Attachment, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
 import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment, request, keys } from "../../lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";

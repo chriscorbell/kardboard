@@ -4,13 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { after, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import type { User } from "@cardboard/shared";
+import type { User } from "@kardboard/shared";
 
 // The database module opens its file at import time, so point it at a scratch directory first.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cardboard-previews-"));
-process.env.CARDBOARD_DATA_DIR = root;
-process.env.CARDBOARD_PUBLIC_URL = "https://kardboard.cc";
-process.env.CARDBOARD_PREVIEW_SECRET = "test-preview-secret";
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-previews-"));
+process.env.KARDBOARD_DATA_DIR = root;
+process.env.KARDBOARD_PUBLIC_URL = "https://kardboard.cc";
+process.env.KARDBOARD_PREVIEW_SECRET = "test-preview-secret";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const {
@@ -42,9 +42,9 @@ async function makeUser(role: "admin" | "member" = "member"): Promise<User> {
 async function makePreview(boardId = BOARD): Promise<{ id: string; host: string; cardId: string }> {
   const cardId = `card-${n++}`;
   const id = `preview-${n++}`;
-  await db.insert(schema.cards).values({ id: cardId, boardId, title: "A card", branch: `cardboard/${cardId}` });
+  await db.insert(schema.cards).values({ id: cardId, boardId, title: "A card", branch: `kardboard/${cardId}` });
   const host = `${cardId}.kardboard.cc`;
-  await db.insert(schema.previews).values({ id, boardId, cardId, host, status: "running", branch: `cardboard/${cardId}`, target: `http://cardboard-preview-${id}:3000` });
+  await db.insert(schema.previews).values({ id, boardId, cardId, host, status: "running", branch: `kardboard/${cardId}`, target: `http://kardboard-preview-${id}:3000` });
   return { id, host, cardId };
 }
 
@@ -119,7 +119,7 @@ describe("the routing table the preview router polls", () => {
   it("carries the board's epoch, which moves when membership narrows", async () => {
     const preview = await makePreview();
     const before = (await previewRoutes()).find((r) => r.host === preview.host)!;
-    assert.equal(before.target, `http://cardboard-preview-${preview.id}:3000`);
+    assert.equal(before.target, `http://kardboard-preview-${preview.id}:3000`);
     assert.equal(before.status, "running");
 
     await bumpPreviewEpoch(BOARD);

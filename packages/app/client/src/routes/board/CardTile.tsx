@@ -1,6 +1,6 @@
 import { forwardRef, type HTMLAttributes } from "react";
 import { GitPullRequest, MessageSquare, RotateCcw } from "lucide-react";
-import type { AgentProfile, Card, User } from "@cardboard/shared";
+import type { AgentProfile, Card, User } from "@kardboard/shared";
 import { Avatar, cx } from "../../components/ui";
 
 const PRIORITY: Record<Card["priority"], { label: string; className: string } | null> = {

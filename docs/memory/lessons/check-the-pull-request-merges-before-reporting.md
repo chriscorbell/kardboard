@@ -3,7 +3,7 @@
 Read when: finishing a card, resuming one whose pull request is already open, or finding that no GitHub Actions run appears on a pull request head.
 
 Status: verified
-Scope: every Cardboard board
+Scope: every kardboard board
 Verified: 2026-09-15
 Source: pull request #2 on this repository, observed `"mergeable": "CONFLICTING"` before the merge commit `d67f5c8`; run list and `git merge-tree` checks described below, both run 2026-09-14. Applied again on 2026-09-15 for pull request #8: `main` had moved four commits during the Session and conflicted in four files, and after resolving, `gh pr view` reported `MERGEABLE` with `BLOCKED` exactly as described below.
 Recheck when: Sessions stop cloning a fresh workspace per Session, or gain a fetch of the default branch at start

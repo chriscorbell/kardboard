@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router";
 import { Bell } from "lucide-react";
-import type { Notification } from "@cardboard/shared";
+import type { Notification } from "@kardboard/shared";
 import { useMarkNotificationsRead, useNotifications } from "../lib/api";
 import { relativeTime } from "../lib/format";
 import { Popover } from "./Popover";

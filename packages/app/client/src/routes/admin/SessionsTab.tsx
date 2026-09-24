@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { Square, RotateCcw, ChevronRight } from "lucide-react";
-import { ACTIVE_SESSION_STATUSES, type SessionStatus } from "@cardboard/shared";
+import { ACTIVE_SESSION_STATUSES, type SessionStatus } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminSessions } from "../../lib/api";
 import { Button, Chip, EmptyState, Skeleton, cx } from "../../components/ui";
 import { absoluteTime, relativeTime, shortId } from "../../lib/format";

@@ -6,8 +6,8 @@ import { after, describe, it } from "node:test";
 import { createClient, type Client } from "@libsql/client";
 
 // The service reads the data directory at import time, so point it at a scratch directory first.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cardboard-backup-"));
-process.env.CARDBOARD_DATA_DIR = path.join(root, "data");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-backup-"));
+process.env.KARDBOARD_DATA_DIR = path.join(root, "data");
 
 const { lastScheduledTime, listSnapshots, pruneSnapshots, runDueBackup, snapshotFilename, takeSnapshot, verifySnapshot } = await import("../src/services/backup.js");
 
@@ -16,7 +16,7 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 let n = 0;
 async function sourceDb(): Promise<{ client: Client; file: string; dir: string }> {
   const dir = fs.mkdtempSync(path.join(root, `case-${n++}-`));
-  const file = path.join(dir, "cardboard.db");
+  const file = path.join(dir, "kardboard.db");
   const client = createClient({ url: `file:${file}` });
   await client.execute("PRAGMA journal_mode = WAL");
   await client.execute("CREATE TABLE cards (id integer primary key, title text)");
@@ -36,8 +36,8 @@ async function titles(file: string): Promise<string[]> {
 
 describe("snapshot names", () => {
   it("stamps the file with whole UTC seconds", () => {
-    assert.equal(snapshotFilename(new Date("2026-09-14T04:00:07.412Z")), "cardboard-20260914T040007Z.db");
-    assert.equal(snapshotFilename(new Date("2026-09-14T04:00:07.412Z"), 2), "cardboard-20260914T040007Z-2.db");
+    assert.equal(snapshotFilename(new Date("2026-09-14T04:00:07.412Z")), "kardboard-20260914T040007Z.db");
+    assert.equal(snapshotFilename(new Date("2026-09-14T04:00:07.412Z"), 2), "kardboard-20260914T040007Z-2.db");
   });
 });
 
@@ -74,8 +74,8 @@ describe("takeSnapshot", () => {
     const at = new Date("2026-09-14T04:00:00.000Z");
     const first = await takeSnapshot({ client, dir, at, keep: 10 });
     const second = await takeSnapshot({ client, dir, at, keep: 10 });
-    assert.equal(first.snapshot.name, "cardboard-20260914T040000Z.db");
-    assert.equal(second.snapshot.name, "cardboard-20260914T040000Z-1.db");
+    assert.equal(first.snapshot.name, "kardboard-20260914T040000Z.db");
+    assert.equal(second.snapshot.name, "kardboard-20260914T040000Z-1.db");
     assert.equal(listSnapshots(dir).length, 2);
     client.close();
   });
@@ -85,7 +85,7 @@ describe("takeSnapshot", () => {
     const at = new Date("2026-09-14T04:00:00.000Z");
     const results = await Promise.all([takeSnapshot({ client, dir, at, keep: 10 }), takeSnapshot({ client, dir, at, keep: 10 })]);
     const names = results.map((r) => r.snapshot.name).sort();
-    assert.deepEqual(names, ["cardboard-20260914T040000Z-1.db", "cardboard-20260914T040000Z.db"]);
+    assert.deepEqual(names, ["kardboard-20260914T040000Z-1.db", "kardboard-20260914T040000Z.db"]);
     assert.deepEqual(fs.readdirSync(dir).sort(), names);
     client.close();
   });
@@ -108,10 +108,10 @@ describe("takeSnapshot", () => {
     const { client, dir } = await sourceDb();
     for (const day of [11, 12, 13]) await takeSnapshot({ client, dir, at: new Date(`2026-09-${day}T04:00:00.000Z`), keep: 10 });
     const { pruned } = await takeSnapshot({ client, dir, at: new Date("2026-09-14T04:00:00.000Z"), keep: 2 });
-    assert.deepEqual(pruned, ["cardboard-20260912T040000Z.db", "cardboard-20260911T040000Z.db"]);
+    assert.deepEqual(pruned, ["kardboard-20260912T040000Z.db", "kardboard-20260911T040000Z.db"]);
     assert.deepEqual(
       listSnapshots(dir).map((s) => s.name),
-      ["cardboard-20260914T040000Z.db", "cardboard-20260913T040000Z.db"],
+      ["kardboard-20260914T040000Z.db", "kardboard-20260913T040000Z.db"],
     );
     client.close();
   });
@@ -175,14 +175,14 @@ describe("pruneSnapshots", () => {
       if (mtime) fs.utimesSync(file, mtime, mtime);
     };
     const now = new Date("2026-09-14T04:00:00.000Z");
-    write("cardboard-20260913T040000Z.db");
-    write("cardboard-20260914T040000Z.db");
+    write("kardboard-20260913T040000Z.db");
+    write("kardboard-20260914T040000Z.db");
     write("notes.txt");
-    write("cardboard-20260914T040000Z-1.db.partial", new Date("2026-09-13T04:00:00.000Z"));
-    write("cardboard-20260914T035900Z.db.partial", now);
+    write("kardboard-20260914T040000Z-1.db.partial", new Date("2026-09-13T04:00:00.000Z"));
+    write("kardboard-20260914T035900Z.db.partial", now);
 
     const removed = pruneSnapshots(1, dir, now);
-    assert.deepEqual(removed, ["cardboard-20260913T040000Z.db", "cardboard-20260914T040000Z-1.db.partial"]);
-    assert.deepEqual(fs.readdirSync(dir).sort(), ["cardboard-20260914T035900Z.db.partial", "cardboard-20260914T040000Z.db", "notes.txt"]);
+    assert.deepEqual(removed, ["kardboard-20260913T040000Z.db", "kardboard-20260914T040000Z-1.db.partial"]);
+    assert.deepEqual(fs.readdirSync(dir).sort(), ["kardboard-20260914T035900Z.db.partial", "kardboard-20260914T040000Z.db", "notes.txt"]);
   });
 });

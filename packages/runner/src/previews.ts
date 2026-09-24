@@ -29,8 +29,8 @@ export interface PreviewLimits {
   pidsLimit: number;
 }
 
-export const previewContainerName = (previewId: string) => `cardboard-preview-${previewId}`;
-export const previewImageTag = (previewId: string) => `cardboard-preview-${previewId}:latest`;
+export const previewContainerName = (previewId: string) => `kardboard-preview-${previewId}`;
+export const previewImageTag = (previewId: string) => `kardboard-preview-${previewId}:latest`;
 
 // The clone URL carries a one-hour installation token. It is never logged and never written into
 // the image: the build context is the working tree, and `.git` is excluded from the tar.
@@ -53,10 +53,10 @@ export function previewContainerSpec(req: PreviewRequest, limits: PreviewLimits)
     Env: Object.entries({ NODE_ENV: "production", PORT: String(req.port), ...req.env }).map(([k, v]) => `${k}=${v}`),
     Labels: {
       "com.centurylinklabs.watchtower.enable": "false",
-      "cardboard.preview": req.previewId,
-      "cardboard.board": req.boardSlug,
-      "cardboard.card": req.cardId,
-      "cardboard.preview.host": req.host,
+      "kardboard.preview": req.previewId,
+      "kardboard.board": req.boardSlug,
+      "kardboard.card": req.cardId,
+      "kardboard.preview.host": req.host,
     },
     HostConfig: {
       Memory: limits.memoryBytes,

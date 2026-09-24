@@ -7,7 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES } from "@cardboard/shared";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { findSessionByToken, endSession, listBoardSessions } from "../services/orchestrator.js";
@@ -24,7 +24,7 @@ type SessionRow = typeof schema.sessions.$inferSelect;
 // The agent-native interface. Every tool runs under a Session's identity; authorization is the
 // Session's Board plus, for pull-request state, its own Card. Sweeps cannot touch work state.
 function buildServer(session: SessionRow): McpServer {
-  const server = new McpServer({ name: "cardboard", version: "0.1.0" });
+  const server = new McpServer({ name: "kardboard", version: "0.1.0" });
   const actor = { kind: "agent" as const, id: null };
 
   async function assertBoardCard(cardId: string) {

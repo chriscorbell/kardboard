@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { AUTH_CLAIM, CodexCredential, accountIdFrom, decodeJwt, expiryOf, needsRefresh, writeAuthFile, type CodexAuthFile } from "../src/codex-credential.js";
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cardboard-codex-"));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-codex-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");

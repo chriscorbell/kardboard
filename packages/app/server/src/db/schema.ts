@@ -215,7 +215,7 @@ export const previews = sqliteTable(
     branch: text("branch").notNull(),
     port: integer("port").notNull().default(3000),
     containerId: text("container_id"),
-    // Where the router proxies to, on the preview network: `http://cardboard-preview-<id>:<port>`.
+    // Where the router proxies to, on the preview network: `http://kardboard-preview-<id>:<port>`.
     target: text("target"),
     error: text("error"),
     // Drives the seven-idle-day removal: touched whenever someone is let through to the Preview.

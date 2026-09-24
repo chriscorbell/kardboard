@@ -1,14 +1,14 @@
 import { createClient, type Client } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
-import type { BackupSnapshot, BackupsView } from "@cardboard/shared";
+import type { BackupSnapshot, BackupsView } from "@kardboard/shared";
 import { client as liveClient, dbFile } from "../db/index.js";
 import { env } from "../env.js";
 
 // A snapshot is one self-contained file written by `VACUUM INTO`, never a copy of the live database
 // and its WAL: see docs/adr/0004-sqlite-in-a-single-server-process.md. Restoring is an operator
 // procedure with the app stopped, documented in docs/runbooks/backups.md.
-const SNAPSHOT_RE = /^cardboard-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z(?:-\d+)?\.db$/;
+const SNAPSHOT_RE = /^kardboard-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z(?:-\d+)?\.db$/;
 const PARTIAL_SUFFIX = ".partial";
 const STALE_PARTIAL_MS = 60 * 60_000;
 const TICK_MS = 60_000;
@@ -22,7 +22,7 @@ export interface SnapshotOptions {
 
 export function snapshotFilename(at: Date, attempt = 0): string {
   const stamp = at.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-  return `cardboard-${stamp}${attempt > 0 ? `-${attempt}` : ""}.db`;
+  return `kardboard-${stamp}${attempt > 0 ? `-${attempt}` : ""}.db`;
 }
 
 function takenAtOf(name: string): string | null {
@@ -162,7 +162,7 @@ export async function runDueBackup(now = new Date(), options: SnapshotOptions & 
 
 export function startBackupScheduler(): void {
   if (env.backupHour < 0) {
-    console.log("[backup] scheduled snapshots are off (CARDBOARD_BACKUP_HOUR is negative)");
+    console.log("[backup] scheduled snapshots are off (KARDBOARD_BACKUP_HOUR is negative)");
     return;
   }
   const tick = () => void runDueBackup().catch((err) => console.error("[backup] snapshot failed", err));

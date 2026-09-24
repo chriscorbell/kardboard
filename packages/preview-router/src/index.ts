@@ -10,11 +10,11 @@ import { COOKIE_NAME, cookieHeader, forwardHeaders, holdingPage, readCookie, saf
 // a kardboard credential: every cookie and Authorization header is stripped before proxying.
 
 const port = Number(process.env.PORT ?? "3072");
-const secret = process.env.CARDBOARD_PREVIEW_SECRET ?? "";
-const appUrl = (process.env.CARDBOARD_APP_URL ?? "http://app:3070").replace(/\/$/, "");
-const publicAppUrl = (process.env.CARDBOARD_PUBLIC_URL ?? "https://kardboard.cc").replace(/\/$/, "");
-const runnerToken = process.env.CARDBOARD_RUNNER_TOKEN ?? "";
-const secureCookies = !/^(0|false|no)$/i.test(process.env.CARDBOARD_PREVIEW_SECURE_COOKIES ?? "1");
+const secret = process.env.KARDBOARD_PREVIEW_SECRET ?? "";
+const appUrl = (process.env.KARDBOARD_APP_URL ?? "http://app:3070").replace(/\/$/, "");
+const publicAppUrl = (process.env.KARDBOARD_PUBLIC_URL ?? "https://kardboard.cc").replace(/\/$/, "");
+const runnerToken = process.env.KARDBOARD_RUNNER_TOKEN ?? "";
+const secureCookies = !/^(0|false|no)$/i.test(process.env.KARDBOARD_PREVIEW_SECURE_COOKIES ?? "1");
 
 const routes = new Map<string, Route>();
 
@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://${host}`);
 
   // Step two of the sign-in redirect: spend the code, set a host-only cookie, carry on.
-  if (url.pathname === "/__cardboard/auth") {
+  if (url.pathname === "/__kardboard/auth") {
     const code = url.searchParams.get("code") ?? "";
     const next = safeNext(url.searchParams.get("next"));
     void exchange(code, host).then((result) => {
@@ -102,4 +102,4 @@ const server = http.createServer((req, res) => {
 
 void refreshRoutes();
 setInterval(() => void refreshRoutes(), 15_000);
-server.listen(port, () => console.log(`cardboard preview-router listening on :${port}`));
+server.listen(port, () => console.log(`kardboard preview-router listening on :${port}`));

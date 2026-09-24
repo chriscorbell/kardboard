@@ -21,7 +21,7 @@ import {
   type CardDetail,
   type Me,
   type SessionTranscript,
-} from "@cardboard/shared";
+} from "@kardboard/shared";
 import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
@@ -255,7 +255,7 @@ api.post("/previews/auth-code", zValidator("json", z.object({ host: z.string().m
     const { code, redirectBase } = await issuePreviewCode(c.get("user"), host);
     // `next` is a path on the preview host, never an absolute URL, so this cannot be an open redirect.
     const path = next.startsWith("/") && !next.startsWith("//") ? next : "/";
-    return c.json({ redirect: `${redirectBase}/__cardboard/auth?code=${encodeURIComponent(code)}&next=${encodeURIComponent(path)}` });
+    return c.json({ redirect: `${redirectBase}/__kardboard/auth?code=${encodeURIComponent(code)}&next=${encodeURIComponent(path)}` });
   } catch (err) {
     if (err instanceof PreviewError) return c.json({ error: err.message }, 403);
     throw err;

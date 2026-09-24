@@ -1,7 +1,7 @@
 import { type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router";
 import { ChevronDown, LogOut, Settings2, UserRound } from "lucide-react";
-import type { Me } from "@cardboard/shared";
+import type { Me } from "@kardboard/shared";
 import { useBoards } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Avatar, cx } from "./ui";

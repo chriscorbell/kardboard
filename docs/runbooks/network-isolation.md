@@ -5,19 +5,19 @@ change an Admin applies on minicore.
 
 ## One network per Session
 
-A Session container no longer joins `cardboard_workload`. The runner creates
-`cardboard-session-<sessionId>` for each Session, connects everything currently on
-`cardboard_workload` to it under the aliases those containers already answer to — `app` for MCP,
+A Session container no longer joins `kardboard_workload`. The runner creates
+`kardboard-session-<sessionId>` for each Session, connects everything currently on
+`kardboard_workload` to it under the aliases those containers already answer to — `app` for MCP,
 `egress` for the credential proxy — and starts the Session there. Docker's own
 `DOCKER-ISOLATION-STAGE-*` chains keep one bridge away from another, so a Session can no longer
 reach a concurrent Session's ports, and the runner remains on `control` only.
 
-`cardboard_workload` still exists and is still the definition of "a Session may reach this": the
+`kardboard_workload` still exists and is still the definition of "a Session may reach this": the
 runner reads its membership at every start. Adding a service a Session should reach means putting
 it on `workload` in `deploy/compose.yaml`, nothing else.
 
 The network is removed when the container exits, when a Session is cancelled, and at runner boot
-for any Session whose container is already gone. `CARDBOARD_SESSION_NETWORK=shared` in the runner's
+for any Session whose container is already gone. `KARDBOARD_SESSION_NETWORK=shared` in the runner's
 environment puts Sessions back on `workload` together; it exists to back the change out in a hurry
 and should otherwise stay at `per-session`.
 
@@ -41,7 +41,7 @@ when a Session starts.
 On minicore, as root:
 
 ```bash
-cd /home/chris/docker/stacks/cardboard
+cd /home/chris/docker/stacks/kardboard
 ./network-isolation.sh check     # what is installed now
 ./network-isolation.sh apply     # insert the rules; idempotent
 ./network-isolation.sh remove    # take them out again
@@ -77,8 +77,8 @@ getent hosts app egress
 # not reachable, with the rules applied
 ping -c1 -W2 10.0.0.20 ; nc -z -w2 10.0.0.1 80
 # not reachable, with or without them: another Session's container
-getent hosts cardboard-session-<other id>
+getent hosts kardboard-session-<other id>
 ```
 
-`docker network inspect cardboard-session-<id>` should list exactly three containers: the Session,
+`docker network inspect kardboard-session-<id>` should list exactly three containers: the Session,
 the app, and the egress proxy.

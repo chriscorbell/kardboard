@@ -1,15 +1,15 @@
 {
-  "name": "cardboard",
+  "name": "kardboard",
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "engines": { "node": ">=24" },
   "scripts": {
-    "dev": "pnpm --filter @cardboard/app dev",
+    "dev": "pnpm --filter @kardboard/app dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
-    "db:generate": "pnpm --filter @cardboard/app db:generate",
-    "seed": "pnpm --filter @cardboard/app seed"
+    "db:generate": "pnpm --filter @kardboard/app db:generate",
+    "seed": "pnpm --filter @kardboard/app seed"
   }
 }

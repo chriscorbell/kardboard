@@ -1,4 +1,4 @@
-import type { ActorKind } from "@cardboard/shared";
+import type { ActorKind } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 

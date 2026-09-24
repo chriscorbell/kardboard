@@ -1,4 +1,4 @@
-import type { TranscriptEntry, TranscriptEntryKind } from "@cardboard/shared";
+import type { TranscriptEntry, TranscriptEntryKind } from "@kardboard/shared";
 
 // A Session's log is one line per event, each prefixed by the Docker timestamp. Claude Code writes
 // `stream-json`, so most lines are an event object; Codex and the entrypoint write plain text. Both

@@ -9,10 +9,10 @@
 //           it refreshes its access token and must not write back to the Admin's copy.
 
 /** Where the runner binds the host sign-in file. The entrypoint reads it from here, never in place. */
-export const CODEX_AUTH_STAGE = "/run/cardboard/codex-auth.json";
+export const CODEX_AUTH_STAGE = "/run/kardboard/codex-auth.json";
 
 export type CodexWiringInput = {
-  /** CARDBOARD_CODEX_VIA_EGRESS: the egress proxy has been given the sign-in file. */
+  /** KARDBOARD_CODEX_VIA_EGRESS: the egress proxy has been given the sign-in file. */
   viaEgress: boolean;
   /** Base URL of the egress proxy, without a trailing slash. */
   egressUrl: string;
@@ -27,13 +27,13 @@ export function codexWiring(input: CodexWiringInput): CodexWiring {
     // Codex only sends inference over plain HTTP when the provider is a named one; the default
     // provider prefers a WebSocket to chatgpt.com, which ignores any base URL and so escapes the
     // proxy. Verified against codex-cli 0.154.0.
-    return { env: [`CARDBOARD_CODEX_EGRESS_URL=${input.egressUrl}/openai`], binds: [] };
+    return { env: [`KARDBOARD_CODEX_EGRESS_URL=${input.egressUrl}/openai`], binds: [] };
   }
   if (input.authFile) {
-    return { env: [`CARDBOARD_CODEX_AUTH_STAGE=${CODEX_AUTH_STAGE}`], binds: [`${input.authFile}:${CODEX_AUTH_STAGE}:ro`] };
+    return { env: [`KARDBOARD_CODEX_AUTH_STAGE=${CODEX_AUTH_STAGE}`], binds: [`${input.authFile}:${CODEX_AUTH_STAGE}:ro`] };
   }
   return {
     error:
-      "codex sessions need a credential: set CARDBOARD_CODEX_VIA_EGRESS=1 once the egress proxy holds the sign-in file, or point CODEX_AUTH_FILE at it on the Docker host",
+      "codex sessions need a credential: set KARDBOARD_CODEX_VIA_EGRESS=1 once the egress proxy holds the sign-in file, or point CODEX_AUTH_FILE at it on the Docker host",
   };
 }
