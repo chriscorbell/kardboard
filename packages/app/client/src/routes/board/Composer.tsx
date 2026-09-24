@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Paperclip, Send, X } from "lucide-react";
 import type { AgentProfile, User } from "@kardboard/shared";
 import { Avatar, Button, cx, IconButton, Textarea } from "../../components/ui";
@@ -13,10 +13,13 @@ type Props = {
   onCancel?: () => void;
   allowFiles?: boolean;
   autoFocus?: boolean;
+  placeholder?: string;
+  /** Lets the card sheet focus the composer, as Request changes does. */
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
 };
 
 // A textarea with @mention completion. Typing "@" opens a list of Board members filtered by what follows.
-export function Composer({ members, agent, onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus }: Props) {
+export function Composer({ members, agent, onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus, placeholder, inputRef }: Props) {
   const [body, setBody] = useState(initialBody);
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
@@ -77,10 +80,13 @@ export function Composer({ members, agent, onSubmit, initialBody = "", submitLab
   return (
     <div className="relative">
       <Textarea
-        ref={ref}
+        ref={(el) => {
+          ref.current = el;
+          if (inputRef) inputRef.current = el;
+        }}
         value={body}
         rows={3}
-        placeholder="Write a comment. Use @ to mention someone."
+        placeholder={placeholder ?? "Write a comment. Use @ to mention someone."}
         onChange={(e) => {
           setBody(e.target.value);
           detectMention(e.target.value, e.target.selectionStart);

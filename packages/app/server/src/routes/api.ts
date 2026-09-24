@@ -40,6 +40,7 @@ import { ApprovalError, approveCard, listApprovals, retryMerge } from "../servic
 import { listNotifications, markNotificationsRead } from "../services/notifications.js";
 import { backupsView, takeSnapshot } from "../services/backup.js";
 import { installationStatus, parseRepoUrl } from "../services/github.js";
+import { reconcileOnDemand } from "../services/reconcile.js";
 import { bumpEveryPreviewEpoch, bumpPreviewEpoch, issuePreviewCode, PreviewError } from "../services/previews.js";
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -62,6 +63,11 @@ function json<T extends z.ZodTypeAny>(schema: T) {
 
 function actorOf(c: { get: (k: "user") => { id: string } }) {
   return { kind: "user" as const, id: c.get("user").id };
+}
+
+// Merging over failing checks is the Admin's call alone; a Member's request to is ignored.
+function overrideFor(c: { get: (k: "user") => { role: string } }, requested: boolean | undefined): boolean {
+  return c.get("user").role === "admin" && requested === true;
 }
 
 // Silence is the Admin's option. A Member's change always reaches the Agent.
@@ -186,14 +192,16 @@ api.post("/cards/:id/move", json(moveCardSchema), async (c) => {
 });
 
 // `headSha` is the pull request head the Card showed the Member. Approval is bound to it, and is
-// refused if the pull request has moved on since.
-api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullable().optional() })), async (c) => {
+// refused if the pull request has moved on since, or while its checks are failing unless the Admin
+// sends `overrideChecks`.
+api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullable().optional(), overrideChecks: z.boolean().optional() })), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
+  const input = c.req.valid("json");
   try {
-    return c.json(await approveCard(card.id, actorOf(c), c.req.valid("json").headSha ?? null), 201);
+    return c.json(await approveCard(card.id, actorOf(c), input.headSha ?? null, { overrideChecks: overrideFor(c, input.overrideChecks) }), 201);
   } catch (err) {
     if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
     throw err;
@@ -201,14 +209,16 @@ api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullab
 });
 
 // The Approval stands after a refusal GitHub gave for its own reasons, so the merge can simply be
-// tried again once the cause is fixed, without asking the Member to sign off a second time.
+// tried again once the cause is fixed, without asking the Member to sign off a second time. The
+// body is optional.
 api.post("/cards/:id/retry-merge", async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
+  const body = z.object({ overrideChecks: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
   try {
-    return c.json(await retryMerge(card.id, actorOf(c)));
+    return c.json(await retryMerge(card.id, actorOf(c), { overrideChecks: overrideFor(c, body.success ? body.data.overrideChecks : undefined) }));
   } catch (err) {
     if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
     throw err;
@@ -227,6 +237,20 @@ api.post("/cards/:id/retry", async (c) => {
     if (err instanceof RetryRefused) return c.json({ error: err.message }, err.status);
     throw err;
   }
+});
+
+// Someone opened a Card in Review: its pull request and CI are read from GitHub again, at most every
+// half minute per Card, and the Card is returned as it now stands. What GitHub says also reaches
+// everyone else on the Board through the event stream.
+api.post("/cards/:id/sync", async (c) => {
+  const card = await getCard(c.req.param("id"));
+  if (!card) return c.json({ error: "not_found" }, 404);
+  const access = await boardForUser(c as never, card.boardId);
+  if ("error" in access) return access.error;
+  if (card.column === "review" && card.prNumber) {
+    await reconcileOnDemand(card.id).catch((err: Error) => console.error(`[reconcile] could not read card ${card.id} from GitHub: ${err.message}`));
+  }
+  return c.json(await getCard(card.id));
 });
 
 api.post("/cards/:id/comments", json(createCommentSchema), async (c) => {

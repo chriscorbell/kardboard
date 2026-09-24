@@ -140,6 +140,10 @@ export interface Card {
   prNumber: number | null;
   /** The pull request head a Member is shown and approves. Approve sends it back. */
   prHeadSha: string | null;
+  /** The branch the pull request merges into, as GitHub last reported it. */
+  prBaseRef: string | null;
+  /** CI on the pull request, as kardboard last read it from GitHub. */
+  checks: ChecksSummary | null;
   previewUrl: string | null;
   commentCount: number;
   activeSession: SessionSummary | null;
@@ -150,6 +154,39 @@ export interface Card {
   pendingRerun: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+// A pull request's CI, summed up: `failing` when anything failed, `pending` while anything is still
+// running, `none` when nothing ran, and `unknown` when GitHub would not say, for want of the Merge
+// app's Checks or Commit statuses permission or because it did not answer.
+export const CHECK_STATES = ["passing", "failing", "pending", "none", "unknown"] as const;
+export type CheckState = (typeof CHECK_STATES)[number];
+
+export interface ChecksSummary {
+  state: CheckState;
+  total: number;
+  failed: number;
+  pending: number;
+  /** The head these checks ran on. Once the Card's `prHeadSha` moves on they describe old code. */
+  sha: string;
+  updatedAt: string;
+}
+
+/** "2 of 7 checks failed": a summary in words, the same on the Card and in what the server says. */
+export function describeChecks(summary: Pick<ChecksSummary, "state" | "total" | "failed" | "pending">): string {
+  const { total, failed, pending } = summary;
+  switch (summary.state) {
+    case "failing":
+      return total === 1 ? "The check failed" : `${failed} of ${total} checks failed`;
+    case "pending":
+      return total === 1 ? "The check is still running" : `${pending} of ${total} checks ${pending === 1 ? "is" : "are"} still running`;
+    case "passing":
+      return total === 1 ? "The check passed" : `All ${total} checks passed`;
+    case "none":
+      return "No checks ran on this commit";
+    case "unknown":
+      return "GitHub did not say how the checks went";
+  }
 }
 
 export interface SessionSummary {

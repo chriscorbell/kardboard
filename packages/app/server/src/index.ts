@@ -15,6 +15,7 @@ import { recoverOnBoot, startDispatchPump } from "./services/orchestrator.js";
 import { startSweepScheduler } from "./services/sweep.js";
 import { startBackupScheduler } from "./services/backup.js";
 import { startPreviewReaper } from "./services/previews.js";
+import { startPullRequestReconciler } from "./services/reconcile.js";
 import { ensureSeed } from "./seed.js";
 
 const app = new Hono();
@@ -68,6 +69,7 @@ startDispatchPump();
 startSweepScheduler();
 startBackupScheduler();
 startPreviewReaper();
+startPullRequestReconciler();
 
 serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.log(`kardboard app listening on http://localhost:${info.port} (auth=${env.authMode})`);

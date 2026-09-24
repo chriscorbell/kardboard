@@ -1,9 +1,12 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { X } from "lucide-react";
 import { IconButton } from "./ui";
-import { useModalFocus } from "./focus";
+import { isInnermostModal, useModalFocus } from "./focus";
 
+// Rendered into the body, so a dialog opened from inside the card sheet is placed against the
+// viewport rather than the sheet's sliding panel, and sits above it.
 export function Dialog({ open, onClose, title, children, width = 520 }: { open: boolean; onClose: () => void; title: string; children: ReactNode; width?: number }) {
   const reduce = useReducedMotion();
   const panel = useRef<HTMLDivElement>(null);
@@ -11,11 +14,11 @@ export function Dialog({ open, onClose, title, children, width = 520 }: { open: 
   useModalFocus(panel, open);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && isInnermostModal(panel) && onClose();
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
-  return (
+  return createPortal(
     <AnimatePresence>
       {open ? (
         <motion.div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 pt-[12vh]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
@@ -45,6 +48,7 @@ export function Dialog({ open, onClose, title, children, width = 520 }: { open: 
           </motion.div>
         </motion.div>
       ) : null}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

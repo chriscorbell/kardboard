@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { Card, CardWaiting, Column, Priority, SessionSummary } from "@kardboard/shared";
+import type { Card, CardWaiting, ChecksSummary, Column, Priority, SessionSummary } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
@@ -65,6 +65,8 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     prUrl: r.prUrl,
     prNumber: r.prNumber,
     prHeadSha: r.prHeadSha,
+    prBaseRef: r.prBaseRef,
+    checks: r.checks ?? null,
     previewUrl: r.previewUrl,
     commentCount: countMap.get(r.id) ?? 0,
     activeSession: activeMap.get(r.id) ?? null,
@@ -331,7 +333,15 @@ export async function retryCard(id: string, actor: Actor): Promise<Card> {
 
 export async function setCardWorkState(
   id: string,
-  patch: { branch?: string | null; prUrl?: string | null; prNumber?: number | null; prHeadSha?: string | null; previewUrl?: string | null },
+  patch: {
+    branch?: string | null;
+    prUrl?: string | null;
+    prNumber?: number | null;
+    prHeadSha?: string | null;
+    prBaseRef?: string | null;
+    checks?: ChecksSummary | null;
+    previewUrl?: string | null;
+  },
 ): Promise<Card> {
   await db
     .update(schema.cards)

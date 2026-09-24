@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, real, primaryKey, index } from "drizzle-orm/sqlite-core";
+import type { ChecksSummary } from "@kardboard/shared";
 
 const now = () => new Date().toISOString();
 
@@ -70,6 +71,11 @@ export const cards = sqliteTable(
     // The pull request head a Member is shown and approves. Read from GitHub when a Session reports
     // the pull request or moves the Card to Review, never taken from the Session's word.
     prHeadSha: text("pr_head_sha"),
+    // The branch the pull request merges into, so Approve can say where the change lands.
+    prBaseRef: text("pr_base_ref"),
+    // CI on the pull request, summed up from GitHub's check runs and commit statuses by the
+    // reconciliation poll, on Approve, and when someone opens the Card in Review.
+    checks: text("checks", { mode: "json" }).$type<ChecksSummary>(),
     previewUrl: text("preview_url"),
     pendingRerun: integer("pending_rerun", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull().$defaultFn(now),
