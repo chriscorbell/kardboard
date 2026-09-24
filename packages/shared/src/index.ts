@@ -64,6 +64,9 @@ export const TRIGGER_KINDS = [
   // nobody would otherwise start, and a parent that nothing would otherwise wake.
   "child_card_created",
   "children_done",
+  // A person pressed Try again on a Card whose last Session failed or timed out. It starts at once
+  // rather than waiting out the batching window.
+  "retry_requested",
 ] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
@@ -72,8 +75,9 @@ export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 export const CARD_OUTCOMES = ["implemented", "closed"] as const;
 export type CardOutcome = (typeof CARD_OUTCOMES)[number];
 
-// What the app notifies a user about. Every kind also sends that user an email.
-export const NOTIFICATION_KINDS = ["mention", "card_moved"] as const;
+// What the app notifies a user about. Every kind also sends that user an email. `session_failed`
+// goes to a Card's creator and the Admin when a Session on it failed or ran out of time.
+export const NOTIFICATION_KINDS = ["mention", "card_moved", "session_failed"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 export type ActorKind = "user" | "agent" | "system";
@@ -101,7 +105,20 @@ export interface Board {
   agentImage: string | null;
   maxConcurrentSessions: number;
   promptAppend: string;
+  /** Set by the Admin: no new Session starts on this Board, and its Triggers wait until it is resumed. */
+  paused: boolean;
   createdAt: string;
+}
+
+// Why a Card with Triggers waiting has no Session yet. `coalescing`: its batching window is still
+// open. `slot`: the Board's or the global cap is full. `paused`: the Admin paused its Board.
+// `retrying`: its last Session could not start, and kardboard tries again in a few minutes.
+export const WAITING_REASONS = ["coalescing", "slot", "paused", "retrying"] as const;
+export type WaitingReason = (typeof WAITING_REASONS)[number];
+export interface CardWaiting {
+  reason: WaitingReason;
+  /** When the oldest Trigger still waiting was raised. */
+  since: string;
 }
 
 export interface Card {
@@ -126,6 +143,10 @@ export interface Card {
   previewUrl: string | null;
   commentCount: number;
   activeSession: SessionSummary | null;
+  /** The most recent card Session on this Card that has ended, whatever its outcome. */
+  lastSession: SessionSummary | null;
+  /** Set while the Card has Triggers waiting and no Session: what it is waiting for. */
+  waiting: CardWaiting | null;
   pendingRerun: boolean;
   createdAt: string;
   updatedAt: string;
@@ -329,6 +350,8 @@ export const upsertBoardSchema = z.object({
   agentImage: z.string().trim().max(200).nullable().optional(),
   maxConcurrentSessions: z.number().int().min(1).max(10).default(3),
   promptAppend: z.string().max(10_000).default(""),
+  // Left out, a new Board starts unpaused and an update leaves the switch where it was.
+  paused: z.boolean().optional(),
 });
 
 export const boardMembersSchema = z.object({ userIds: z.array(z.string()) });

@@ -1,9 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUpRight, Check, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, RotateCcw, X } from "lucide-react";
 import { approvalAwaitingRetry, COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type Approval, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
-import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useRetryMerge, useUpdateCard, useUpdateComment, request, keys } from "../../lib/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useRetryMerge, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
 import { Menu } from "../../components/Menu";
@@ -12,6 +11,7 @@ import { absoluteTime, relativeTime, shortId } from "../../lib/format";
 import { Composer } from "./Composer";
 import { COLUMN_TONES } from "./columns";
 import { WorkingDot } from "./CardTile";
+import { SessionBanner } from "./SessionBanner";
 import { ApiError } from "../../lib/errors";
 import { AttachmentView } from "./AttachmentView";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
@@ -67,7 +67,6 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   const move = useMoveCard(slug);
   const approve = useApproveCard(slug);
   const retryMerge = useRetryMerge(slug);
-  const qc = useQueryClient();
   const members = useMemo(() => new Map(view.members.map((m) => [m.id, m])), [view.members]);
   const handles = useMemo(() => {
     const m = new Map(view.members.map((u) => [u.handle, u.name]));
@@ -104,8 +103,6 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
       </div>
     );
   }
-  const session = card.activeSession;
-
   // Saves an edit against the revision it started from, so a change made meanwhile is caught.
   const saveField = async (field: EditableField, value: string, base: EditBase) => {
     const save = (revision: number) => update.mutateAsync({ id: card.id, [field]: value, revision });
@@ -160,35 +157,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           </p>
         </div>
 
-        {session || card.pendingRerun ? (
-          <div className="mx-6 mt-4 rounded-card border border-accent/25 bg-accent-soft px-3.5 py-3">
-            {session ? (
-              <div className="flex items-start gap-2.5">
-                <WorkingDot className="mt-1.5" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-medium text-accent">
-                    {view.agent.name} {session.status === "queued" ? "is starting a session" : "is working on this"}
-                    {session.startedAt ? <span className="font-normal text-accent/70"> since {relativeTime(session.startedAt)}</span> : null}
-                  </p>
-                  {session.intent ? <p className="mt-0.5 text-[13px] text-ink-muted">{session.intent}</p> : null}
-                  {card.pendingRerun ? <p className="mt-1 text-[12px] text-ink-faint">Your latest changes are queued for the next session.</p> : null}
-                </div>
-                {isAdmin ? (
-                  <span className="flex shrink-0 gap-1">
-                    <Button size="sm" variant="ghost" icon={<Square className="size-3.5" strokeWidth={2} />} onClick={() => void cancelSession(session.id, false, qc, slug, card.id)}>
-                      Cancel
-                    </Button>
-                    <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" strokeWidth={2} />} onClick={() => void cancelSession(session.id, true, qc, slug, card.id)}>
-                      Re-run
-                    </Button>
-                  </span>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-[13px] text-ink-muted">Changes are queued. {view.agent.name} will pick them up in the next session.</p>
-            )}
-          </div>
-        ) : null}
+        <SessionBanner slug={slug} card={card} agentName={view.agent.name} isAdmin={isAdmin} />
 
         <div className="px-6 pt-5">
           <DescriptionEditor card={card} handles={handles} onSave={(description, base) => saveField("description", description, base)} />
@@ -284,12 +253,6 @@ function ChildCards({ slug, cards, agentName }: { slug: string; cards: Card[]; a
       </p>
     </div>
   );
-}
-
-async function cancelSession(id: string, rerun: boolean, qc: ReturnType<typeof useQueryClient>, slug: string, cardId: string) {
-  await request(`/admin/sessions/${id}/cancel${rerun ? "?rerun=1" : ""}`, { method: "POST" });
-  await qc.invalidateQueries({ queryKey: keys.board(slug) });
-  await qc.invalidateQueries({ queryKey: keys.card(cardId) });
 }
 
 function TitleEditor({ card, labelId, onSave }: { card: Card; labelId: string; onSave: (title: string, base: EditBase) => Promise<void> }) {
@@ -559,7 +522,8 @@ function CommentList({ comments, members, agent, handles, meId, cardId }: { comm
   return (
     <ol className="flex flex-col gap-5">
       {comments.map((c) => {
-        const author = c.authorKind === "agent" ? agent : c.authorId ? members.get(c.authorId) : undefined;
+        // A kardboard notice, such as a Session that stopped short, is signed by kardboard itself.
+        const author = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? members.get(c.authorId) : undefined;
         const mine = c.authorKind === "user" && c.authorId === meId;
         return (
           <li key={c.id} className="flex gap-3">
@@ -641,6 +605,7 @@ const ACTIVITY_LABEL: Record<string, (p: Record<string, unknown>) => string> = {
   "session.cancelled": () => "cancelled the session",
   "session.timed_out": () => "session hit its time limit",
   "session.cancel_requested": () => "asked to cancel the session",
+  "card.retry_requested": () => "asked to try again",
 };
 
 function Activity({ entries, members, agentName }: { entries: ActivityEntry[]; members: Map<string, User>; agentName: string }) {

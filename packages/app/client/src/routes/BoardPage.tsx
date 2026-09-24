@@ -8,8 +8,9 @@ import { Plus, RefreshCw } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, type AgentProfile, type Card, type Column, type User } from "@kardboard/shared";
 import { ApiError, useBoard, useMe, useMoveCard } from "../lib/api";
 import { useBoardEvents } from "../lib/realtime";
-import { Avatar, Button, cx, ErrorState, IconButton, Skeleton } from "../components/ui";
-import { CardTile, WorkingDot } from "./board/CardTile";
+import { Button, cx, ErrorState, IconButton, Skeleton } from "../components/ui";
+import { CardTile } from "./board/CardTile";
+import { AgentPill } from "./board/AgentPill";
 import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
 import { COLUMN_HINTS } from "./board/columns";
@@ -153,7 +154,6 @@ export function BoardPage() {
   }
   const isAdmin = me.data?.user.role === "admin";
   const agent = board.data.agent;
-  const agentName = agent.name;
 
   return (
     <div className="flex h-full flex-col">
@@ -181,19 +181,7 @@ export function BoardPage() {
               </motion.button>
             ) : null}
           </AnimatePresence>
-          {activeSessions.length > 0 ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent-soft py-1 pl-1 pr-2.5 text-accent">
-              <Avatar name={agent.name} url={agent.avatarUrl} size={18} tone="agent" />
-              <WorkingDot />
-              {agentName} is working on {activeSessions.length === 1 ? "1 card" : `${activeSessions.length} cards`}
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-2 rounded-full border border-line py-1 pl-1 pr-2.5">
-              <Avatar name={agent.name} url={agent.avatarUrl} size={18} tone="agent" />
-              <span className="size-2 rounded-full bg-ink-faint" />
-              {agentName} is idle
-            </span>
-          )}
+          <AgentPill slug={slug} board={board.data.board} agent={agent} working={activeSessions.length} isAdmin={Boolean(isAdmin)} />
         </div>
       </div>
       <DndContext

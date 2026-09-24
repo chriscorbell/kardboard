@@ -79,7 +79,7 @@ function buildServer(session: SessionRow): McpServer {
       const out = {
         ...card,
         creator: card.creatorId ? users.get(card.creatorId) : null,
-        comments: comments.map((c) => ({ id: c.id, author: c.authorKind === "agent" ? "you" : (users.get(c.authorId ?? "")?.name ?? "unknown"), authorHandle: users.get(c.authorId ?? "")?.handle ?? null, body: c.body, createdAt: c.createdAt, editedAt: c.editedAt, attachments: c.attachments })),
+        comments: comments.map((c) => ({ id: c.id, author: c.authorKind === "agent" ? "you" : c.authorKind === "system" ? "kardboard" : (users.get(c.authorId ?? "")?.name ?? "unknown"), authorHandle: users.get(c.authorId ?? "")?.handle ?? null, body: c.body, createdAt: c.createdAt, editedAt: c.editedAt, attachments: c.attachments })),
       };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
@@ -190,9 +190,14 @@ function buildServer(session: SessionRow): McpServer {
 
   server.registerTool(
     "finish",
-    { description: "End this session with a one-sentence outcome summary. Call it last.", inputSchema: { summary: z.string().min(1).max(500), outcome: z.enum(["succeeded", "failed"]).default("succeeded") } },
+    {
+      description: "End this session with a one-sentence outcome summary. Always call it last, including when the trigger batch turned out to be noise: a session that exits without calling it or commenting is recorded as failed, and its card's people are told it stopped.",
+      inputSchema: { summary: z.string().min(1).max(500), outcome: z.enum(["succeeded", "failed"]).default("succeeded") },
+    },
     async ({ summary, outcome }) => {
-      await recordEvent({ boardId: session.boardId, cardId: session.cardId, actor, type: "session.reported", payload: { sessionId: session.id, summary } });
+      // The outcome is on record before the tool answers, so a container exit that beats the end
+      // below still ends the Session the way it reported.
+      await recordEvent({ boardId: session.boardId, cardId: session.cardId, actor, type: "session.reported", payload: { sessionId: session.id, summary, outcome } });
       setTimeout(() => void endSession(session.id, outcome, summary), 500);
       return { content: [{ type: "text", text: "ok, goodbye" }] };
     },

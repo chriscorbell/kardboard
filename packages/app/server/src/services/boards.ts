@@ -18,6 +18,7 @@ export function toBoard(row: typeof schema.boards.$inferSelect): Board {
     agentImage: row.agentImage,
     maxConcurrentSessions: row.maxConcurrentSessions,
     promptAppend: row.promptAppend,
+    paused: row.paused,
     createdAt: row.createdAt,
   };
 }
@@ -94,6 +95,7 @@ export type BoardInput = {
   agentImage?: string | null;
   maxConcurrentSessions: number;
   promptAppend: string;
+  paused?: boolean;
 };
 
 export async function createBoard(input: BoardInput): Promise<Board> {
@@ -110,6 +112,7 @@ export async function createBoard(input: BoardInput): Promise<Board> {
     agentImage: input.agentImage ?? null,
     maxConcurrentSessions: input.maxConcurrentSessions,
     promptAppend: input.promptAppend,
+    paused: input.paused ?? false,
   });
   return (await getBoardById(id))!;
 }
@@ -128,9 +131,19 @@ export async function updateBoard(id: string, input: BoardInput): Promise<Board>
       agentImage: input.agentImage ?? null,
       maxConcurrentSessions: input.maxConcurrentSessions,
       promptAppend: input.promptAppend,
+      // Left out, the switch stays where it was.
+      ...(input.paused === undefined ? {} : { paused: input.paused }),
     })
     .where(eq(schema.boards.id, id));
   const board = (await getBoardById(id))!;
   publish(id, { type: "board.updated", board });
+  return board;
+}
+
+/** The Admin's pause switch on its own, for the Board page. */
+export async function setBoardPaused(id: string, paused: boolean): Promise<Board | null> {
+  await db.update(schema.boards).set({ paused }).where(eq(schema.boards.id, id));
+  const board = await getBoardById(id);
+  if (board) publish(id, { type: "board.updated", board });
   return board;
 }

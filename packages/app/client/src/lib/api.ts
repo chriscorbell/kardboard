@@ -179,6 +179,35 @@ export function useRetryMerge(slug: string) {
   });
 }
 
+// Try again after a Session failed or ran out of time. The Session starts at once, so the board's
+// event stream usually reports it before this answer arrives; the answer is re-read rather than
+// written into the cache, where it would put back the wait the Session already ended.
+export function useRetryCard(slug: string) {
+  const qc = useQueryClient();
+  const refresh = (id: string) => {
+    void qc.invalidateQueries({ queryKey: keys.card(id) });
+    void qc.invalidateQueries({ queryKey: keys.board(slug) });
+  };
+  return useMutation({
+    mutationFn: (id: string) => request<Card>(`/cards/${id}/retry`, { method: "POST" }),
+    onSuccess: (_card, id) => refresh(id),
+    onError: (_e, id) => refresh(id),
+  });
+}
+
+// The Admin's pause switch for one Board. The Board's event stream carries the change to everyone
+// else; this writes it into the caller's own view at once.
+export function useSetBoardPaused(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ boardId, paused }: { boardId: string; paused: boolean }) => request<Board>(`/admin/boards/${boardId}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+    onSuccess: (board) => {
+      qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, board } : v));
+      void qc.invalidateQueries({ queryKey: keys.adminBoards });
+    },
+  });
+}
+
 export function useCreateComment(cardId: string) {
   const qc = useQueryClient();
   // What a failed attempt already posted, so pressing Post again finishes it instead of duplicating it.

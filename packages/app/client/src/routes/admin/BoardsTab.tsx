@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Pause, Plus } from "lucide-react";
 import type { Board } from "@kardboard/shared";
-import { keys, request, useAdminBoards, useAdminUsers, type AdminBoard } from "../../lib/api";
+import { keys, request, useAdminBoards, useAdminUsers, useMe, type AdminBoard } from "../../lib/api";
 import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
@@ -19,18 +19,20 @@ type Draft = {
   agentImage: string;
   maxConcurrentSessions: number;
   promptAppend: string;
+  paused: boolean;
   memberIds: string[];
 };
 
-const empty: Draft = { name: "", slug: "", repoUrl: "", provider: "claude", model: "", reasoning: "", previewMode: "external", agentImage: "", maxConcurrentSessions: 3, promptAppend: "", memberIds: [] };
+const empty: Draft = { name: "", slug: "", repoUrl: "", provider: "claude", model: "", reasoning: "", previewMode: "external", agentImage: "", maxConcurrentSessions: 3, promptAppend: "", paused: false, memberIds: [] };
 
 function fromBoard(b: AdminBoard): Draft {
-  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "", provider: b.provider, model: b.model ?? "", reasoning: b.reasoning ?? "", previewMode: b.previewMode, agentImage: b.agentImage ?? "", maxConcurrentSessions: b.maxConcurrentSessions, promptAppend: b.promptAppend, memberIds: b.memberIds };
+  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "", provider: b.provider, model: b.model ?? "", reasoning: b.reasoning ?? "", previewMode: b.previewMode, agentImage: b.agentImage ?? "", maxConcurrentSessions: b.maxConcurrentSessions, promptAppend: b.promptAppend, paused: b.paused, memberIds: b.memberIds };
 }
 
 export function BoardsTab() {
   const boards = useAdminBoards();
   const users = useAdminUsers();
+  const agentName = useMe().data?.agent.name ?? "The agent";
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AdminBoard | "new" | null>(null);
   const [draft, setDraft] = useState<Draft>(empty);
@@ -55,6 +57,7 @@ export function BoardsTab() {
         agentImage: draft.agentImage || null,
         maxConcurrentSessions: draft.maxConcurrentSessions,
         promptAppend: draft.promptAppend,
+        paused: draft.paused,
       };
       const board = editing === "new" ? await request<Board>("/admin/boards", { method: "POST", body: JSON.stringify(body) }) : await request<Board>(`/admin/boards/${(editing as AdminBoard).id}`, { method: "PATCH", body: JSON.stringify(body) });
       await request(`/admin/boards/${board.id}/members`, { method: "PUT", body: JSON.stringify({ userIds: draft.memberIds }) });
@@ -94,6 +97,13 @@ export function BoardsTab() {
                   </p>
                   <p className="mt-0.5 truncate font-mono text-[12px] text-ink-muted">{b.repoUrl ?? "No repository yet"}</p>
                 </div>
+                {/* Unlike the settings detail, a pause shows on a phone too: it is why nothing happens on the board. */}
+                {b.paused ? (
+                  <Chip tone="warn" className="shrink-0">
+                    <Pause className="size-3" strokeWidth={2.25} aria-hidden="true" />
+                    Paused
+                  </Chip>
+                ) : null}
                 {/* Settings detail; the dialog shows all of it, so a phone keeps the row to name and repository. */}
                 <span className="hidden shrink-0 items-center gap-4 sm:flex">
                   <Chip>{b.provider === "claude" ? "Claude Code" : "Codex"}</Chip>
@@ -177,6 +187,13 @@ export function BoardsTab() {
           <Field label="Extra instructions for the agent" hint="Appended to the global workflow prompt for this board only.">
             <Textarea rows={3} value={draft.promptAppend} onChange={(e) => setDraft({ ...draft, promptAppend: e.target.value })} />
           </Field>
+          <label className="flex items-start gap-2 text-[13px] text-ink-muted">
+            <input type="checkbox" checked={draft.paused} onChange={(e) => setDraft({ ...draft, paused: e.target.checked })} className="mt-[3px] accent-accent" />
+            <span>
+              <span className="font-medium text-ink">Paused.</span> {agentName} starts no new sessions on this board and skips its nightly sweep. Sessions already running finish, and changes wait until you
+              resume it.
+            </span>
+          </label>
           <div>
             <p className="mb-1.5 text-[13px] font-medium text-ink-muted">Members</p>
             {members.length === 0 ? (

@@ -92,6 +92,9 @@ export const env = {
   githubSessionsApp: githubApp("GITHUB_SESSIONS_APP"),
   githubMergeApp: githubApp("GITHUB_MERGE_APP"),
   triggerCoalesceMs: Number(str("KARDBOARD_TRIGGER_COALESCE_MS", "60000")),
+  // Each Trigger restarts the batching window, but it closes no later than this long after the
+  // oldest Trigger still waiting, so steady commenting cannot hold a Session off indefinitely.
+  triggerCoalesceMaxMs: Number(str("KARDBOARD_TRIGGER_COALESCE_MAX_MS", "180000")),
   // Snapshots live beside the database on the data bind mount. Set the hour to -1 to take none.
   backupDir: path.resolve(str("KARDBOARD_BACKUP_DIR", path.join(dataDir, "backups"))),
   backupHour: Number(str("KARDBOARD_BACKUP_HOUR", "4")),
