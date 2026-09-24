@@ -50,16 +50,18 @@ services:
       KARDBOARD_PREVIEW_HOST_PATTERN: ${KARDBOARD_PREVIEW_HOST_PATTERN}
       # Each verified snapshot, and every new attachment, is copied here as well: the NAS share,
       # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.
-      KARDBOARD_BACKUP_COPY_DIR: /nas-backup/minicore/kardboard
+      KARDBOARD_BACKUP_COPY_DIR: /nas/backup/minicore/kardboard
     volumes:
       - ../../data/kardboard/app:/data
-      # The whole share's mount point, which exists whether or not the share is mounted, so a NAS that
-      # is down when Watchtower recreates the app never stops it starting. `rslave` lets the share
-      # appear inside the container when the host mounts it later. While it is not mounted the copy
-      # directory has no `.kardboard-backup-target`, so the app copies nothing and alerts the Admin.
+      # `/nas`, the plain directory holding the host's NAS automount points, never a share itself:
+      # binding an automount point whose NAS is unreachable fails the container's start with "no such
+      # device" (tried on minicore, 2026-09-24), which would take the app down on any redeploy while
+      # the NAS is off. With `rslave`, reading `/nas/backup` inside the container mounts the share on
+      # the host when it can, and it appears here. While it cannot, the copy directory has no
+      # `.kardboard-backup-target`, so the app copies nothing and alerts the Admin.
       - type: bind
-        source: /nas/backup
-        target: /nas-backup
+        source: /nas
+        target: /nas
         bind:
           propagation: rslave
     networks: [control, workload]

@@ -10,7 +10,7 @@ kardboard keeps its state in one SQLite database in WAL mode, see [ADR 0004](../
 | `uploads/<xx>/<sha256>` | Comment attachments, content-addressed and immutable |
 | `logs/app-<UTC date>.log` | The app's own console output, one file a day, kept 14 days |
 
-On minicore the app also mounts the NAS share at `/nas-backup`, and `/nas-backup/minicore/kardboard` is where every snapshot and every attachment is copied; see [the copy off the disk](#the-copy-off-the-disk).
+On minicore the app also sees the host's `/nas`, and `/nas/backup/minicore/kardboard` is where every snapshot and every attachment is copied; see [the copy off the disk](#the-copy-off-the-disk).
 
 Copying `kardboard.db` alone is not a backup. Recent commits live in the write-ahead log until a checkpoint, so a bare copy is typically a nearly empty database: on a freshly seeded instance the main file was 4 KB against a 313 KB WAL, and the copy could not read a single table.
 
@@ -45,7 +45,7 @@ A copy that fails, refuses, or does not finish within 15 minutes is reported on 
 
 On minicore the directory is `/nas/backup/minicore/kardboard`, on `nas`'s `backup` share, which `/etc/fstab` automounts beside Crafty's backups in `/nas/backup/minicore/crafty`. `nas` snapshots its pools daily and the `backup` machine replicates those snapshots nightly, so a copy there also outlives `nas` itself (see `~/Code/fleet/AGENTS.md`). The container runs as uid 1000, which must be able to write there.
 
-The Compose file binds the share's mount point, `/nas/backup`, at `/nas-backup` with `rslave` propagation, and the app copies to `/nas-backup/minicore/kardboard`. The mount point exists whether or not the share is mounted, so an unreachable NAS never stops Watchtower recreating the `app` container, and a share the host mounts later shows up inside it. While it is not mounted the marker is missing, so the app copies nothing and alerts the Admin.
+The Compose file binds `/nas`, the plain directory holding the host's automount points, at `/nas` with `rslave` propagation, and the app copies to `/nas/backup/minicore/kardboard`. It does not bind the share's own mount point: on minicore on 2026-09-24, a container binding an automount point whose server was unreachable failed to start with "no such device", which would take the app down on any redeploy while the NAS is off. Binding the parent starts at once either way. Reading `/nas/backup` inside the container mounts the share on the host when the NAS answers, and `rslave` brings it into the container; while it does not, the marker is missing, so the app copies nothing and alerts the Admin. Both cases were tried with a throwaway container that day. The bind also shows the app `/nas/media`, which it never touches.
 
 To set it up, or to check it after a change to the mount:
 
