@@ -48,9 +48,21 @@ services:
       # Route `kardboard.cc` to port 3070 and `*.kardboard.cc` to port 3073.
       # The first-level wildcard covers card previews with free Universal SSL.
       KARDBOARD_PREVIEW_HOST_PATTERN: ${KARDBOARD_PREVIEW_HOST_PATTERN}
+      # Each verified snapshot, and every new attachment, is copied here as well: the NAS share,
+      # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.
+      KARDBOARD_BACKUP_COPY_DIR: /backup-copy
     volumes:
       - ../../data/kardboard/app:/data
+      - /nas/backup/minicore/kardboard:/backup-copy
     networks: [control, workload]
+    # /healthz reads the database and answers 503 when it cannot. The runner and the egress proxy
+    # are reported in its body but never fail it.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3070/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   runner:
     image: ghcr.io/chriscorbell/kardboard-runner:latest
@@ -76,6 +88,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../../data/kardboard/runner:/data
     networks: [control]
+    # The runner's /healthz pings the Docker daemon and answers 503 when it cannot reach it.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3071/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   egress:
     image: ghcr.io/chriscorbell/kardboard-egress:latest
@@ -92,6 +111,13 @@ services:
     volumes:
       - ../../data/kardboard/secrets:/secrets
     networks: [control, workload]
+    # Up, and which credentials are loaded, as booleans; a missing one does not fail the check.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   preview-router:
     image: ghcr.io/chriscorbell/kardboard-preview-router:latest
@@ -105,6 +131,13 @@ services:
       KARDBOARD_RUNNER_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
       KARDBOARD_PREVIEW_SECRET: ${KARDBOARD_PREVIEW_SECRET}
     networks: [control, preview]
+    # Answered before any host routing, so it checks the process and nothing behind it.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3072/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 networks:
   control:
