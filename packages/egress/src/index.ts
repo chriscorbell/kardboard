@@ -12,6 +12,8 @@ import { createProxy } from "./proxy.js";
 //   /openai/*    -> https://chatgpt.com/backend-api/codex/*  (Codex with a named model provider)
 //   /limits      -> the last usage refusal seen per Provider (the app, with the control token)
 //
+// Only the provider calls listed in `ALLOWED_CALLS` in proxy.ts go upstream; the rest get a 403.
+//
 // Verified 2026-09-14: a raw /v1/messages call from a workload container with no credential
 // received a model reply through this proxy, so the bearer plus oauth beta rewrite is accepted
 // upstream. Claude Code itself is launched with a placeholder ANTHROPIC_API_KEY so it uses the
