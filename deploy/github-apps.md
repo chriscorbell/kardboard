@@ -14,9 +14,30 @@ Twice, at https://github.com/settings/apps/new (once per app):
 | --- | --- | --- |
 | GitHub App name | Kardboard (Sessions) | Kardboard (Merge) |
 | Homepage URL | https://kardboard.cc | https://kardboard.cc |
-| Webhook | Uncheck **Active** | Uncheck **Active** |
-| Repository permissions | Contents: Read and write. Pull requests: Read and write. Metadata: Read. | Same, plus Workflows: Read and write, so kardboard can merge a pull request that touches `.github/workflows` |
+| Webhook | Uncheck **Active** | Uncheck **Active**. kardboard polls instead: every two minutes, and once after it starts, it reads the pull request of every Card not in Done |
+| Repository permissions | Contents: Read and write. Pull requests: Read and write. Metadata: Read. | Same, plus Workflows: Read and write, so kardboard can merge a pull request that touches `.github/workflows`, and Checks: Read and Commit statuses: Read, so it can see CI |
 | Where can this app be installed | Any account | Any account |
+
+kardboard reads CI with the merge app's token: check runs (GitHub Actions and most CI apps) need
+**Checks: Read**, and older integrations that report commit statuses need **Commit statuses:
+Read**. Both matter only for private repositories; a public repository's checks are readable
+without them. The Card shows CI in its Review block, a Session reads it with the `get_checks` tool,
+and Approve is refused while a check is failing unless the Admin chooses to merge anyway. Without
+the permissions a private repository's checks read as unknown: the Card says nothing about CI to
+Members (the Admin sees "GitHub did not say how the checks went"), `get_checks` answers `unknown`,
+and Approve is never held back by CI. Since the merge app bypasses the branch ruleset, that gate is
+the only thing standing between a red build and `main`, so grant both.
+
+To add them to an existing app: the app's settings, **Permissions & events**, set both to
+Read-only, and save. GitHub emails the owner of each account the app is installed on, who has to
+approve the new permissions from the app's installation settings; until they do, that
+installation keeps its old ones ([GitHub's guide](https://docs.github.com/en/apps/using-github-apps/approving-updated-permissions-for-a-github-app)).
+kardboard reuses a merge token for up to ten minutes, so an approved change shows within that.
+
+The Sessions app needs neither. Do not add Checks or Commit statuses to the permissions kardboard
+requests for a Session token in `github.ts` unless every installation of the Sessions app has
+been granted them first: GitHub refuses to mint a token that asks for a permission the
+installation lacks, and every Session on that repository would then fail to start.
 
 Adding a permission here does not widen what a Session can do. kardboard mints each Session token
 with a fixed `{ contents: write, pull_requests: write, metadata: read }` (`mintInstallationToken`
