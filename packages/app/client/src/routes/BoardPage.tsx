@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { closestCorners, DndContext, DragOverlay, PointerSensor, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { closestCorners, DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Plus, RefreshCw } from "lucide-react";
@@ -13,6 +13,13 @@ import { CardTile, WorkingDot } from "./board/CardTile";
 import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
 import { COLUMN_HINTS } from "./board/columns";
+import { dropPlacement } from "./board/dropPlacement";
+
+// Enter opens a card, so only Space picks one up; the instructions read to screen readers say so.
+const KEYBOARD_CODES = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter", "Tab"] };
+const SCREEN_READER_INSTRUCTIONS = {
+  draggable: "To open a card, press Enter. To move it, press Space to pick it up, use the arrow keys to move it within or between columns, then press Space again to drop it, or Escape to cancel.",
+};
 
 function SortableCard({ card, creator, agent, onOpen }: { card: Card; creator: User | undefined; agent: AgentProfile; onOpen: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { column: card.column } });
@@ -24,13 +31,14 @@ function SortableCard({ card, creator, agent, onOpen }: { card: Card; creator: U
       agent={agent}
       dragging={isDragging}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className="cursor-grab active:cursor-grabbing"
+      className="cursor-grab touch-manipulation active:cursor-grabbing"
       onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onOpen();
-      }}
       {...attributes}
       {...listeners}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !isDragging) return onOpen();
+        listeners?.onKeyDown?.(e);
+      }}
       role="button"
       tabIndex={0}
     />
@@ -79,7 +87,12 @@ export function BoardPage() {
   const move = useMoveCard(slug);
   const [creating, setCreating] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // A touch has to rest on a card before it drags, so a swipe still scrolls the board.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: KEYBOARD_CODES }),
+  );
 
   const members = useMemo(() => new Map((board.data?.members ?? []).map((m) => [m.id, m])), [board.data?.members]);
   const byColumn = useMemo(() => {
@@ -100,26 +113,11 @@ export function BoardPage() {
       const card = board.data.cards.find((c) => c.id === active.id);
       if (!card) return;
       const overId = String(over.id);
-      const targetColumn = overId.startsWith("col:") ? (overId.slice(4) as Column) : (board.data.cards.find((c) => c.id === overId)?.column ?? card.column);
-      const lane = byColumn[targetColumn].filter((c) => c.id !== card.id);
-      let index = lane.length;
-      if (!overId.startsWith("col:")) {
-        const overIndex = lane.findIndex((c) => c.id === overId);
-        if (overIndex >= 0) {
-          const sameLane = card.column === targetColumn;
-          const fromIndex = byColumn[targetColumn].findIndex((c) => c.id === card.id);
-          index = sameLane && fromIndex < overIndex ? overIndex + 1 : overIndex;
-        }
-      }
-      const before = lane[index - 1]?.position;
-      const after = lane[index]?.position;
-      let position: number;
-      if (before === undefined && after === undefined) position = 1000;
-      else if (before === undefined) position = after! - 1000;
-      else if (after === undefined) position = before + 1000;
-      else position = (before + after) / 2;
-      if (targetColumn === card.column && position === card.position) return;
-      move.mutate({ id: card.id, column: targetColumn, position, revision: card.revision });
+      const onColumn = overId.startsWith("col:");
+      const targetColumn = onColumn ? (overId.slice(4) as Column) : (board.data.cards.find((c) => c.id === overId)?.column ?? card.column);
+      const placed = dropPlacement(byColumn[targetColumn], card.id, onColumn ? null : overId);
+      if (!placed) return;
+      move.mutate({ id: card.id, column: targetColumn, position: placed.position, revision: card.revision });
     },
     [board.data, byColumn, move],
   );
@@ -198,7 +196,14 @@ export function BoardPage() {
           )}
         </div>
       </div>
-      <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        accessibility={{ screenReaderInstructions: SCREEN_READER_INSTRUCTIONS }}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={() => setActiveId(null)}
+      >
         <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 pt-3 sm:snap-none">
           {COLUMNS.map((column) => (
             <ColumnLane
