@@ -27,6 +27,33 @@ export function startsItsOwnSession(card: { creatorKind: ActorKind; parentCardId
   return card.creatorKind === "agent" && card.parentCardId !== null && card.column === "ready";
 }
 
+/**
+ * The most pieces one request is split into. Each child starts a Session of its own, so a split is
+ * also a burst of Sessions on the Admin's subscriptions, and a request that needs more pieces than
+ * this needs a person to look at it first.
+ */
+export const MAX_CHILDREN = 8;
+
+/**
+ * Why this Card may not be given another child, or null when it may. A split is one level deep: a
+ * child that splits again would wake a parent that is itself waiting on a parent, and nothing on
+ * the Board shows a person that tree.
+ */
+export function childRefusal(parent: { id: string; parentCardId: string | null }, existingChildren: number): string | null {
+  if (parent.parentCardId) {
+    return `card ${parent.id} is itself a piece of card ${parent.parentCardId}, and a piece is not split again. Do this piece's work in this card, or, if it is still too large, say so in a comment on the parent.`;
+  }
+  if (existingChildren >= MAX_CHILDREN) {
+    return `card ${parent.id} already has ${existingChildren} child cards, the most one request is split into. Fold what is left into those pieces or into this card.`;
+  }
+  return null;
+}
+
+export async function countChildren(parentCardId: string): Promise<number> {
+  const rows = await db.select({ id: schema.cards.id }).from(schema.cards).where(eq(schema.cards.parentCardId, parentCardId));
+  return rows.length;
+}
+
 /** A parent waits for every child, whatever each of them turned out to be. */
 export function allChildrenDone(children: { column: Column }[]): boolean {
   return children.length > 0 && children.every((c) => c.column === "done");

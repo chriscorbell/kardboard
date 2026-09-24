@@ -22,8 +22,12 @@ const {
   previewUrlFor,
   reapPreviews,
   applyPreviewState,
+  failBuildsInterruptedBy,
+  failStuckBuilds,
+  INTERRUPTED_BUILD,
   verifyPreviewCookie,
 } = await import("../src/services/previews.js");
+const { getCard } = await import("../src/services/cards.js");
 
 await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -145,7 +149,80 @@ describe("the routing table the preview router polls", () => {
     const route = (await previewRoutes()).find((r) => r.host === preview.host)!;
     assert.equal(route.status, "failed");
     assert.equal(route.error, "Dockerfile is not in the branch");
-    assert.equal(route.target, null);
+    // The runner leaves the previous container up after a failed rebuild; the router shows the
+    // failure anyway, and the next rebuild can serve that container while it runs.
+    assert.equal(route.target, `http://kardboard-preview-${preview.id}:3000`);
+  });
+});
+
+describe("the commit a Preview was built from", () => {
+  const SHA_A = "a".repeat(40);
+  const SHA_B = "b".repeat(40);
+
+  it("is recorded when the build runs, and travels on the Card", async () => {
+    const preview = await makePreview();
+    await applyPreviewState(preview.id, { status: "running", containerId: "c1", target: "http://kardboard-preview-x:3000", sha: SHA_A });
+    const card = (await getCard(preview.cardId))!;
+    assert.equal(card.preview?.status, "running");
+    assert.equal(card.preview?.sha, SHA_A);
+    assert.equal(card.preview?.error, null);
+  });
+
+  it("names the commit a build failed on, and keeps the last one when the clone itself failed", async () => {
+    const preview = await makePreview();
+    await applyPreviewState(preview.id, { status: "running", target: "http://kardboard-preview-x:3000", sha: SHA_A });
+    await applyPreviewState(preview.id, { status: "failed", error: "build failed", sha: SHA_B });
+    assert.equal((await getCard(preview.cardId))!.preview?.sha, SHA_B);
+    await applyPreviewState(preview.id, { status: "failed", error: "clone failed" });
+    assert.equal((await getCard(preview.cardId))!.preview?.sha, SHA_B);
+  });
+
+  it("is absent from a Card with no runner Preview", async () => {
+    await db.insert(schema.cards).values({ id: "card-plain", boardId: OTHER_BOARD, title: "No preview" });
+    assert.equal((await getCard("card-plain"))!.preview, null);
+  });
+});
+
+describe("a build nothing will ever report", () => {
+  async function building(minutesAgo: number): Promise<string> {
+    const preview = await makePreview();
+    const at = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    await db.update(schema.previews).set({ status: "building", updatedAt: at }).where(eq(schema.previews.id, preview.id));
+    return preview.id;
+  }
+  const row = async (id: string) => (await db.select().from(schema.previews).where(eq(schema.previews.id, id)).get())!;
+
+  it("is failed once it has run past the runner's build limit and the report's retries", async () => {
+    const lost = await building(21);
+    const recent = await building(10);
+    assert.equal(await failStuckBuilds(), 1);
+    assert.equal((await row(lost)).status, "failed");
+    assert.equal((await row(lost)).error, INTERRUPTED_BUILD);
+    assert.equal((await row(recent)).status, "building", "a build inside the limit may still finish");
+  });
+
+  it("is failed as soon as a restarted runner says when it started", async () => {
+    const before = await building(2);
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const after = await building(0);
+    assert.equal(await failBuildsInterruptedBy(startedAt), 1);
+    assert.equal((await row(before)).status, "failed");
+    assert.equal((await row(after)).status, "building", "the new runner is building that one");
+  });
+
+  it("leaves Previews that are running or already failed alone", async () => {
+    const running = await makePreview();
+    await db.update(schema.previews).set({ updatedAt: new Date(Date.now() - 86_400_000).toISOString() }).where(eq(schema.previews.id, running.id));
+    assert.equal(await failStuckBuilds(), 0);
+    assert.equal((await row(running.id)).status, "running");
+  });
+
+  it("puts itself right if the build it gave up on reports after all", async () => {
+    const id = await building(0);
+    await failBuildsInterruptedBy(new Date(Date.now() + 1_000).toISOString());
+    await applyPreviewState(id, { status: "running", target: "http://kardboard-preview-x:3000", sha: "c".repeat(40) });
+    assert.equal((await row(id)).status, "running");
+    assert.equal((await row(id)).error, null);
   });
 });
 

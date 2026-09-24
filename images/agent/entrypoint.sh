@@ -10,21 +10,33 @@ WALL_CLOCK_MINUTES="${KARDBOARD_WALL_CLOCK_MINUTES:-45}"
 
 log() { printf '[session %s] %s\n' "$KARDBOARD_SESSION_ID" "$*" >&2; }
 
+# The runner mounts the Board's dependency cache at /cache and the image points every package tool
+# into it. A volume first created by an image without a /cache of its own belongs to root; rather
+# than fail every install on it, the tools fall back to their defaults for this Session.
+if [ ! -w /cache ]; then
+  log "/cache is not writable, so package caches stay inside this container"
+  unset npm_config_cache pnpm_config_store_dir pnpm_config_cache_dir BUN_INSTALL_CACHE_DIR GOMODCACHE GOCACHE UV_CACHE_DIR PIP_CACHE_DIR
+fi
+
 if [ -n "${KARDBOARD_REPO_URL:-}" ]; then
   log "cloning $KARDBOARD_REPO_URL"
+  # Blobless rather than shallow: every commit of the default branch, with file contents fetched as
+  # git needs them. A --depth clone could not merge the default branch into a card's branch once the
+  # two had diverged by more than the depth, and every Session's workflow asks for that merge. The
+  # lazy fetches use the credential helper written into the repository below.
   # GITHUB_TOKEN is a one-hour installation token the app mints from the Sessions GitHub App. It is
   # absent only when that app is not configured, and then the clone is anonymous.
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    git -c credential.helper='!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f' clone --depth=50 "$KARDBOARD_REPO_URL" repo
+    git -c credential.helper='!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f' clone --filter=blob:none --single-branch "$KARDBOARD_REPO_URL" repo
     git -C repo config credential.helper '!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f'
   else
-    git clone --depth=50 "$KARDBOARD_REPO_URL" repo
+    git clone --filter=blob:none --single-branch "$KARDBOARD_REPO_URL" repo
   fi
   cd repo
   git config user.name "${KARDBOARD_GIT_NAME:-Milo}"
   git config user.email "${KARDBOARD_GIT_EMAIL:-kardboard@users.noreply.github.com}"
   if [ -n "${KARDBOARD_BRANCH:-}" ]; then
-    # A shallow clone only has the default branch, so ask origin whether the card's branch exists.
+    # A single-branch clone only has the default branch, so ask origin whether the card's branch exists.
     # Only a definite "no" starts it fresh: treating any failed fetch as "no" cut a new branch from
     # the default one, and the Session worked without the commits already on the real branch.
     status=0
@@ -32,7 +44,7 @@ if [ -n "${KARDBOARD_REPO_URL:-}" ]; then
     case "$status" in
       0)
         log "resuming existing branch $KARDBOARD_BRANCH"
-        if ! git fetch --depth=50 origin "refs/heads/$KARDBOARD_BRANCH:refs/remotes/origin/$KARDBOARD_BRANCH"; then
+        if ! git fetch origin "refs/heads/$KARDBOARD_BRANCH:refs/remotes/origin/$KARDBOARD_BRANCH"; then
           log "branch $KARDBOARD_BRANCH exists on origin but could not be fetched; stopping rather than starting it over"
           exit 1
         fi
@@ -61,11 +73,14 @@ JSON
     [ -n "${KARDBOARD_REASONING:-}" ] && export CLAUDE_CODE_EFFORT_LEVEL="$KARDBOARD_REASONING"
     # stream-json, not text: text prints nothing until the run ends, so the container log — which is
     # what the admin panel shows as the Session's transcript — would stay empty for the whole run.
+    # Planning and subagents: TodoWrite is deprecated in favour of the Task* tools, and Agent was
+    # called Task before Claude Code 2.1.63. The image does not pin Claude Code, so both generations
+    # are listed; these are permission rules, and a name a version lacks simply matches nothing.
     exec timeout --signal=TERM "${WALL_CLOCK_MINUTES}m" \
       claude -p "$PROMPT" "${MODEL_ARGS[@]}" \
         --mcp-config /tmp/mcp.json \
         --permission-mode acceptEdits \
-        --allowedTools "mcp__kardboard__*,Bash,Read,Edit,Write,Glob,Grep,WebFetch" \
+        --allowedTools "mcp__kardboard__*,Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,TodoWrite,TaskCreate,TaskGet,TaskList,TaskUpdate,Agent,Task" \
         --output-format stream-json --verbose
     ;;
   codex)

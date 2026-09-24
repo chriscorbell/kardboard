@@ -234,6 +234,9 @@ export const previews = sqliteTable(
     // Where the router proxies to, on the preview network: `http://kardboard-preview-<id>:<port>`.
     target: text("target"),
     error: text("error"),
+    // The commit the runner last built, whether the build ran or failed. A rebuild keeps serving the
+    // previous container until it finishes, so while one runs this is still the commit being served.
+    sha: text("sha"),
     // Drives the seven-idle-day removal: touched whenever someone is let through to the Preview,
     // and whenever it is rebuilt.
     lastAccessAt: text("last_access_at").notNull().$defaultFn(now),

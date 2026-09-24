@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { Card, CardWaiting, ChecksSummary, Column, Priority, SessionSummary } from "@kardboard/shared";
+import type { Card, CardPreview, CardWaiting, ChecksSummary, Column, Priority, SessionSummary } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
@@ -48,6 +48,8 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
   const activeMap = new Map(active.map((s) => [s.cardId!, toSessionSummary(s)]));
   const lastMap = await latestEndedSessions(ids);
   const waitingMap = await waitingFor(rows, activeMap, lastMap);
+  const previews = await db.select().from(schema.previews).where(inArray(schema.previews.cardId, ids));
+  const previewMap = new Map<string, CardPreview>(previews.map((p) => [p.cardId, { status: p.status, error: p.error, sha: p.sha, updatedAt: p.updatedAt }]));
   return rows.map((r) => ({
     id: r.id,
     boardId: r.boardId,
@@ -68,6 +70,7 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     prBaseRef: r.prBaseRef,
     checks: r.checks ?? null,
     previewUrl: r.previewUrl,
+    preview: previewMap.get(r.id) ?? null,
     commentCount: countMap.get(r.id) ?? 0,
     activeSession: activeMap.get(r.id) ?? null,
     lastSession: lastMap.get(r.id) ?? null,

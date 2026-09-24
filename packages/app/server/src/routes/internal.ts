@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { env } from "../env.js";
 import { endSessionOnExit } from "../services/session-end.js";
-import { applyPreviewState, exchangePreviewCode, PreviewError, previewRoutes } from "../services/previews.js";
+import { applyPreviewState, exchangePreviewCode, failBuildsInterruptedBy, PreviewError, previewRoutes } from "../services/previews.js";
 
 // Called by the runner when a container exits, and by the preview router for its routing table and
 // its code exchange. Both reach the app over the control network with the shared runner token.
@@ -28,6 +28,8 @@ internal.post(
       containerId: z.string().nullish(),
       target: z.string().nullish(),
       error: z.string().nullish(),
+      // The commit the runner cloned. Absent when the clone itself failed.
+      sha: z.string().nullish(),
     }),
   ),
   async (c) => {
@@ -35,6 +37,13 @@ internal.post(
     return c.json({ ok: true });
   },
 );
+
+// A restarted runner has lost every build its previous process was running, and says when it started
+// so those Previews stop showing "building" now rather than at the stuck-build timeout.
+internal.post("/previews/interrupted", zValidator("json", z.object({ startedAt: z.string().datetime() })), async (c) => {
+  const failed = await failBuildsInterruptedBy(c.req.valid("json").startedAt);
+  return c.json({ ok: true, failed });
+});
 
 // Step two of the Preview sign-in redirect. The router never sees a kardboard credential; it hands
 // over the single-use code and gets back one cookie for one host.

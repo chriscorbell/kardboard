@@ -10,8 +10,8 @@ import { createRouter, type ExchangeResult } from "../src/router.js";
 const secret = "test-secret";
 const host = "k6u39mjg.kardboard.cc";
 
-function signed(): string {
-  const body = Buffer.from(JSON.stringify({ host, board: "b1", user: "u1", epoch: 1, exp: Math.floor(Date.now() / 1000) + 600 })).toString("base64url");
+function signed(forHost = host): string {
+  const body = Buffer.from(JSON.stringify({ host: forHost, board: "b1", user: "u1", epoch: 1, exp: Math.floor(Date.now() / 1000) + 600 })).toString("base64url");
   return `${body}.${createHmac("sha256", secret).update(body).digest("base64url")}`;
 }
 
@@ -46,6 +46,13 @@ describe("the preview router", () => {
   let router: Awaited<ReturnType<typeof listen>>;
   let exchange: () => Promise<ExchangeResult>;
   const member = { cookie: `${COOKIE_NAME}=${signed()}` };
+  const routes = new Map<string, Route>();
+  // Another Preview on the same router, in whatever state a test gives it, and its Member.
+  const other = (route: Omit<Route, "host" | "epoch">) => {
+    const h = `other${routes.size}.kardboard.cc`;
+    routes.set(h, { host: h, epoch: 1, ...route });
+    return { host: h, cookie: `${COOKIE_NAME}=${signed(h)}` };
+  };
 
   before(async () => {
     upstream = await listen((req, res) => {
@@ -64,10 +71,10 @@ describe("the preview router", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ path: req.url, cookie: req.headers.cookie ?? null }));
     });
-    const route: Route = { host, target: `http://127.0.0.1:${upstream.port}`, status: "running", error: null, epoch: 1 };
+    routes.set(host, { host, target: `http://127.0.0.1:${upstream.port}`, status: "running", error: null, epoch: 1 });
     router = await listen(
       createRouter({
-        route: (h) => (h === host ? route : undefined),
+        route: (h) => routes.get(h),
         exchange: () => exchange(),
         secret,
         publicAppUrl: "https://kardboard.cc",
@@ -134,5 +141,42 @@ describe("the preview router", () => {
   it("keeps a Preview's cookies on its own host and drops any named like the router's", async () => {
     const res = await send(router.port, "/cookies", member);
     assert.deepEqual(res.headers["set-cookie"], ["theme=dark; Path=/"]);
+  });
+
+  it("keeps serving the previous container while a rebuild runs", async () => {
+    const rebuilding = other({ target: `http://127.0.0.1:${upstream.port}`, status: "building", error: null });
+    const res = await send(router.port, "/hello", rebuilding);
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), { path: "/hello", cookie: null }, "with the same stripping as ever");
+  });
+
+  it("still sends a stranger to sign in rather than to the previous container", async () => {
+    const rebuilding = other({ target: `http://127.0.0.1:${upstream.port}`, status: "building", error: null });
+    assert.equal((await send(router.port, "/hello", { host: rebuilding.host })).status, 302);
+  });
+
+  it("shows the holding page while a first build runs", async () => {
+    const first = other({ target: null, status: "building", error: null });
+    const res = await send(router.port, "/", first);
+    assert.equal(res.status, 503);
+    assert.match(res.body, /Building this preview/);
+  });
+
+  it("shows the holding page, not an error, in the moment a rebuild swaps containers", async () => {
+    const gone = await listen(() => {});
+    const port = gone.port;
+    await gone.close();
+    const swapping = other({ target: `http://127.0.0.1:${port}`, status: "building", error: null });
+    const res = await send(router.port, "/", swapping);
+    assert.equal(res.status, 503);
+    assert.match(res.body, /Building this preview/);
+  });
+
+  it("shows a failed build's error even though the previous container is still up", async () => {
+    const failed = other({ target: `http://127.0.0.1:${upstream.port}`, status: "failed", error: "build failed: <exit 1>" });
+    const res = await send(router.port, "/hello", failed);
+    assert.equal(res.status, 502);
+    assert.match(res.body, /could not be built/);
+    assert.match(res.body, /build failed: &lt;exit 1&gt;/, "escaped, since the error is branch output");
   });
 });

@@ -4,6 +4,7 @@ import Docker from "dockerode";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { cacheMounts } from "./cache.js";
 import { codexWiring } from "./codex.js";
 import { pruneSupersededImages } from "./images.js";
 import { ID_PATTERN, readLogSlice } from "./logs.js";
@@ -73,6 +74,8 @@ app.get("/healthz", async (c) => {
 
 const startSchema = z.object({
   sessionId: z.string().regex(ID_PATTERN),
+  // Names the Board's cache volume. Absent from a sweep, and from an app older than this runner.
+  boardId: z.string().regex(ID_PATTERN).nullable().default(null),
   boardSlug: z.string(),
   provider: z.enum(["claude", "codex"]),
   model: z.string().nullable().default(null),
@@ -245,6 +248,7 @@ app.post("/sessions", async (c) => {
         NanoCpus: env.nanoCpus,
         PidsLimit: env.pidsLimit,
         Binds: binds,
+        Mounts: cacheMounts(req.boardId, req.boardSlug),
         NetworkMode: network,
         SecurityOpt: ["no-new-privileges:true"],
         CapDrop: ["ALL"],
@@ -322,16 +326,28 @@ void prunePreviewNetworks(docker)
   .then((removed) => removed.length && console.log(`[runner] removed ${removed.length} orphaned preview network(s)`))
   .catch((err) => console.error("[runner] preview network prune failed", err));
 
-async function reportPreview(previewId: string, body: { status: "running" | "failed"; containerId?: string; target?: string; error?: string }) {
-  try {
-    await fetch(`${env.appUrl}/api/internal/previews/${previewId}/state`, {
+// For the same reason the app is told when this process started: every Preview still marked building
+// from before then was being built by a runner that is gone, and nothing else would ever report it.
+const startedAt = new Date().toISOString();
+void deliverWithRetry(() =>
+  fetch(`${env.appUrl}/api/internal/previews/interrupted`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ startedAt }),
+  }),
+).then((delivered) => delivered || console.error("[runner] could not tell the app which preview builds this restart interrupted"));
+
+// Retried like an exit report: a deploy restarts the app too, and a lost report left the Preview
+// showing "building" forever.
+async function reportPreview(previewId: string, body: { status: "running" | "failed"; containerId?: string; target?: string; error?: string; sha: string | null }) {
+  const delivered = await deliverWithRetry(() =>
+    fetch(`${env.appUrl}/api/internal/previews/${previewId}/state`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    });
-  } catch (err) {
-    console.error(`[runner] could not report preview ${previewId}`, err);
-  }
+    }),
+  );
+  if (!delivered) console.error(`[runner] could not report preview ${previewId} as ${body.status}`);
 }
 
 // A build takes minutes, so the request only accepts the work. The app already knows the hostname,
@@ -344,9 +360,10 @@ app.post("/previews", async (c) => {
   fs.writeFileSync(logPath, `[preview] accepted ${req.host} at ${new Date().toISOString()}\n`);
   const onLog = (line: string) => fs.appendFileSync(logPath, `${line}\n`);
 
-  void buildAndRunPreview(docker, req, previewLimits, onLog)
+  let sha: string | null = null;
+  void buildAndRunPreview(docker, req, previewLimits, onLog, (cloned) => (sha = cloned))
     .then(async ({ containerId, target }) => {
-      await reportPreview(req.previewId, { status: "running", containerId, target });
+      await reportPreview(req.previewId, { status: "running", containerId, target, sha });
     })
     .catch(async (err: Error) => {
       // A newer build or the Preview's removal replaced this one, and reports for itself.
@@ -354,7 +371,7 @@ app.post("/previews", async (c) => {
       const message = err instanceof PreviewError ? err.message : `preview failed: ${err.message}`;
       onLog(message);
       console.error(`[runner] preview ${req.previewId} failed`, message);
-      await reportPreview(req.previewId, { status: "failed", error: message });
+      await reportPreview(req.previewId, { status: "failed", error: message, sha });
     });
 
   return c.json({ accepted: true }, 202);

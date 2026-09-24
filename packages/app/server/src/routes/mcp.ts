@@ -6,23 +6,29 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { findSessionByToken, endSession, listBoardSessions } from "../services/orchestrator.js";
-import { getBoardById } from "../services/boards.js";
-import { ConflictError, createCard, getCard, listCards, moveCard, setCardWorkState, toSessionSummary } from "../services/cards.js";
+import { getBoardById, listMembers } from "../services/boards.js";
+import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, setCardWorkState, toSessionSummary, updateCard } from "../services/cards.js";
 import { createComment, getAttachment, listComments } from "../services/comments.js";
 import { getUsersByIds } from "../services/users.js";
 import { recordEvent } from "../services/events.js";
 import { publish } from "../services/realtime.js";
-import { previewUrlFor, startPreview } from "../services/previews.js";
+import { getPreviewForCard, previewLogTail, previewUrlFor, startPreview } from "../services/previews.js";
 import { linkPullRequest, refreshPullRequestHead } from "../services/approvals.js";
 import { githubConfigured, parseRepoUrl } from "../services/github.js";
 import { refreshCardChecks } from "../services/checks.js";
+import { childRefusal, countChildren, MAX_CHILDREN } from "../services/children.js";
+import { attachmentContent } from "../services/attachment-content.js";
 
 type SessionRow = typeof schema.sessions.$inferSelect;
+
+// How much of a Card's past get_board and get_card send by default.
+const DONE_SHOWN = 15;
+const EARLIER_SESSIONS_SHOWN = 10;
 
 // The agent-native interface. Every tool runs under a Session's identity; authorization is the
 // Session's Board plus, for pull-request state, its own Card. Sweeps cannot touch work state.
@@ -57,31 +63,60 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // Done only grows, and every Session reads the Board, so by default it sends the newest few. The
+  // members are who a Session may Mention: never their email, which a container has no use for.
   server.registerTool(
     "get_board",
-    { description: "The board's settings and every card on it, grouped by column, with creator names and each card's revision.", inputSchema: {} },
-    async () => {
+    {
+      description: `The board's settings, its members with their @handles and roles (the Admin included), and every card on it grouped by column, with creator names, parent cards, and each card's revision. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
+      inputSchema: { include_all_done: z.boolean().default(false) },
+    },
+    async ({ include_all_done }) => {
       const board = await getBoardById(session.boardId);
       const cards = await listCards(session.boardId);
       const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
-      const grouped = Object.fromEntries(COLUMNS.map((col) => [col, cards.filter((c) => c.column === col).map((c) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt }))]));
-      return { content: [{ type: "text", text: JSON.stringify({ board: { name: board?.name, repoUrl: board?.repoUrl, previewMode: board?.previewMode }, columns: COLUMN_LABELS, cards: grouped }, null, 2) }] };
+      const members = (await listMembers(session.boardId)).filter((u) => u.status !== "revoked").map((u) => ({ id: u.id, name: u.name, handle: u.handle, role: u.role }));
+      const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt });
+      const done = cards.filter((c) => c.column === "done").sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+      const shownDone = include_all_done ? done : done.slice(0, DONE_SHOWN);
+      const grouped = Object.fromEntries(COLUMNS.map((col) => [col, (col === "done" ? shownDone : cards.filter((c) => c.column === col)).map(summary)]));
+      const out = { board: { name: board?.name, repoUrl: board?.repoUrl, previewMode: board?.previewMode }, columns: COLUMN_LABELS, members, cards: grouped, doneOmitted: done.length - shownDone.length };
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
   );
 
   server.registerTool(
     "get_card",
-    { description: "Full detail for one card: description, comments with author handles, attachments, work state, and the revision to pass to move_card. Omit card_id for your own card.", inputSchema: { card_id: z.string().optional() } },
+    {
+      description: "Full detail for one card: description, comments with author handles, attachments, work state and preview status, the revision to pass to move_card, its parent and child cards, live approvals, and the card's earlier sessions with how each ended. Read the earlier sessions before redoing work a previous run may have done. Omit card_id for your own card.",
+      inputSchema: { card_id: z.string().optional() },
+    },
     async ({ card_id }) => {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
       const card = await assertBoardCard(id);
       const comments = await listComments(id);
-      const users = await getUsersByIds([card.creatorId, ...comments.map((c) => c.authorId)].filter((x): x is string => Boolean(x)));
+      const approvals = await db.select().from(schema.approvals).where(and(eq(schema.approvals.cardId, id), isNull(schema.approvals.invalidatedAt)));
+      const users = await getUsersByIds([card.creatorId, ...comments.map((c) => c.authorId), ...approvals.map((a) => a.userId)].filter((x): x is string => Boolean(x)));
+      // A name and handle to address someone by. The rest of a User record, email included, stays out.
+      const person = (userId: string | null) => {
+        const u = userId ? users.get(userId) : undefined;
+        return u ? { name: u.name, handle: u.handle } : null;
+      };
+      const earlier = await db
+        .select()
+        .from(schema.sessions)
+        .where(and(eq(schema.sessions.cardId, id), ne(schema.sessions.id, session.id)))
+        .orderBy(desc(schema.sessions.createdAt))
+        .limit(EARLIER_SESSIONS_SHOWN);
+      const children = await listChildren(id);
       const out = {
         ...card,
-        creator: card.creatorId ? users.get(card.creatorId) : null,
+        creator: person(card.creatorId),
         comments: comments.map((c) => ({ id: c.id, author: c.authorKind === "agent" ? "you" : c.authorKind === "system" ? "kardboard" : (users.get(c.authorId ?? "")?.name ?? "unknown"), authorHandle: users.get(c.authorId ?? "")?.handle ?? null, body: c.body, createdAt: c.createdAt, editedAt: c.editedAt, attachments: c.attachments })),
+        approvals: approvals.map((a) => ({ approver: person(a.userId), prNumber: a.prNumber, headSha: a.headSha, createdAt: a.createdAt })),
+        children: children.map((c) => ({ id: c.id, title: c.title, column: c.column, outcome: c.outcome })),
+        earlierSessions: earlier.map((s) => ({ id: s.id, status: s.status, provider: s.provider, startedAt: s.startedAt, endedAt: s.endedAt, outcomeSummary: s.outcomeSummary })),
       };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
@@ -89,16 +124,13 @@ function buildServer(session: SessionRow): McpServer {
 
   server.registerTool(
     "read_attachment",
-    { description: "Fetch an attachment by id. Images come back as image content; other files as text when small.", inputSchema: { attachment_id: z.string() } },
+    { description: "Fetch an attachment by id. PNG, JPEG, GIF, and WebP images come back as images and text files as text; any other file, such as a PDF, comes back as a one-line note of its name, type, and size.", inputSchema: { attachment_id: z.string() } },
     async ({ attachment_id }) => {
       const att = await getAttachment(attachment_id);
       if (!att) throw new Error("attachment not found");
       await assertBoardCard(att.cardId);
       const file = path.join(env.dataDir, "uploads", att.sha256.slice(0, 2), att.sha256);
-      const bytes = fs.readFileSync(file);
-      if (att.mime.startsWith("image/")) return { content: [{ type: "image", data: bytes.toString("base64"), mimeType: att.mime }] };
-      if (bytes.length > 200_000) return { content: [{ type: "text", text: `(${att.filename}: ${bytes.length} bytes, too large to inline)` }] };
-      return { content: [{ type: "text", text: bytes.toString("utf8") }] };
+      return { content: [attachmentContent(att, fs.readFileSync(file))] };
     },
   );
 
@@ -140,11 +172,49 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // Tidying a card is not a request for work, so an edit here, unlike a person's, starts nothing.
+  server.registerTool(
+    "update_card",
+    {
+      description: "Change a card's title, description, or priority: during intake, to give a vague card a title that says what it asks for, set its priority, or lay out the description. Keep everything the author asked for; add and clarify, never drop. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again. Omit card_id for your own card. Editing a card starts no session.",
+      inputSchema: {
+        card_id: z.string().optional(),
+        title: z.string().trim().min(1).max(200).optional(),
+        description: z.string().max(20_000).optional(),
+        priority: z.enum(PRIORITIES).optional(),
+        revision: z.number().int().nonnegative(),
+      },
+    },
+    async ({ card_id, title, description, priority, revision }) => {
+      const id = card_id ?? session.cardId;
+      if (!id) throw new Error("card_id required for a sweep session");
+      await assertBoardCard(id);
+      if (title === undefined && description === undefined && priority === undefined) throw new Error("nothing to change: pass a title, a description, or a priority");
+      let card;
+      try {
+        card = await updateCard(id, { title, description, priority, revision, actor });
+      } catch (err) {
+        if (!(err instanceof ConflictError)) throw err;
+        const now = (await getCard(id))!;
+        throw new Error(`card ${id} changed after revision ${revision}: it is now at revision ${now.revision}. Read it again with get_card before deciding whether the edit still makes sense.`);
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ cardId: card.id, revision: card.revision, title: card.title, priority: card.priority }) }] };
+    },
+  );
+
+  // A split is one level deep, of the Session's own Card only, and bounded: see `childRefusal`.
   server.registerTool(
     "create_card",
-    { description: "Create a card in any column except Inbox, which is reserved for humans. Set parent_card_id when splitting a request: a child card left in Ready starts its own session immediately, and the parent wakes once every child reaches Done. A card with no parent starts nothing and waits in Ready for a person.", inputSchema: { title: z.string().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS.filter((c) => c !== "inbox") as [string, ...string[]]).default("ready"), priority: z.enum(PRIORITIES).default("none"), parent_card_id: z.string().optional() } },
+    { description: `Create a card in any column except Inbox, which is reserved for humans. Set parent_card_id to your own card when splitting it: a child card left in Ready starts its own session immediately, and your card wakes once every child reaches Done. Only your own card can be a parent, a card that is itself a child cannot be split again, and one card has at most ${MAX_CHILDREN} children. A card with no parent starts nothing and waits in Ready for a person.`, inputSchema: { title: z.string().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS.filter((c) => c !== "inbox") as [string, ...string[]]).default("ready"), priority: z.enum(PRIORITIES).default("none"), parent_card_id: z.string().optional() } },
     async ({ title, description, column, priority, parent_card_id }) => {
-      if (parent_card_id) await assertBoardCard(parent_card_id);
+      if (parent_card_id) {
+        if (parent_card_id !== session.cardId) {
+          throw new Error(session.cardId ? `parent_card_id must be your own card, ${session.cardId}: a session splits only the request it is working on.` : "a sweep session has no card of its own, so it cannot create child cards.");
+        }
+        const parent = await assertBoardCard(parent_card_id);
+        const refusal = childRefusal(parent, await countChildren(parent.id));
+        if (refusal) throw new Error(refusal);
+      }
       const card = await createCard({ boardId: session.boardId, title, description, priority, column: column as (typeof COLUMNS)[number], actor, parentCardId: parent_card_id ?? null });
       return { content: [{ type: "text", text: JSON.stringify({ cardId: card.id }) }] };
     },
@@ -212,10 +282,45 @@ function buildServer(session: SessionRow): McpServer {
         content: [
           {
             type: "text",
-            text: `Building ${preview.branch} from its Dockerfile. The preview will answer at ${url} once the build finishes; until then it shows a holding page. The URL is already recorded on the card.`,
+            text: `Building ${preview.branch} from its Dockerfile. The preview will answer at ${url} once the build finishes; until then it shows a holding page, or the previous build if there is one. The URL is already recorded on the card. Check preview_status until it is no longer building.`,
           },
         ],
       };
+    },
+  );
+
+  // Separate from get_card, which also carries the status, because a Session polls this while a build
+  // runs, and get_card's comments and history would be read again on every poll. It adds what fixing
+  // a failed build needs: the end of the build log.
+  server.registerTool(
+    "preview_status",
+    {
+      description: "Your own card's runner preview: building, running, or failed; the error and the end of the build log when it failed; and the commit it was built from beside the pull request head kardboard last recorded. Call it after request_preview, about once a minute while it is building, and before reporting.",
+      inputSchema: {},
+    },
+    async () => {
+      if (session.kind !== "card" || !session.cardId) throw new Error("only card sessions have a preview");
+      const card = (await getCard(session.cardId))!;
+      const board = await getBoardById(session.boardId);
+      if (board?.previewMode !== "runner") {
+        return { content: [{ type: "text", text: JSON.stringify({ status: "external", note: "This board is in external preview mode: kardboard builds nothing, and the preview comes from the project's own CI." }) }] };
+      }
+      const row = await getPreviewForCard(session.cardId);
+      if (!row) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: "none", note: "No preview has been requested for this card. Push the branch, then call request_preview." }) }] };
+      }
+      const out = {
+        status: row.status,
+        url: previewUrlFor(row.host),
+        error: row.error,
+        builtFromSha: row.sha,
+        pullRequestHeadSha: card.prHeadSha,
+        // Only a yes or no when both are known. A building preview is still serving its previous build.
+        isOfPullRequestHead: row.sha && card.prHeadSha ? row.sha === card.prHeadSha : null,
+        updatedAt: row.updatedAt,
+        ...(row.status === "failed" ? { buildLogTail: await previewLogTail(row.id) } : {}),
+      };
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
   );
 

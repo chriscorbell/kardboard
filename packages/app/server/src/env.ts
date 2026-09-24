@@ -89,6 +89,9 @@ export const env = {
   previewScheme: str("KARDBOARD_PREVIEW_SCHEME", "https"),
   previewCookieMinutes: Number(str("KARDBOARD_PREVIEW_COOKIE_MINUTES", "240")),
   previewIdleDays: Number(str("KARDBOARD_PREVIEW_IDLE_DAYS", "7")),
+  // The runner stops a build after this long; the same variable sets it there. The app reads it to
+  // tell a build still running from one that was lost, which nothing would otherwise report.
+  previewBuildTimeoutMinutes: Number(str("KARDBOARD_PREVIEW_BUILD_TIMEOUT_MINUTES", "15")),
   githubSessionsApp: githubApp("GITHUB_SESSIONS_APP"),
   githubMergeApp: githubApp("GITHUB_MERGE_APP"),
   triggerCoalesceMs: Number(str("KARDBOARD_TRIGGER_COALESCE_MS", "60000")),
