@@ -12,7 +12,8 @@ log() { printf '[session %s] %s\n' "$KARDBOARD_SESSION_ID" "$*" >&2; }
 
 if [ -n "${KARDBOARD_REPO_URL:-}" ]; then
   log "cloning $KARDBOARD_REPO_URL"
-  # GITHUB_TOKEN is a one-hour installation token minted by the app (not wired yet; falls back to anonymous clone).
+  # GITHUB_TOKEN is a one-hour installation token the app mints from the Sessions GitHub App. It is
+  # absent only when that app is not configured, and then the clone is anonymous.
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     git -c credential.helper='!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f' clone --depth=50 "$KARDBOARD_REPO_URL" repo
     git -C repo config credential.helper '!f() { echo "username=x-access-token"; echo "password=$GITHUB_TOKEN"; }; f'
@@ -23,13 +24,29 @@ if [ -n "${KARDBOARD_REPO_URL:-}" ]; then
   git config user.name "${KARDBOARD_GIT_NAME:-Milo}"
   git config user.email "${KARDBOARD_GIT_EMAIL:-kardboard@users.noreply.github.com}"
   if [ -n "${KARDBOARD_BRANCH:-}" ]; then
-    # A shallow clone only has the default branch; fetch the card's branch if it already exists.
-    if git fetch --depth=50 origin "refs/heads/$KARDBOARD_BRANCH:refs/remotes/origin/$KARDBOARD_BRANCH" 2>/dev/null; then
-      log "resuming existing branch $KARDBOARD_BRANCH"
-      git checkout -B "$KARDBOARD_BRANCH" "origin/$KARDBOARD_BRANCH"
-    else
-      git checkout -b "$KARDBOARD_BRANCH"
-    fi
+    # A shallow clone only has the default branch, so ask origin whether the card's branch exists.
+    # Only a definite "no" starts it fresh: treating any failed fetch as "no" cut a new branch from
+    # the default one, and the Session worked without the commits already on the real branch.
+    status=0
+    git ls-remote --exit-code --heads origin "refs/heads/$KARDBOARD_BRANCH" >/dev/null || status=$?
+    case "$status" in
+      0)
+        log "resuming existing branch $KARDBOARD_BRANCH"
+        if ! git fetch --depth=50 origin "refs/heads/$KARDBOARD_BRANCH:refs/remotes/origin/$KARDBOARD_BRANCH"; then
+          log "branch $KARDBOARD_BRANCH exists on origin but could not be fetched; stopping rather than starting it over"
+          exit 1
+        fi
+        git checkout -B "$KARDBOARD_BRANCH" "origin/$KARDBOARD_BRANCH"
+        ;;
+      2)
+        log "starting new branch $KARDBOARD_BRANCH"
+        git checkout -b "$KARDBOARD_BRANCH"
+        ;;
+      *)
+        log "could not ask origin whether $KARDBOARD_BRANCH exists (git ls-remote exited $status); stopping rather than starting it over"
+        exit 1
+        ;;
+    esac
   fi
 fi
 
