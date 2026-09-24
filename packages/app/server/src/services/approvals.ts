@@ -209,6 +209,11 @@ export function followUpFor(outcome: MergeOutcome, prNumber: number, mention: st
       comment: `${mention} Pull request #${prNumber} can't be merged as it stands (${outcome.message}). I'll bring the branch up to date and ask you to approve again.`.trim(),
     };
   }
+  if (outcome.reason === "closed") {
+    // Someone closed it on GitHub. The Approval was for that pull request as it stood, and the poll
+    // moves the Card to Blocked and asks what should happen next.
+    return { kind: "invalidated", rerun: false, comment: `${mention} Pull request #${prNumber} was closed on GitHub before it could merge, so nothing was merged.`.trim() };
+  }
   if (outcome.reason === "pending") {
     // GitHub had not finished working out whether it can merge, even when asked again. Nothing is
     // wrong with the pull request, so nothing is voided and nobody is sent to change the branch.

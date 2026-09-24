@@ -428,6 +428,46 @@ describe("a 405 from GitHub's merge", () => {
     assert.equal(classifyMergeRefusal("Head branch is out of date", { mergeable: true, mergeableState: "behind" }), "conflict");
     assert.equal(classifyMergeRefusal("At least 1 approving review is required", { mergeable: true, mergeableState: "blocked" }), "refused");
   });
+
+  it("is not taken for GitHub still checking when the pull request was closed, or could not be read again", () => {
+    assert.equal(classifyMergeRefusal("Pull Request is not mergeable", { state: "closed", merged: false, mergeable: null, mergeableState: "unknown" }), "closed");
+    assert.equal(classifyMergeRefusal("Pull Request is not mergeable", null), "refused");
+    assert.equal(classifyMergeRefusal("Base branch was modified. Review and try the merge again.", null), "retry", "GitHub's own words still say to ask again");
+    assert.equal(classifyMergeRefusal("Merge conflict", null), "conflict");
+  });
+
+  it("voids the approval, without asking again, when the pull request was closed meanwhile", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({
+      status: 405,
+      message: "Pull Request is not mergeable",
+      then: (p) => {
+        p.state = "closed";
+        p.closedAt = "2026-09-24T10:00:00.000Z";
+        p.mergeable = null;
+      },
+    });
+
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.notEqual(approval.invalidatedAt, null);
+    assert.equal(approval.mergeError, null);
+    assert.equal(github.requests.filter((r) => r.endsWith("/merge")).length, 1);
+    const said = (await db.select().from(schema.comments).where(eq(schema.comments.cardId, CARD))).map((c) => c.body);
+    assert.deepEqual(said, ["@ada Pull request #7 was closed on GitHub before it could merge, so nothing was merged."]);
+    assert.deepEqual(await db.select().from(schema.triggers).where(eq(schema.triggers.cardId, CARD)), [], "no session is sent to a closed pull request");
+  });
+
+  it("reports GitHub's refusal as it was when the pull request cannot be read again", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({ status: 405, message: "Pull Request is not mergeable", then: () => github.pulls.delete(7) });
+
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.equal(approval.invalidatedAt, null);
+    assert.equal(approval.mergeError, "405 Pull Request is not mergeable");
+    assert.equal(github.requests.filter((r) => r.endsWith("/merge")).length, 1, "not asked again as if GitHub were still checking");
+  });
 });
 
 describe("a pull request's checks", () => {

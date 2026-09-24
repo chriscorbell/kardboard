@@ -214,19 +214,27 @@ export async function findPullRequestByBranch(owner: string, repo: string, branc
 
 // `pending` is a merge GitHub turned away only because it had not yet worked out whether the pull
 // request can merge, even after being asked again: nothing is wrong with it, it just has to be
-// tried again shortly.
-export type MergeOutcome = { ok: true; sha: string } | { ok: false; reason: "head_changed" | "not_mergeable" | "pending" | "error"; message: string };
+// tried again shortly. `closed` is a pull request someone closed on GitHub before it could merge.
+export type MergeOutcome = { ok: true; sha: string } | { ok: false; reason: "head_changed" | "not_mergeable" | "pending" | "closed" | "error"; message: string };
 
 /**
  * What a 405 from the merge endpoint means. GitHub gives that status for every merge it will not
  * do right now, and they call for different things: `conflict` needs the branch brought up to date,
  * `retry` is GitHub still computing mergeability in the background (the pull request reads
- * `mergeable: null`) or a base branch that moved a moment ago, and `refused` is a rule or setting
- * of the repository's own that nothing on the branch will fix.
+ * `mergeable: null`) or a base branch that moved a moment ago, `closed` is a pull request closed in
+ * the meantime, and `refused` is a rule or setting of the repository's own that nothing on the
+ * branch will fix. With no pull request to read, because reading it again failed, only GitHub's
+ * own words can say it is worth asking again; anything else is reported as GitHub put it rather
+ * than as a check still running.
  */
-export function classifyMergeRefusal(message: string, pr: Pick<PullRequest, "mergeable" | "mergeableState"> | null): "conflict" | "retry" | "refused" {
+export function classifyMergeRefusal(
+  message: string,
+  pr: (Pick<PullRequest, "mergeable" | "mergeableState"> & Partial<Pick<PullRequest, "state" | "merged">>) | null,
+): "conflict" | "retry" | "closed" | "refused" {
+  if (pr?.state === "closed" && !pr.merged) return "closed";
   if (pr?.mergeable === false || pr?.mergeableState === "dirty" || /merge conflict|out of date/i.test(message)) return "conflict";
-  if (!pr || pr.mergeable === null || pr.mergeableState === "unknown" || /base branch was modified|not mergeable/i.test(message)) return "retry";
+  if (/base branch was modified/i.test(message)) return "retry";
+  if (pr && (pr.mergeable === null || pr.mergeableState === "unknown" || /not mergeable/i.test(message))) return "retry";
   return "refused";
 }
 
@@ -265,6 +273,7 @@ export async function mergePullRequest(owner: string, repo: string, number: numb
     if (pr?.merged) return pr.headSha === expectedHeadSha ? { ok: true, sha: pr.mergeCommitSha ?? "" } : { ok: false, reason: "head_changed", message: "merged at another head" };
     if (pr && pr.headSha !== expectedHeadSha) return { ok: false, reason: "head_changed", message: "head changed" };
     const verdict = classifyMergeRefusal(message, pr);
+    if (verdict === "closed") return { ok: false, reason: "closed", message: "the pull request was closed" };
     if (verdict === "conflict") return { ok: false, reason: "not_mergeable", message: message || "not mergeable" };
     if (verdict === "refused") return { ok: false, reason: "error", message: `405 ${message}`.trim() };
     if (attempt >= MERGE_ATTEMPTS) return { ok: false, reason: "pending", message: message || "GitHub has not finished checking whether it can be merged" };
