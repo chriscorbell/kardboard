@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { cacheMounts } from "./cache.js";
+import { CliUpdater, clisMount } from "./clis.js";
 import { codexWiring } from "./codex.js";
 import { pruneSupersededImages } from "./images.js";
 import { ID_PATTERN, readLogSlice } from "./logs.js";
@@ -46,6 +47,9 @@ const env = {
   // A path on the Docker host: the runner never opens it, it only names it in a bind.
   codexAuthFile: process.env.CODEX_AUTH_FILE ?? "",
   codexViaEgress: /^(1|true|yes)$/i.test(process.env.KARDBOARD_CODEX_VIA_EGRESS ?? ""),
+  // Keep the newest Claude Code and Codex in the shared volume Sessions run them from (clis.ts).
+  // `off` leaves Sessions on the versions built into the agent image.
+  cliUpdates: (process.env.KARDBOARD_CLI_UPDATES ?? "on") !== "off",
 };
 
 if (!env.token) {
@@ -256,7 +260,7 @@ app.post("/sessions", async (c) => {
         NanoCpus: env.nanoCpus,
         PidsLimit: env.pidsLimit,
         Binds: binds,
-        Mounts: cacheMounts(req.boardId, req.boardSlug),
+        Mounts: [...cacheMounts(req.boardId, req.boardSlug), clisMount()],
         NetworkMode: network,
         SecurityOpt: ["no-new-privileges:true"],
         CapDrop: ["ALL"],
@@ -429,5 +433,11 @@ void pruneExitedSessions()
   .then(() => pruneSessionNetworks(docker))
   .then((removed) => removed.length && console.log(`[runner] removed ${removed.length} orphaned session network(s)`))
   .catch((err) => console.error("[runner] prune failed", err));
+
+const cliUpdater = new CliUpdater({ docker, image: env.defaultImage, ensureImage });
+if (env.cliUpdates) cliUpdater.start();
+
+// Which CLI versions Sessions are running, and any release that was refused.
+app.get("/clis", (c) => c.json({ enabled: env.cliUpdates, tools: cliUpdater.status() }));
 
 serve({ fetch: app.fetch, port: env.port }, (info) => console.log(`kardboard runner listening on :${info.port}`));
