@@ -1,5 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
-import { Loader2 } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { initials } from "../lib/format";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
@@ -119,6 +119,39 @@ export function EmptyState({ title, body, action }: { title: string; body?: stri
       <p className="text-sm font-medium text-ink">{title}</p>
       {body ? <p className="max-w-sm text-[13px] text-ink-muted">{body}</p> : null}
       {action ? <div className="mt-2">{action}</div> : null}
+    </div>
+  );
+}
+
+// A load that failed: what could not be shown, why, and a retry. `compact` sits inline in a section.
+export function ErrorState({ title, error, onRetry, retrying, compact, className }: { title: string; error?: unknown; onRetry?: () => void; retrying?: boolean; compact?: boolean; className?: string }) {
+  const detail = error instanceof Error && error.message ? error.message : null;
+  if (compact) {
+    return (
+      <div role="alert" className={cx("flex items-start gap-2 text-[13px]", className)}>
+        <AlertCircle className="mt-0.5 size-4 shrink-0 text-danger" strokeWidth={1.75} />
+        <p className="min-w-0 flex-1 text-ink-muted">
+          <span className="text-ink">{title}</span>
+          {detail ? ` ${detail}` : null}
+        </p>
+        {onRetry ? (
+          <Button size="sm" variant="ghost" className="-my-1 shrink-0" loading={retrying} onClick={onRetry}>
+            Try again
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+  return (
+    <div role="alert" className={cx("flex flex-col items-center justify-center gap-2 rounded-panel border border-line px-6 py-12 text-center", className)}>
+      <AlertCircle className="size-5 text-danger" strokeWidth={1.75} />
+      <p className="text-sm font-medium text-ink">{title}</p>
+      {detail ? <p className="max-w-sm text-[13px] text-ink-muted">{detail}</p> : null}
+      {onRetry ? (
+        <Button size="sm" className="mt-2" loading={retrying} onClick={onRetry}>
+          Try again
+        </Button>
+      ) : null}
     </div>
   );
 }

@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import type { Board } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminUsers, type AdminBoard } from "../../lib/api";
-import { Avatar, Button, Chip, cx, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
+import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
+import { slugDraft, slugify } from "./slug";
 
 type Draft = {
   name: string;
@@ -33,16 +34,19 @@ export function BoardsTab() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<AdminBoard | "new" | null>(null);
   const [draft, setDraft] = useState<Draft>(empty);
+  // A new board's slug follows its name until the slug is typed into by hand.
+  const [slugTyped, setSlugTyped] = useState(false);
   useEffect(() => {
     if (editing === "new") setDraft(empty);
     else if (editing) setDraft(fromBoard(editing));
+    setSlugTyped(false);
   }, [editing]);
 
   const save = useMutation({
     mutationFn: async () => {
       const body = {
         name: draft.name,
-        slug: draft.slug,
+        slug: slugify(draft.slug),
         repoUrl: draft.repoUrl || null,
         provider: draft.provider,
         model: draft.model.trim() || null,
@@ -77,9 +81,11 @@ export function BoardsTab() {
       />
       {boards.isPending ? (
         <Skeleton className="h-40" />
+      ) : !boards.data ? (
+        <ErrorState title="Could not load boards." error={boards.error} onRetry={() => void boards.refetch()} retrying={boards.isFetching} />
       ) : (
-        <ul className="grid gap-2">
-          {boards.data?.map((b) => (
+        <ul className="grid grid-cols-1 gap-2">
+          {boards.data.map((b) => (
             <li key={b.id}>
               <button type="button" onClick={() => setEditing(b)} className="flex w-full items-center gap-4 rounded-card border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-line-strong hover:bg-raised">
                 <div className="min-w-0 flex-1">
@@ -88,13 +94,16 @@ export function BoardsTab() {
                   </p>
                   <p className="mt-0.5 truncate font-mono text-[12px] text-ink-muted">{b.repoUrl ?? "No repository yet"}</p>
                 </div>
-                <Chip>{b.provider === "claude" ? "Claude Code" : "Codex"}</Chip>
-                <Chip>{b.previewMode} preview</Chip>
-                <span className="flex -space-x-1.5">
-                  {b.memberIds.slice(0, 4).map((id) => {
-                    const u = users.data?.find((x) => x.id === id);
-                    return u ? <Avatar key={id} name={u.name} url={u.avatarUrl} size={22} className="ring-2 ring-surface" /> : null;
-                  })}
+                {/* Settings detail; the dialog shows all of it, so a phone keeps the row to name and repository. */}
+                <span className="hidden shrink-0 items-center gap-4 sm:flex">
+                  <Chip>{b.provider === "claude" ? "Claude Code" : "Codex"}</Chip>
+                  <Chip>{b.previewMode} preview</Chip>
+                  <span className="flex -space-x-1.5">
+                    {b.memberIds.slice(0, 4).map((id) => {
+                      const u = users.data?.find((x) => x.id === id);
+                      return u ? <Avatar key={id} name={u.name} url={u.avatarUrl} size={22} className="ring-2 ring-surface" /> : null;
+                    })}
+                  </span>
                 </span>
               </button>
             </li>
@@ -109,19 +118,29 @@ export function BoardsTab() {
             save.mutate();
           }}
         >
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Name">
-              <Input required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value, slug: editing === "new" && !draft.slug ? slugify(e.target.value) : draft.slug })} />
+              <Input required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value, slug: editing === "new" && !slugTyped ? slugify(e.target.value) : draft.slug })} />
             </Field>
             <Field label="Slug" hint="Used in the URL.">
-              <Input required value={draft.slug} onChange={(e) => setDraft({ ...draft, slug: slugify(e.target.value) })} pattern="[a-z0-9][a-z0-9-]*" />
+              <Input
+                required
+                value={draft.slug}
+                onChange={(e) => {
+                  // Clearing the field hands it back to the name.
+                  setSlugTyped(e.target.value !== "");
+                  setDraft({ ...draft, slug: slugDraft(e.target.value) });
+                }}
+                onBlur={() => setDraft((d) => ({ ...d, slug: slugify(d.slug) }))}
+                pattern="[a-z0-9][a-z0-9\-]*"
+              />
             </Field>
           </div>
           <Field label="Repository URL" hint="GitHub only. Both kardboard GitHub Apps must be installed on it.">
             <Input type="url" value={draft.repoUrl} onChange={(e) => setDraft({ ...draft, repoUrl: e.target.value })} placeholder="https://github.com/org/repo" />
           </Field>
           {editing !== "new" && editing ? <GitHubStatus boardId={editing.id} /> : null}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Provider">
               <Select value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Draft["provider"] })}>
                 <option value="claude">Claude Code</option>
@@ -138,7 +157,7 @@ export function BoardsTab() {
               <Input type="number" min={1} max={10} value={draft.maxConcurrentSessions} onChange={(e) => setDraft({ ...draft, maxConcurrentSessions: Number(e.target.value) })} />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Model" hint={draft.provider === "claude" ? "Claude Code --model. Empty uses its default. Examples: opus, sonnet." : "Codex -m. Empty uses its default. Example: gpt-5.5."}>
               <Input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} placeholder="provider default" className="font-mono text-[13px]" />
             </Field>
@@ -209,8 +228,4 @@ function GitHubStatus({ boardId }: { boardId: string }) {
       <Chip tone={tone(q.data.merge)}>merge {q.data.merge}</Chip>
     </div>
   );
-}
-
-function slugify(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 }

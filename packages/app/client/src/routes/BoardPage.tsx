@@ -1,18 +1,25 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { closestCorners, DndContext, DragOverlay, PointerSensor, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { closestCorners, DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Plus } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, type AgentProfile, type Card, type Column, type User } from "@kardboard/shared";
-import { useBoard, useMe, useMoveCard } from "../lib/api";
+import { ApiError, useBoard, useMe, useMoveCard } from "../lib/api";
 import { useBoardEvents } from "../lib/realtime";
-import { Avatar, Button, cx, IconButton, Skeleton } from "../components/ui";
+import { Avatar, Button, cx, ErrorState, IconButton, Skeleton } from "../components/ui";
 import { CardTile, WorkingDot } from "./board/CardTile";
 import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
 import { COLUMN_HINTS } from "./board/columns";
+import { dropPlacement } from "./board/dropPlacement";
+
+// Enter opens a card, so only Space picks one up; the instructions read to screen readers say so.
+const KEYBOARD_CODES = { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter", "Tab"] };
+const SCREEN_READER_INSTRUCTIONS = {
+  draggable: "To open a card, press Enter. To move it, press Space to pick it up, use the arrow keys to move it within or between columns, then press Space again to drop it, or Escape to cancel.",
+};
 
 function SortableCard({ card, creator, agent, onOpen }: { card: Card; creator: User | undefined; agent: AgentProfile; onOpen: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { column: card.column } });
@@ -24,13 +31,14 @@ function SortableCard({ card, creator, agent, onOpen }: { card: Card; creator: U
       agent={agent}
       dragging={isDragging}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className="cursor-grab active:cursor-grabbing"
+      className="cursor-grab touch-manipulation active:cursor-grabbing"
       onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onOpen();
-      }}
       {...attributes}
       {...listeners}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !isDragging) return onOpen();
+        listeners?.onKeyDown?.(e);
+      }}
       role="button"
       tabIndex={0}
     />
@@ -79,7 +87,12 @@ export function BoardPage() {
   const move = useMoveCard(slug);
   const [creating, setCreating] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // A touch has to rest on a card before it drags, so a swipe still scrolls the board.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: KEYBOARD_CODES }),
+  );
 
   const members = useMemo(() => new Map((board.data?.members ?? []).map((m) => [m.id, m])), [board.data?.members]);
   const byColumn = useMemo(() => {
@@ -100,26 +113,11 @@ export function BoardPage() {
       const card = board.data.cards.find((c) => c.id === active.id);
       if (!card) return;
       const overId = String(over.id);
-      const targetColumn = overId.startsWith("col:") ? (overId.slice(4) as Column) : (board.data.cards.find((c) => c.id === overId)?.column ?? card.column);
-      const lane = byColumn[targetColumn].filter((c) => c.id !== card.id);
-      let index = lane.length;
-      if (!overId.startsWith("col:")) {
-        const overIndex = lane.findIndex((c) => c.id === overId);
-        if (overIndex >= 0) {
-          const sameLane = card.column === targetColumn;
-          const fromIndex = byColumn[targetColumn].findIndex((c) => c.id === card.id);
-          index = sameLane && fromIndex < overIndex ? overIndex + 1 : overIndex;
-        }
-      }
-      const before = lane[index - 1]?.position;
-      const after = lane[index]?.position;
-      let position: number;
-      if (before === undefined && after === undefined) position = 1000;
-      else if (before === undefined) position = after! - 1000;
-      else if (after === undefined) position = before + 1000;
-      else position = (before + after) / 2;
-      if (targetColumn === card.column && position === card.position) return;
-      move.mutate({ id: card.id, column: targetColumn, position, revision: card.revision });
+      const onColumn = overId.startsWith("col:");
+      const targetColumn = onColumn ? (overId.slice(4) as Column) : (board.data.cards.find((c) => c.id === overId)?.column ?? card.column);
+      const placed = dropPlacement(byColumn[targetColumn], card.id, onColumn ? null : overId);
+      if (!placed) return;
+      move.mutate({ id: card.id, column: targetColumn, position: placed.position, revision: card.revision });
     },
     [board.data, byColumn, move],
   );
@@ -137,10 +135,19 @@ export function BoardPage() {
       </div>
     );
   }
-  if (board.isError || !board.data) {
+  // Loaded data outlives a failed refetch: the board stays on screen, with a quiet note in the toolbar.
+  if (!board.data) {
+    const missing = board.error instanceof ApiError && (board.error.status === 403 || board.error.status === 404);
+    if (missing) {
+      return (
+        <div className="flex h-full items-center justify-center text-sm text-ink-muted">
+          This board does not exist or you do not have access to it.
+        </div>
+      );
+    }
     return (
-      <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-        This board does not exist or you do not have access to it.
+      <div className="mx-auto max-w-md p-8">
+        <ErrorState title="Could not load this board." error={board.error} onRetry={() => void board.refetch()} retrying={board.isFetching} />
       </div>
     );
   }
@@ -155,6 +162,25 @@ export function BoardPage() {
           New card
         </Button>
         <div className="ml-auto flex items-center gap-2 text-[12.5px] text-ink-muted">
+          <AnimatePresence initial={false}>
+            {board.isError ? (
+              <motion.button
+                key="stale"
+                type="button"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => void board.refetch()}
+                title={board.error.message}
+                aria-label="Could not refresh the board. Try again"
+                className="inline-flex h-7 items-center gap-1.5 rounded-control px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+              >
+                <RefreshCw className={cx("size-3.5 text-warn", board.isFetching && "animate-spin")} strokeWidth={1.75} />
+                <span className="hidden sm:inline">Could not refresh</span>
+              </motion.button>
+            ) : null}
+          </AnimatePresence>
           {activeSessions.length > 0 ? (
             <span className="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent-soft py-1 pl-1 pr-2.5 text-accent">
               <Avatar name={agent.name} url={agent.avatarUrl} size={18} tone="agent" />
@@ -170,7 +196,14 @@ export function BoardPage() {
           )}
         </div>
       </div>
-      <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveId(null)}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        accessibility={{ screenReaderInstructions: SCREEN_READER_INSTRUCTIONS }}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={() => setActiveId(null)}
+      >
         <div className="flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 pt-3 sm:snap-none">
           {COLUMNS.map((column) => (
             <ColumnLane

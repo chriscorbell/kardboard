@@ -26,6 +26,10 @@ export function SessionTranscript({ sessionId, live }: { sessionId: string; live
     setError(null);
     pinned.current = true;
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // Each poll is scheduled when the last one finishes, never on a fixed clock: two requests in
+    // flight would both read from the same offset and append the same lines twice.
     const tick = async () => {
       try {
         const view = await fetchSessionTranscript(sessionId, offset);
@@ -39,13 +43,13 @@ export function SessionTranscript({ sessionId, live }: { sessionId: string; live
       } finally {
         if (!stopped) setLoading(false);
       }
+      if (live && !stopped) timer = setTimeout(() => void tick(), POLL_MS);
     };
 
     void tick();
-    const timer = live ? setInterval(() => void tick(), POLL_MS) : null;
     return () => {
       stopped = true;
-      if (timer) clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [sessionId, live]);
 

@@ -1,25 +1,24 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { MENTION_RE } from "@kardboard/shared";
 import { useMemo } from "react";
+import { remarkMentions } from "./mentions";
 
-// Mentions become links on a private "mention:" scheme so react-markdown can render them as names.
-function markMentions(body: string, handles: Map<string, string>): string {
-  return body.replace(MENTION_RE, (_m, pre: string, handle: string) => {
-    const name = handles.get(handle.toLowerCase());
-    return `${pre}[@${name ?? handle}](mention:${handle})`;
-  });
+// Mentions arrive as links on a private "mention:" scheme and render as names. Every other URL goes
+// through react-markdown's own sanitising, which drops schemes like javascript:.
+function urlTransform(url: string): string {
+  return url.startsWith("mention:") ? url : defaultUrlTransform(url);
 }
 
 export function Markdown({ body, handles, className }: { body: string; handles?: Map<string, string>; className?: string }) {
-  const text = useMemo(() => (handles ? markMentions(body, handles) : body), [body, handles]);
+  const plugins = useMemo<NonNullable<Options["remarkPlugins"]>>(() => (handles ? [remarkGfm, [remarkMentions, handles]] : [remarkGfm]), [handles]);
   return (
     <div className={`prose-cb ${className ?? ""}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={(url) => url}
+        remarkPlugins={plugins}
+        urlTransform={urlTransform}
         components={{
-          a: ({ href, children, ...rest }) => {
+          // `node` is react-markdown's syntax-tree node, not an attribute.
+          a: ({ node: _node, href, children, ...rest }) => {
             if (href?.startsWith("mention:")) return <span className="mention">{children}</span>;
             return (
               <a href={href} target="_blank" rel="noreferrer" {...rest}>
@@ -29,7 +28,7 @@ export function Markdown({ body, handles, className }: { body: string; handles?:
           },
         }}
       >
-        {text}
+        {body}
       </ReactMarkdown>
     </div>
   );

@@ -1,22 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowUpRight, Check, ChevronDown, ExternalLink, FileText, GitBranch, GitPullRequest, History, Pencil, RotateCcw, Square, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type Attachment, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
+import { ArrowUpRight, Check, ChevronDown, ExternalLink, GitBranch, GitPullRequest, History, Pencil, RotateCcw, Square, X } from "lucide-react";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Priority, type User } from "@kardboard/shared";
 import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment, request, keys } from "../../lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { Avatar, Button, Chip, cx, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
+import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
 import { Menu } from "../../components/Menu";
 import { Markdown } from "../../components/Markdown";
 import { absoluteTime, relativeTime, shortId } from "../../lib/format";
 import { Composer } from "./Composer";
 import { COLUMN_TONES } from "./columns";
 import { WorkingDot } from "./CardTile";
+import { ApiError } from "../../lib/errors";
+import { AttachmentView } from "./AttachmentView";
+import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
+import { useModalFocus } from "../../components/focus";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
 
 export function CardSheet({ slug, cardId, view, onClose }: { slug: string; cardId: string | null; view: BoardView; onClose: () => void }) {
   const reduce = useReducedMotion();
+  const sheet = useRef<HTMLElement>(null);
+  const titleId = useId();
+  // The sheet is long, so it takes focus itself and is announced by the card's title first.
+  useModalFocus(sheet, Boolean(cardId), { initial: "container", resetKey: cardId });
   useEffect(() => {
     if (!cardId) return;
     const onKey = (e: KeyboardEvent) => {
@@ -31,15 +39,20 @@ export function CardSheet({ slug, cardId, view, onClose }: { slug: string; cardI
         <motion.div key="sheet-root" className="fixed inset-0 z-40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
           <div className="absolute inset-0 bg-bg/50" onClick={onClose} />
           <motion.aside
+            ref={sheet}
             key={cardId}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            tabIndex={-1}
             initial={reduce ? false : { x: 40, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 40, opacity: 0 }}
             transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute inset-y-0 right-0 flex w-full max-w-[680px] flex-col border-l border-line-strong bg-surface shadow-[-24px_0_64px_-24px_rgba(0,0,0,0.7)]"
+            className="absolute inset-y-0 right-0 flex w-full max-w-[680px] flex-col border-l border-line-strong bg-surface shadow-[-24px_0_64px_-24px_rgba(0,0,0,0.7)] focus:outline-none"
             aria-label="Card"
           >
-            <SheetBody slug={slug} cardId={cardId} view={view} onClose={onClose} />
+            <SheetBody slug={slug} cardId={cardId} titleId={titleId} view={view} onClose={onClose} />
           </motion.aside>
         </motion.div>
       ) : null}
@@ -47,7 +60,7 @@ export function CardSheet({ slug, cardId, view, onClose }: { slug: string; cardI
   );
 }
 
-function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: string; view: BoardView; onClose: () => void }) {
+function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; cardId: string; titleId: string; view: BoardView; onClose: () => void }) {
   const me = useMe();
   const detail = useCard(cardId);
   const update = useUpdateCard(slug);
@@ -64,6 +77,25 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
   const isAdmin = me.data?.user.role === "admin";
 
   if (!card) {
+    if (detail.isError) {
+      const gone = detail.error instanceof ApiError && (detail.error.status === 404 || detail.error.status === 403);
+      return (
+        <>
+          <div className="flex h-12 shrink-0 items-center justify-end border-b border-line px-4">
+            <IconButton label="Close" onClick={onClose}>
+              <X className="size-4" strokeWidth={1.75} />
+            </IconButton>
+          </div>
+          <div className="p-6">
+            {gone ? (
+              <p className="text-sm text-ink-muted">This card does not exist, or it is on a board you cannot open.</p>
+            ) : (
+              <ErrorState compact title="Could not load this card." error={detail.error} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
+            )}
+          </div>
+        </>
+      );
+    }
     return (
       <div className="flex flex-1 flex-col gap-3 p-6">
         <Skeleton className="h-6 w-2/3" />
@@ -72,6 +104,20 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
     );
   }
   const session = card.activeSession;
+
+  // Saves an edit against the revision it started from, so a change made meanwhile is caught.
+  const saveField = async (field: EditableField, value: string, base: EditBase) => {
+    const save = (revision: number) => update.mutateAsync({ id: card.id, [field]: value, revision });
+    try {
+      await save(base.revision);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 409)) throw err;
+      const next = resolveRefusedSave(field, base, (err.data as { card?: Card } | null)?.card);
+      if (!next) throw err;
+      if ("conflict" in next) throw new EditConflict(next.conflict);
+      await save(next.retryAt);
+    }
+  };
 
   return (
     <>
@@ -106,7 +152,7 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-6 pt-5">
-          <TitleEditor card={card} onSave={(title) => update.mutateAsync({ id: card.id, title, revision: card.revision })} />
+          <TitleEditor card={card} labelId={titleId} onSave={(title, base) => saveField("title", title, base)} />
           <p className="mt-1.5 text-[12px] text-ink-faint">
             Opened {relativeTime(card.createdAt)} by {card.creatorKind === "agent" ? view.agent.name : (card.creatorId && members.get(card.creatorId)?.name) || "someone"}
             {card.parentCardId ? <> as part of a larger request</> : null}
@@ -144,7 +190,7 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
         ) : null}
 
         <div className="px-6 pt-5">
-          <DescriptionEditor card={card} handles={handles} onSave={(description) => update.mutateAsync({ id: card.id, description, revision: card.revision })} />
+          <DescriptionEditor card={card} handles={handles} onSave={(description, base) => saveField("description", description, base)} />
         </div>
 
         {card.branch || card.prUrl || card.previewUrl ? (
@@ -181,8 +227,10 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
           <h3 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-ink-faint">Comments</h3>
           {detail.isPending ? (
             <Skeleton className="h-16" />
+          ) : !detail.data ? (
+            <ErrorState compact title="Could not load comments." error={detail.error} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
           ) : (
-            <CommentList comments={detail.data?.comments ?? []} members={members} agent={view.agent} handles={handles} meId={me.data?.user.id ?? ""} cardId={card.id} />
+            <CommentList comments={detail.data.comments} members={members} agent={view.agent} handles={handles} meId={me.data?.user.id ?? ""} cardId={card.id} />
           )}
         </div>
         <div className="px-6 pb-4">
@@ -232,71 +280,143 @@ async function cancelSession(id: string, rerun: boolean, qc: ReturnType<typeof u
   await qc.invalidateQueries({ queryKey: keys.card(cardId) });
 }
 
-function TitleEditor({ card, onSave }: { card: Card; onSave: (title: string) => Promise<unknown> }) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(card.title);
-  useEffect(() => setValue(card.title), [card.title]);
-  if (!editing) {
+function TitleEditor({ card, labelId, onSave }: { card: Card; labelId: string; onSave: (title: string, base: EditBase) => Promise<void> }) {
+  const [draft, setDraft] = useState<{ value: string; base: EditBase } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const saving = useRef(false);
+  const refocus = useRef(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const errorId = useId();
+  useEffect(() => {
+    if (draft || !refocus.current) return;
+    refocus.current = false;
+    button.current?.focus();
+  }, [draft]);
+
+  if (!draft) {
     return (
-      <h1 className="group flex cursor-text items-start gap-2 text-[19px] font-semibold leading-snug tracking-tight text-ink" onClick={() => setEditing(true)} title="Click to edit">
-        <span>{card.title}</span>
-        <Pencil className="mt-1.5 size-3.5 shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={1.75} />
+      <h1 className="text-[19px] font-semibold leading-snug tracking-tight text-ink">
+        <button
+          ref={button}
+          type="button"
+          onClick={() => {
+            setDraft({ value: card.title, base: { revision: card.revision, value: card.title } });
+            setError(null);
+          }}
+          className="group flex w-full cursor-text items-start gap-2 rounded-[4px] text-left"
+          title="Edit title"
+        >
+          <span id={labelId}>{card.title}</span>
+          <Pencil className="mt-1.5 size-3.5 shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 [@media(hover:none)]:opacity-100" strokeWidth={1.75} aria-hidden="true" />
+          <span className="sr-only">Edit title</span>
+        </button>
       </h1>
     );
   }
-  const commit = async () => {
-    setEditing(false);
-    if (value.trim() && value.trim() !== card.title) await onSave(value.trim());
-    else setValue(card.title);
+  const close = (focusTitle: boolean) => {
+    refocus.current = focusTitle;
+    setDraft(null);
+    setError(null);
+  };
+  // The editor stays open until the title is saved, so a refused save loses nothing.
+  const commit = async (focusTitle: boolean) => {
+    if (saving.current) return;
+    const next = draft.value.trim();
+    if (!next || next === draft.base.value) return close(focusTitle);
+    saving.current = true;
+    try {
+      await onSave(next, draft.base);
+      close(focusTitle);
+    } catch (err) {
+      if (err instanceof EditConflict) {
+        // Their title is now the base, so saving again replaces it on purpose.
+        setDraft((d) => d && { ...d, base: { revision: err.card.revision, value: err.card.title } });
+        setError(`Someone else renamed this card to “${err.card.title}” while you were editing. Press Enter to use yours, or Escape to keep theirs.`);
+      } else {
+        setError(`The title was not saved. ${(err as Error).message}`);
+      }
+    } finally {
+      saving.current = false;
+    }
   };
   return (
-    <Input
-      autoFocus
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => void commit()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") void commit();
-        if (e.key === "Escape") {
-          setValue(card.title);
-          setEditing(false);
-        }
-      }}
-      className="h-10 text-[19px] font-semibold tracking-tight"
-      maxLength={200}
-    />
+    <div>
+      <Input
+        autoFocus
+        value={draft.value}
+        onChange={(e) => setDraft({ ...draft, value: e.target.value })}
+        // A click elsewhere saves, unless the last save failed: then only Enter retries.
+        onBlur={() => {
+          if (!error) void commit(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) void commit(true);
+          if (e.key === "Escape") close(true);
+        }}
+        aria-label="Title"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className="h-10 text-[19px] font-semibold tracking-tight"
+        maxLength={200}
+      />
+      {error ? (
+        <p id={errorId} role="alert" className="mt-1.5 text-[12px] text-danger">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
-function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map<string, string>; onSave: (d: string) => Promise<unknown> }) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(card.description);
+function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map<string, string>; onSave: (d: string, base: EditBase) => Promise<void> }) {
+  const [draft, setDraft] = useState<{ value: string; base: EditBase } | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!editing) setValue(card.description);
-  }, [card.description, editing]);
-  if (editing) {
+  const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
+  if (draft) {
+    const close = () => {
+      setDraft(null);
+      setError(null);
+    };
+    const save = async () => {
+      if (draft.value === draft.base.value) return close();
+      setBusy(true);
+      try {
+        await onSave(draft.value, draft.base);
+        close();
+      } catch (err) {
+        if (err instanceof EditConflict) {
+          setDraft((d) => d && { ...d, base: { revision: err.card.revision, value: err.card.description } });
+          setError("Someone else changed these details while you were writing. Save again to replace their version with yours, or cancel to see theirs.");
+        } else {
+          setError(`Your changes were not saved. ${(err as Error).message}`);
+        }
+      } finally {
+        setBusy(false);
+      }
+    };
     return (
       <div>
-        <Textarea autoFocus value={value} onChange={(e) => setValue(e.target.value)} rows={8} onKeyDown={(e) => e.key === "Escape" && setEditing(false)} />
+        <Textarea
+          autoFocus
+          value={draft.value}
+          onChange={(e) => setDraft({ ...draft, value: e.target.value })}
+          rows={8}
+          onKeyDown={(e) => e.key === "Escape" && close()}
+          aria-label="Details"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+        />
+        {error ? (
+          <p id={errorId} role="alert" className="mt-2 text-[12px] text-danger">
+            {error}
+          </p>
+        ) : null}
         <div className="mt-2 flex justify-end gap-2">
-          <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+          <Button size="sm" variant="ghost" onClick={close}>
             Cancel
           </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            loading={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                if (value !== card.description) await onSave(value);
-                setEditing(false);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
+          <Button size="sm" variant="primary" loading={busy} onClick={() => void save()}>
             Save
           </Button>
         </div>
@@ -310,7 +430,14 @@ function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map
       ) : (
         <p className="text-[13px] italic text-ink-faint">No details yet.</p>
       )}
-      <button type="button" onClick={() => setEditing(true)} className="mt-2 inline-flex items-center gap-1 text-[12px] text-ink-faint transition-colors hover:text-ink">
+      <button
+        type="button"
+        onClick={() => {
+          setDraft({ value: card.description, base: { revision: card.revision, value: card.description } });
+          setError(null);
+        }}
+        className="mt-2 inline-flex items-center gap-1 text-[12px] text-ink-faint transition-colors hover:text-ink"
+      >
         <Pencil className="size-3" strokeWidth={1.75} />
         Edit details
       </button>
@@ -375,24 +502,6 @@ function ReviewBlock({ card, agentName, approvals, members, onApprove, busy, err
   );
 }
 
-function AttachmentView({ a }: { a: Attachment }) {
-  const url = `/api/attachments/${a.id}`;
-  if (a.mime.startsWith("image/")) {
-    return (
-      <a href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-control border border-line">
-        <img src={url} alt={a.filename} className="max-h-64 w-auto" loading="lazy" />
-      </a>
-    );
-  }
-  return (
-    <a href={url} className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-bg px-2.5 text-[12px] text-ink-muted no-underline hover:text-ink">
-      <FileText className="size-3.5" strokeWidth={1.75} />
-      <span className="max-w-56 truncate">{a.filename}</span>
-      <span className="font-mono text-[10.5px] text-ink-faint">{(a.size / 1024).toFixed(0)} KB</span>
-    </a>
-  );
-}
-
 function CommentList({ comments, members, agent, handles, meId, cardId }: { comments: Comment[]; members: Map<string, User>; agent: AgentProfile; handles: Map<string, string>; meId: string; cardId: string }) {
   const agentName = agent.name;
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -414,7 +523,12 @@ function CommentList({ comments, members, agent, handles, meId, cardId }: { comm
                 </span>
                 {c.editedAt ? <span className="text-ink-faint">edited</span> : null}
                 {mine && editingId !== c.id ? (
-                  <button type="button" className="ml-auto text-ink-faint opacity-0 transition-opacity hover:text-ink [li:hover_&]:opacity-100" onClick={() => setEditingId(c.id)}>
+                  <button
+                    type="button"
+                    aria-label="Edit comment"
+                    className="ml-auto text-ink-faint opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 [li:hover_&]:opacity-100 [@media(hover:none)]:opacity-100"
+                    onClick={() => setEditingId(c.id)}
+                  >
                     Edit
                   </button>
                 ) : null}
