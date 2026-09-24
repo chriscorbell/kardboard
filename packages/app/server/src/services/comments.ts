@@ -1,5 +1,5 @@
 import { asc, eq, inArray } from "drizzle-orm";
-import { extractMentionHandles, type Attachment, type Comment } from "@kardboard/shared";
+import { extractMentionHandles, type Attachment, type Comment, type User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
@@ -7,7 +7,7 @@ import { recordEvent, type Actor } from "./events.js";
 import { enqueueTrigger } from "./orchestrator.js";
 import { getCard } from "./cards.js";
 import { findUsersByHandles } from "./users.js";
-import { notifyMentions } from "./notifications.js";
+import { canBeNotified, notifyMentions } from "./notifications.js";
 
 function toAttachment(row: typeof schema.attachments.$inferSelect): Attachment {
   return {
@@ -53,11 +53,17 @@ export async function getComment(id: string): Promise<Comment | null> {
   return row ? (await hydrate([row]))[0]! : null;
 }
 
-async function syncMentions(comment: Comment, actor: Actor): Promise<string[]> {
+// A Mention is recorded only for someone who can open the Card. Handles are global, so a handle
+// alone would otherwise reach Users of other Boards and revoked Users.
+async function syncMentions(comment: Comment, boardId: string, actor: Actor): Promise<string[]> {
   const handles = extractMentionHandles(comment.body);
   const users = await findUsersByHandles(handles);
   const existing = new Set(comment.mentions);
-  const fresh = users.filter((u) => !existing.has(u.id) && u.id !== actor.id);
+  const fresh: User[] = [];
+  for (const u of users) {
+    if (existing.has(u.id) || u.id === actor.id) continue;
+    if (await canBeNotified(u, boardId)) fresh.push(u);
+  }
   if (fresh.length > 0) {
     await db
       .insert(schema.mentions)
@@ -86,7 +92,7 @@ export async function createComment(input: {
     body: input.body,
   });
   let comment = (await getComment(id))!;
-  const newlyMentioned = await syncMentions(comment, input.actor);
+  const newlyMentioned = await syncMentions(comment, card.boardId, input.actor);
   comment = (await getComment(id))!;
   await recordEvent({
     boardId: card.boardId,
@@ -114,9 +120,9 @@ export async function updateComment(id: string, input: { body: string; actor: Ac
     .set({ body: input.body, editedAt: new Date().toISOString() })
     .where(eq(schema.comments.id, id));
   let comment = (await getComment(id))!;
-  const newlyMentioned = await syncMentions(comment, input.actor);
-  comment = (await getComment(id))!;
   const card = (await getCard(comment.cardId))!;
+  const newlyMentioned = await syncMentions(comment, card.boardId, input.actor);
+  comment = (await getComment(id))!;
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "comment.edited", payload: { commentId: id } });
   publish(card.boardId, { type: "comment.upserted", comment });
   await notifyMentions(card, comment, newlyMentioned, input.actor);

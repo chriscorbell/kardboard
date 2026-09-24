@@ -13,6 +13,7 @@ process.env.KARDBOARD_PUBLIC_URL = "https://kardboard.test";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { listNotifications, markNotificationsRead, notifyCardMoved, notifyMentions } = await import("../src/services/notifications.js");
+const { createComment } = await import("../src/services/comments.js");
 
 await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -153,6 +154,53 @@ describe("notifyMentions", () => {
     await notifyMentions(card, comment(card.id, author, "no handles here"), [], { kind: "user", id: author.id });
 
     assert.equal((await listNotifications(ada)).unread, 0);
+  });
+});
+
+describe("who hears about a card", () => {
+  async function emailsTo(user: User): Promise<number> {
+    return (await db.select().from(schema.outboundEmails).where(eq(schema.outboundEmails.toUserId, user.id))).length;
+  }
+
+  it("records a Mention only for someone who can open the card", async () => {
+    const author = await member("Grace");
+    const ada = await member("Ada");
+    const outsider = await member("Mallory", [OTHER_BOARD]);
+    const gone = await member("Linus");
+    await db.update(schema.users).set({ status: "revoked" }).where(eq(schema.users.id, gone.id));
+    const admin = await makeUser("Root", "admin");
+    const card = await makeCard(BOARD, author);
+
+    const c = await createComment({ cardId: card.id, body: `@${ada.handle} @${outsider.handle} @${gone.handle} @${admin.handle} over to you`, actor: { kind: "agent", id: null } });
+
+    assert.deepEqual([...c.mentions].sort(), [ada.id, admin.id].sort());
+    assert.equal((await listNotifications(ada)).unread, 1);
+    assert.equal((await listNotifications(admin)).unread, 1, "the Admin can open every Board");
+    assert.equal(await emailsTo(outsider), 0, "a handle on another Board is not a way in");
+    assert.equal(await emailsTo(gone), 0);
+  });
+
+  it("sends nothing to a mentioned user who is not on the Board, even when asked directly", async () => {
+    const author = await member("Grace");
+    const outsider = await member("Mallory", [OTHER_BOARD]);
+    const card = await makeCard(BOARD, author);
+
+    await notifyMentions(card, comment(card.id, author, `@${outsider.handle}`), [outsider.id], { kind: "user", id: author.id });
+
+    assert.equal(await emailsTo(outsider), 0);
+    assert.equal((await db.select().from(schema.notifications).where(eq(schema.notifications.userId, outsider.id))).length, 0);
+  });
+
+  it("does not tell a creator who has lost the Board that their card moved", async () => {
+    const creator = await member("Ada");
+    const mover = await member("Grace");
+    const card = await makeCard(BOARD, creator);
+    await db.delete(schema.boardMembers).where(eq(schema.boardMembers.userId, creator.id));
+
+    await notifyCardMoved({ ...card, column: "review" }, "inbox", { kind: "user", id: mover.id });
+
+    assert.equal(await emailsTo(creator), 0);
+    assert.equal((await db.select().from(schema.notifications).where(eq(schema.notifications.userId, creator.id))).length, 0);
   });
 });
 
