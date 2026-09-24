@@ -1,6 +1,7 @@
 import { DatabaseBackup } from "lucide-react";
+import type { BackupsView } from "@kardboard/shared";
 import { useAdminBackups, useTakeBackup } from "../../lib/api";
-import { Button, EmptyState, ErrorState, Skeleton } from "../../components/ui";
+import { Button, Chip, EmptyState, ErrorState, Skeleton } from "../../components/ui";
 import { absoluteTime, fileSize, relativeTime } from "../../lib/format";
 import { TabHeader } from "./AdminPage";
 
@@ -35,6 +36,7 @@ export function BackupsTab() {
               The last snapshot failed {relativeTime(view.lastAttempt.at)}: {view.lastAttempt.error}
             </p>
           ) : null}
+          <OffDiskCopy view={view} />
           {view.snapshots.length === 0 ? (
             <EmptyState title="No snapshots yet" body="The first one is written when the server next reaches the scheduled hour, or now with the button above." />
           ) : (
@@ -42,6 +44,7 @@ export function BackupsTab() {
               {view.snapshots.map((s) => (
                 <li key={s.name} className="flex items-center gap-3 px-4 py-2.5">
                   <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink">{s.name}</span>
+                  {s.kind === "pre_migrate" ? <Chip className="hidden shrink-0 sm:inline-flex">before migrating</Chip> : null}
                   <span className="shrink-0 font-mono text-[11px] text-ink-faint">{fileSize(s.bytes)}</span>
                   <span className="w-20 shrink-0 text-right font-mono text-[11px] text-ink-faint" title={absoluteTime(s.takenAt)}>
                     {relativeTime(s.takenAt)}
@@ -53,5 +56,30 @@ export function BackupsTab() {
         </>
       )}
     </>
+  );
+}
+
+// Where snapshots and attachments are copied off the data disk, and how the last copy went.
+function OffDiskCopy({ view }: { view: BackupsView }) {
+  if (!view.copyDir) {
+    return <p className="mb-4 text-[13px] text-ink-faint">Snapshots are not copied off this disk. Set KARDBOARD_BACKUP_COPY_DIR to keep a second copy, with attachments, somewhere else.</p>;
+  }
+  const last = view.lastCopy;
+  return (
+    <p className="mb-4 text-[13px] text-ink-muted">
+      Each snapshot and any new attachments are copied to <span className="font-mono text-[12px]">{view.copyDir}</span>.{" "}
+      {!last ? (
+        "Nothing has been copied yet."
+      ) : last.ok ? (
+        <span title={absoluteTime(last.at)}>
+          The last copy, <span className="font-mono text-[12px]">{last.snapshot}</span>, went through {relativeTime(last.at)}
+          {last.uploadsCopied > 0 ? ` with ${last.uploadsCopied} new ${last.uploadsCopied === 1 ? "attachment" : "attachments"}` : ""}.
+        </span>
+      ) : (
+        <span className="text-danger" title={absoluteTime(last.at)}>
+          The last copy failed {relativeTime(last.at)}: {last.error}
+        </span>
+      )}
+    </p>
   );
 }
