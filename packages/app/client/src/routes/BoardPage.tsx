@@ -4,11 +4,11 @@ import { closestCorners, DndContext, DragOverlay, PointerSensor, useDroppable, u
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Plus } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, type AgentProfile, type Card, type Column, type User } from "@kardboard/shared";
-import { useBoard, useMe, useMoveCard } from "../lib/api";
+import { ApiError, useBoard, useMe, useMoveCard } from "../lib/api";
 import { useBoardEvents } from "../lib/realtime";
-import { Avatar, Button, cx, IconButton, Skeleton } from "../components/ui";
+import { Avatar, Button, cx, ErrorState, IconButton, Skeleton } from "../components/ui";
 import { CardTile, WorkingDot } from "./board/CardTile";
 import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
@@ -137,10 +137,19 @@ export function BoardPage() {
       </div>
     );
   }
-  if (board.isError || !board.data) {
+  // Loaded data outlives a failed refetch: the board stays on screen, with a quiet note in the toolbar.
+  if (!board.data) {
+    const missing = board.error instanceof ApiError && (board.error.status === 403 || board.error.status === 404);
+    if (missing) {
+      return (
+        <div className="flex h-full items-center justify-center text-sm text-ink-muted">
+          This board does not exist or you do not have access to it.
+        </div>
+      );
+    }
     return (
-      <div className="flex h-full items-center justify-center text-sm text-ink-muted">
-        This board does not exist or you do not have access to it.
+      <div className="mx-auto max-w-md p-8">
+        <ErrorState title="Could not load this board." error={board.error} onRetry={() => void board.refetch()} retrying={board.isFetching} />
       </div>
     );
   }
@@ -155,6 +164,25 @@ export function BoardPage() {
           New card
         </Button>
         <div className="ml-auto flex items-center gap-2 text-[12.5px] text-ink-muted">
+          <AnimatePresence initial={false}>
+            {board.isError ? (
+              <motion.button
+                key="stale"
+                type="button"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => void board.refetch()}
+                title={board.error.message}
+                aria-label="Could not refresh the board. Try again"
+                className="inline-flex h-7 items-center gap-1.5 rounded-control px-2 text-[12.5px] text-ink-faint transition-colors hover:bg-raised hover:text-ink"
+              >
+                <RefreshCw className={cx("size-3.5 text-warn", board.isFetching && "animate-spin")} strokeWidth={1.75} />
+                <span className="hidden sm:inline">Could not refresh</span>
+              </motion.button>
+            ) : null}
+          </AnimatePresence>
           {activeSessions.length > 0 ? (
             <span className="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent-soft py-1 pl-1 pr-2.5 text-accent">
               <Avatar name={agent.name} url={agent.avatarUrl} size={18} tone="agent" />

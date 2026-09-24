@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { UserPlus } from "lucide-react";
 import type { User } from "@kardboard/shared";
 import { keys, request, useAdminUsers, useMe } from "../../lib/api";
-import { Avatar, Button, Chip, Field, Input, Select, Skeleton } from "../../components/ui";
+import { Avatar, Button, Chip, ErrorState, Field, Input, Select, Skeleton } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { Menu } from "../../components/Menu";
 import { relativeTime } from "../../lib/format";
@@ -56,9 +56,11 @@ export function UsersTab() {
       />
       {users.isPending ? (
         <Skeleton className="h-40" />
+      ) : !users.data ? (
+        <ErrorState title="Could not load users." error={users.error} onRetry={() => void users.refetch()} retrying={users.isFetching} />
       ) : (
         <ul className="divide-y divide-line rounded-card border border-line bg-surface">
-          {users.data?.map((u) => (
+          {users.data.map((u) => (
             <li key={u.id} className="flex items-center gap-3 px-4 py-3">
               <Avatar name={u.name} url={u.avatarUrl} size={30} />
               <div className="min-w-0 flex-1">

@@ -4,7 +4,7 @@ import type { Notification } from "@kardboard/shared";
 import { useMarkNotificationsRead, useNotifications } from "../lib/api";
 import { relativeTime } from "../lib/format";
 import { Popover } from "./Popover";
-import { Avatar, cx } from "./ui";
+import { Avatar, cx, ErrorState } from "./ui";
 
 // Above this the badge stops counting; the panel still lists everything.
 const BADGE_MAX = 9;
@@ -56,7 +56,9 @@ export function Notifications() {
             ) : null}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {items.length === 0 ? (
+            {!notifications.data && notifications.isError ? (
+              <ErrorState compact className="px-3 py-4" title="Could not load notifications." onRetry={() => void notifications.refetch()} retrying={notifications.isFetching} />
+            ) : items.length === 0 ? (
               <p className="px-3 py-8 text-center text-[13px] text-ink-faint">
                 {notifications.isPending ? "Loading…" : "Nothing yet. Mentions and moves on your cards land here."}
               </p>

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Settings } from "@kardboard/shared";
 import { keys, request, useAdminSettings } from "../../lib/api";
-import { Avatar, Button, Field, Input, Skeleton } from "../../components/ui";
+import { Avatar, Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { TabHeader } from "./AdminPage";
 
 export function AgentTab() {
@@ -20,7 +20,10 @@ export function AgentTab() {
       setDraft(d);
     },
   });
-  if (!draft) return <Skeleton className="h-40" />;
+  if (!draft) {
+    if (settings.isError) return <ErrorState title="Could not load the agent settings." error={settings.error} onRetry={() => void settings.refetch()} retrying={settings.isFetching} />;
+    return <Skeleton className="h-40" />;
+  }
   return (
     <>
       <TabHeader title="Agent" body="One identity acts on every board. Members will address it by this name, so pick something you're happy to see in comment history." />

@@ -16,32 +16,46 @@ import type {
   UpdateCardInput,
   User,
 } from "@kardboard/shared";
+import { ApiError, errorCode, NO_RESPONSE, shouldRetry } from "./errors";
 
 let tokenProvider: () => Promise<string | null> = async () => null;
 export function setTokenProvider(fn: () => Promise<string | null>) {
   tokenProvider = fn;
 }
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    public data: unknown,
-  ) {
-    super(code);
-  }
-}
+export { ApiError };
 
-export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+// Every call to the API goes through here, files included: the server authenticates the bearer
+// token and nothing else, so a plain <img src> or <a href> to /api is refused in production.
+async function send(path: string, init: RequestInit): Promise<Response> {
   const token = await tokenProvider();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
-  const res = await fetch(`/api${path}`, { ...init, headers });
+  try {
+    return await fetch(`/api${path}`, { ...init, headers });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError(NO_RESPONSE, "network", null);
+  }
+}
+
+async function failure(res: Response): Promise<ApiError> {
+  const data: unknown = await res.json().catch(() => ({}));
+  return new ApiError(res.status, errorCode(data, res.status), data);
+}
+
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await send(path, init);
   if (res.status === 204) return undefined as T;
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) throw new ApiError(res.status, data.error ?? `http_${res.status}`, data);
-  return data as T;
+  if (!res.ok) throw await failure(res);
+  return (await res.json().catch(() => ({}))) as T;
+}
+
+export async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const res = await send(path, init);
+  if (!res.ok) throw await failure(res);
+  return res.blob();
 }
 
 export const keys = {
@@ -58,7 +72,8 @@ export const keys = {
 };
 
 export function useMe() {
-  return useQuery({ queryKey: keys.me, queryFn: () => request<Me>("/me"), staleTime: 60_000, retry: false });
+  // A 401 or 403 is an answer; a dropped connection or a restarting server is worth another try.
+  return useQuery({ queryKey: keys.me, queryFn: () => request<Me>("/me"), staleTime: 60_000, retry: (count, err) => shouldRetry(count, err) });
 }
 export function useBoards() {
   return useQuery({ queryKey: keys.boards, queryFn: () => request<Board[]>("/boards") });

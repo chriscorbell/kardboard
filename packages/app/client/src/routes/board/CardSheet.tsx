@@ -5,13 +5,14 @@ import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfi
 import { useApproveCard, useCard, useCreateComment, useMe, useMoveCard, useUpdateCard, useUpdateComment, request, keys } from "../../lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { Avatar, Button, Chip, cx, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
+import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
 import { Menu } from "../../components/Menu";
 import { Markdown } from "../../components/Markdown";
 import { absoluteTime, relativeTime, shortId } from "../../lib/format";
 import { Composer } from "./Composer";
 import { COLUMN_TONES } from "./columns";
 import { WorkingDot } from "./CardTile";
+import { ApiError } from "../../lib/errors";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
 
@@ -64,6 +65,25 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
   const isAdmin = me.data?.user.role === "admin";
 
   if (!card) {
+    if (detail.isError) {
+      const gone = detail.error instanceof ApiError && (detail.error.status === 404 || detail.error.status === 403);
+      return (
+        <>
+          <div className="flex h-12 shrink-0 items-center justify-end border-b border-line px-4">
+            <IconButton label="Close" onClick={onClose}>
+              <X className="size-4" strokeWidth={1.75} />
+            </IconButton>
+          </div>
+          <div className="p-6">
+            {gone ? (
+              <p className="text-sm text-ink-muted">This card does not exist, or it is on a board you cannot open.</p>
+            ) : (
+              <ErrorState compact title="Could not load this card." error={detail.error} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
+            )}
+          </div>
+        </>
+      );
+    }
     return (
       <div className="flex flex-1 flex-col gap-3 p-6">
         <Skeleton className="h-6 w-2/3" />
@@ -181,8 +201,10 @@ function SheetBody({ slug, cardId, view, onClose }: { slug: string; cardId: stri
           <h3 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-ink-faint">Comments</h3>
           {detail.isPending ? (
             <Skeleton className="h-16" />
+          ) : !detail.data ? (
+            <ErrorState compact title="Could not load comments." error={detail.error} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
           ) : (
-            <CommentList comments={detail.data?.comments ?? []} members={members} agent={view.agent} handles={handles} meId={me.data?.user.id ?? ""} cardId={card.id} />
+            <CommentList comments={detail.data.comments} members={members} agent={view.agent} handles={handles} meId={me.data?.user.id ?? ""} cardId={card.id} />
           )}
         </div>
         <div className="px-6 pb-4">

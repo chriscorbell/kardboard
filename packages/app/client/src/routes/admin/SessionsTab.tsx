@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { Square, RotateCcw, ChevronRight } from "lucide-react";
 import { ACTIVE_SESSION_STATUSES, type SessionStatus } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminSessions } from "../../lib/api";
-import { Button, Chip, EmptyState, Skeleton, cx } from "../../components/ui";
+import { Button, Chip, EmptyState, ErrorState, Skeleton, cx } from "../../components/ui";
 import { absoluteTime, relativeTime, shortId } from "../../lib/format";
 import { WorkingDot } from "../board/CardTile";
 import { SessionTranscript } from "./SessionTranscript";
@@ -35,11 +35,13 @@ export function SessionsTab() {
       <TabHeader title="Sessions" body="Every agent run across all boards, newest first. Click one to read its transcript, which follows a running session live. The raw logs stay on disk for 14 days." />
       {sessions.isPending ? (
         <Skeleton className="h-40" />
-      ) : sessions.data && sessions.data.length === 0 ? (
+      ) : !sessions.data ? (
+        <ErrorState title="Could not load sessions." error={sessions.error} onRetry={() => void sessions.refetch()} retrying={sessions.isFetching} />
+      ) : sessions.data.length === 0 ? (
         <EmptyState title="No sessions yet" body="A session starts about a minute after a member changes a card." />
       ) : (
         <ul className="divide-y divide-line rounded-card border border-line bg-surface">
-          {sessions.data?.map((s) => {
+          {sessions.data.map((s) => {
             const active = ACTIVE_SESSION_STATUSES.includes(s.status);
             const board = boardOf(s.boardId);
             const open = expanded === s.id;

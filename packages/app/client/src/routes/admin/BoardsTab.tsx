@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import type { Board } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminUsers, type AdminBoard } from "../../lib/api";
-import { Avatar, Button, Chip, cx, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
+import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
 
@@ -77,9 +77,11 @@ export function BoardsTab() {
       />
       {boards.isPending ? (
         <Skeleton className="h-40" />
+      ) : !boards.data ? (
+        <ErrorState title="Could not load boards." error={boards.error} onRetry={() => void boards.refetch()} retrying={boards.isFetching} />
       ) : (
         <ul className="grid gap-2">
-          {boards.data?.map((b) => (
+          {boards.data.map((b) => (
             <li key={b.id}>
               <button type="button" onClick={() => setEditing(b)} className="flex w-full items-center gap-4 rounded-card border border-line bg-surface px-4 py-3 text-left transition-colors hover:border-line-strong hover:bg-raised">
                 <div className="min-w-0 flex-1">

@@ -2,7 +2,7 @@ import { Link, Navigate } from "react-router";
 import { ArrowRight, Bot, GitBranch } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useBoards, useMe } from "../lib/api";
-import { EmptyState, Skeleton } from "../components/ui";
+import { EmptyState, ErrorState, Skeleton } from "../components/ui";
 
 export function BoardsPage() {
   const boards = useBoards();
@@ -19,7 +19,13 @@ export function BoardsPage() {
       </div>
     );
   }
-  if (!boards.data) return null;
+  if (!boards.data) {
+    return (
+      <div className="mx-auto max-w-3xl p-8">
+        <ErrorState title="Could not load your boards." error={boards.error} onRetry={() => void boards.refetch()} retrying={boards.isFetching} />
+      </div>
+    );
+  }
   if (boards.data.length === 1) return <Navigate to={`/b/${boards.data[0]!.slug}`} replace />;
   return (
     <div className="mx-auto max-w-3xl p-8">
