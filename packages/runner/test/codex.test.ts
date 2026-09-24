@@ -43,20 +43,29 @@ describe("giving a Codex Session a credential", () => {
 // The image is built by CI, so nothing here runs Codex. These guard the two mistakes that made the
 // Codex path fail silently: a flag Codex no longer accepts, and config keys it quietly ignores.
 describe("the Session entrypoint's Codex invocation", () => {
-  const entrypoint = fs.readFileSync(path.join(repoRoot, "images/agent/entrypoint.sh"), "utf8");
-  // Comments in the script explain the flags that were removed, so read only what bash will run.
-  const script = entrypoint
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n");
+  // Comments in the scripts explain the flags that were removed, so read only what bash will run.
+  const code = (file: string) =>
+    fs
+      .readFileSync(path.join(repoRoot, "images/agent", file), "utf8")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+  const script = code("entrypoint.sh");
+  // The config.toml it writes, shared with the check a new Codex release must pass.
+  const config = code("codex-config.sh");
+
+  it("writes its config.toml from the shared config", () => {
+    assert.match(script, /\. \/usr\/local\/lib\/kardboard\/codex-config\.sh/);
+    assert.match(script, /codex_config > "\$CODEX_HOME\/config\.toml"/);
+  });
 
   it("does not use --full-auto, which codex-cli 0.154 removed", () => {
     assert.equal(script.includes("--full-auto"), false);
   });
 
   it("carries the Session token in the environment rather than writing it into config.toml", () => {
-    assert.match(script, /bearer_token_env_var = "KARDBOARD_TOKEN"/);
-    assert.equal(/http_headers = .*KARDBOARD_TOKEN/.test(script), false);
+    assert.match(config, /bearer_token_env_var = "KARDBOARD_TOKEN"/);
+    assert.equal(/http_headers = .*KARDBOARD_TOKEN/.test(config + script), false);
   });
 
   it("asks Codex to reject configuration it does not recognise", () => {
@@ -64,7 +73,7 @@ describe("the Session entrypoint's Codex invocation", () => {
   });
 
   it("names a model provider when the proxy holds the credential, so the WebSocket transport is off", () => {
-    assert.match(script, /model_provider = "kardboard"/);
-    assert.match(script, /base_url = "\$KARDBOARD_CODEX_EGRESS_URL"/);
+    assert.match(config, /model_provider = "kardboard"/);
+    assert.match(config, /base_url = "\$KARDBOARD_CODEX_EGRESS_URL"/);
   });
 });

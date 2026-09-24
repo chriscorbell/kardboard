@@ -27,8 +27,10 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 
-# Provider CLIs. Codex is pinned: its CLI has removed flags and config keys between releases, and
-# the entrypoint's Codex invocation is verified against this version. Bump it deliberately.
+# Provider CLIs, as the fallback. Sessions normally run the newest release of each, which the runner
+# keeps in a shared volume after checking it against the entrypoint (clis.sh); these run only when
+# that volume has no checked version. Codex is pinned here because its CLI has removed flags and
+# config keys between releases, and this version is known to work with the entrypoint.
 ARG CODEX_VERSION=0.154.0
 RUN npm install -g @anthropic-ai/claude-code "@openai/codex@${CODEX_VERSION}"
 
@@ -50,6 +52,8 @@ ENV npm_config_cache=/cache/npm \
     UV_CACHE_DIR=/cache/uv \
     UV_LINK_MODE=copy \
     PIP_CACHE_DIR=/cache/pip
+COPY --chmod=644 images/agent/codex-config.sh /usr/local/lib/kardboard/codex-config.sh
+COPY --chmod=755 images/agent/clis.sh /usr/local/bin/kardboard-clis
 COPY --chmod=755 images/agent/entrypoint.sh /usr/local/bin/kardboard-session
 USER agent
 WORKDIR /work

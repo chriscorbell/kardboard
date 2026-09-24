@@ -10,6 +10,16 @@ WALL_CLOCK_MINUTES="${KARDBOARD_WALL_CLOCK_MINUTES:-45}"
 
 log() { printf '[session %s] %s\n' "$KARDBOARD_SESSION_ID" "$*" >&2; }
 
+# The runner keeps the newest release of each CLI in a volume mounted read-only here, each checked
+# against this entrypoint before it was made current (see clis.sh); without one, the version built
+# into the image runs. The directory is resolved once, so a newer version made current while this
+# Session runs does not change the CLI under it.
+use_cli() {
+  local dir
+  dir="$(readlink -f "${KARDBOARD_CLIS_DIR:-/opt/kardboard-clis}/$1/current" 2>/dev/null)" || return 0
+  if [ -f "$dir/.kardboard-checked" ]; then PATH="$dir/bin:$PATH"; fi
+}
+
 # How long the provider CLI may run, in seconds, for `timeout`: the wall clock, or less when the
 # Sessions GitHub token runs out first. The app mints that token before the runner pulls this image,
 # and the wall clock starts only now, so a slow pull plus the wall clock can outlast the token's hour,
@@ -95,7 +105,8 @@ fi
 
 case "$KARDBOARD_PROVIDER" in
   claude)
-    log "starting claude code"
+    use_cli claude-code
+    log "starting claude code $(claude --version 2>/dev/null | head -n 1)"
     cat > /tmp/mcp.json <<JSON
 { "mcpServers": { "kardboard": { "type": "http", "url": "$KARDBOARD_MCP_URL", "headers": { "Authorization": "Bearer $KARDBOARD_TOKEN" } } } }
 JSON
@@ -116,7 +127,8 @@ JSON
         --output-format stream-json --verbose
     ;;
   codex)
-    log "starting codex"
+    use_cli codex
+    log "starting $(codex --version 2>/dev/null | head -n 1)"
     export CODEX_HOME="$HOME/.codex"
     mkdir -p "$CODEX_HOME"; chmod 700 "$CODEX_HOME"
 
@@ -128,31 +140,10 @@ JSON
       install -m 600 "$KARDBOARD_CODEX_AUTH_STAGE" "$CODEX_HOME/auth.json"
     fi
 
-    {
-      if [ -n "${KARDBOARD_CODEX_EGRESS_URL:-}" ]; then
-        # A named model provider is what puts Codex on the proxy: the default provider prefers a
-        # WebSocket to chatgpt.com that ignores any base URL, and naming one turns that transport
-        # off. `requires_openai_auth` keeps Codex in subscription mode; the proxy holds the token.
-        log "sending codex inference through the egress proxy"
-        cat <<TOML
-model_provider = "kardboard"
-
-[model_providers.kardboard]
-name = "kardboard egress"
-base_url = "$KARDBOARD_CODEX_EGRESS_URL"
-wire_api = "responses"
-requires_openai_auth = true
-
-TOML
-      fi
-      # Verified against codex-cli 0.154.0: this is what `codex mcp add --url --bearer-token-env-var`
-      # writes, and it keeps the Session token in the environment instead of on disk.
-      cat <<TOML
-[mcp_servers.kardboard]
-url = "$KARDBOARD_MCP_URL"
-bearer_token_env_var = "KARDBOARD_TOKEN"
-TOML
-    } > "$CODEX_HOME/config.toml"
+    # shellcheck source=codex-config.sh
+    . /usr/local/lib/kardboard/codex-config.sh
+    if [ -n "${KARDBOARD_CODEX_EGRESS_URL:-}" ]; then log "sending codex inference through the egress proxy"; fi
+    codex_config > "$CODEX_HOME/config.toml"
 
     # --strict-config makes Codex fail on a key it does not recognise. A Session that cannot be
     # configured should stop loudly; silently ignored config is how this path broke before.

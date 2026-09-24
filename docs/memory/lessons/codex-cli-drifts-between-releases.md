@@ -1,11 +1,11 @@
 # The Codex CLI drops flags and config keys between releases, and the Session image tracked `latest`
 
-Read when: a Codex Session exits immediately or reaches no provider, when the egress log shows `refused codex` or `refused claude`, when changing anything in the Codex branch of `images/agent/entrypoint.sh`, or before bumping `CODEX_VERSION` in the Session image.
+Read when: a Codex Session exits immediately or reaches no provider, when the egress log shows `refused codex` or `refused claude`, when the runner refuses a new CLI release, when changing anything in the Codex branch of `images/agent/entrypoint.sh` or the flags it passes either CLI, or before bumping `CODEX_VERSION` in the Session image.
 Status: verified
 Scope: `images/agent`, `packages/runner`, `packages/egress`
 Verified: 2026-09-24
 Source: [the entrypoint](../../../images/agent/entrypoint.sh), [ADR 0002](../../adr/0002-subscription-credentials-stay-in-the-egress-proxy.md); observed by running codex-cli 0.154.0 inside a Session on 2026-09-15
-Recheck when: `CODEX_VERSION` in `images/agent/Dockerfile` changes, or `ALLOWED_CALLS` in `packages/egress/src/proxy.ts` does.
+Recheck when: `CODEX_VERSION` in `images/agent/Dockerfile` changes, `ALLOWED_CALLS` in `packages/egress/src/proxy.ts` does, or the checks in `images/agent/clis.sh` do.
 
 The Codex Provider had never worked. The entrypoint ran `codex exec --full-auto`, a flag codex-cli removed by 0.154.0, so Codex exited on its argument parser before doing anything. Nothing caught it because the image installed `@openai/codex` unpinned, so the CLI drifted under a script that was never re-checked, and no test ran the Codex path.
 
@@ -19,3 +19,5 @@ The corrections, each checked against codex-cli 0.154.0 in a Session:
 The cheap check, before trusting any of this after a version bump: `codex doctor` reports `config.toml parse ok`, the MCP server count, and whether the active provider uses a WebSocket.
 
 Since 2026-09-24 the egress proxy also forwards only the paths listed in `ALLOWED_CALLS` in `packages/egress/src/proxy.ts`: for Codex, `POST /responses`, `POST /responses/compact`, `GET /models`, and `POST /memories/trace_summarize` under the provider's base URL. A release that calls something new gets a 403, and the egress log names it as `refused codex <method> <path>`. After a bump, run one Session and search that log before trusting it. Claude Code has the same list and the same failure.
+
+Since 2026-09-24 Sessions no longer run the image's CLIs by default. The runner installs each new release of Claude Code and Codex into the `kardboard-clis` volume and makes it current only when `images/agent/clis.sh` passes it: every flag the entrypoint passes is still in `--help`, and `codex --strict-config doctor --json` with the Session's own config reports the config loaded, the one MCP server, and no WebSocket. That catches the `--full-auto` kind of break before any Session sees it; the image's pinned `CODEX_VERSION` is now only the fallback. It cannot catch a new provider call the egress proxy refuses, so a `refused` line that appears after a release most likely comes from that release. `docker compose logs runner | grep clis` on minicore shows each version made current or refused, and the runner's authenticated `GET /clis` returns the same state. When the entrypoint gains a flag, add it to the lists in `clis.sh` in the same change: the next image re-checks the current versions and takes one that fails out of use.
