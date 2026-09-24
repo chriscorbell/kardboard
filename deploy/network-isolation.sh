@@ -16,8 +16,8 @@
 #   ./network-isolation.sh check    list what is currently installed
 #   ./network-isolation.sh remove   take them out again
 #
-# iptables does not survive a host reboot or a `systemctl restart docker` that rebuilds the
-# chains. Re-run `apply` after either, or persist it; see docs/runbooks/network-isolation.md.
+# iptables does not survive a host reboot. deploy/kardboard-lan-isolation.service re-runs `apply`
+# whenever Docker starts; see docs/runbooks/network-isolation.md.
 
 set -eu
 
@@ -29,26 +29,26 @@ PRIVATE="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10"
 
 ipt() { iptables "$@"; }
 
-host_lan_ip() {
-  ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -n 1
-}
+# Only new connections are dropped. The app and the egress proxy are joined to every Session
+# network, and Docker may route their replies out through it: a reply to cloudflared, on another
+# private bridge, must still get through or kardboard.cc goes dark while a Session runs.
+NEW="-m conntrack --ctstate NEW"
 
-# The host's own address is reached over INPUT, not FORWARD, so DOCKER-USER never sees it.
+# The host itself is reached over INPUT, not FORWARD, so DOCKER-USER never sees it. Every local
+# address counts, not only the LAN one: each bridge gateway reaches sshd and every published port.
 input_rule() {
-  lan=$(host_lan_ip)
-  [ -n "$lan" ] || { echo "could not determine the host LAN address; skipping the INPUT rule" >&2; return 1; }
-  echo "INPUT -i ${PREFIX}+ -d ${lan} -m comment --comment ${TAG} -j DROP"
+  echo "INPUT -i ${PREFIX}+ -m addrtype --dst-type LOCAL ${NEW} -m comment --comment ${TAG} -j DROP"
 }
 
 forward_rules() {
   for cidr in $PRIVATE; do
-    echo "DOCKER-USER -i ${PREFIX}+ ! -o ${PREFIX}+ -d ${cidr} -m comment --comment ${TAG} -j DROP"
+    echo "DOCKER-USER -i ${PREFIX}+ ! -o ${PREFIX}+ -d ${cidr} ${NEW} -m comment --comment ${TAG} -j DROP"
   done
 }
 
 all_rules() {
   forward_rules
-  input_rule || true
+  input_rule
 }
 
 apply() {

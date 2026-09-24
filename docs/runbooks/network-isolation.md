@@ -38,19 +38,36 @@ fifteen Linux allows for an interface), and `deploy/compose.yaml` names the prev
 `cbnprev`. One `-i cbn+` match therefore covers every Session and every Preview and needs no update
 when a Session starts.
 
-On minicore, as root:
+On minicore the script is installed as `/usr/local/sbin/kardboard-network-isolation`, and
+[`deploy/kardboard-lan-isolation.service`](../../deploy/kardboard-lan-isolation.service) runs it
+whenever Docker starts, so the rules come back after a reboot or a `systemctl restart docker`. To
+install or update both, from a checkout of this repository, as root:
 
 ```bash
-cd /home/chris/docker/stacks/kardboard
-./network-isolation.sh check     # what is installed now
-./network-isolation.sh apply     # insert the rules; idempotent
-./network-isolation.sh remove    # take them out again
+install -m 755 deploy/network-isolation.sh /usr/local/sbin/kardboard-network-isolation
+install -m 644 deploy/kardboard-lan-isolation.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now kardboard-lan-isolation
 ```
 
-It inserts, into `DOCKER-USER`, a drop for traffic arriving on a `cbn*` bridge and leaving for
-10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 or 100.64.0.0/10 on anything that is not
-another `cbn*` bridge — so a Session still reaches `app` and `egress` on its own bridge — plus one
-`INPUT` drop for the host's own LAN address.
+By hand:
+
+```bash
+kardboard-network-isolation check     # what is installed now
+kardboard-network-isolation apply     # insert the rules; idempotent
+kardboard-network-isolation remove    # take them out again
+```
+
+It inserts, into `DOCKER-USER`, a drop for new connections arriving on a `cbn*` bridge and leaving
+for 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 or 100.64.0.0/10 on anything that is
+not another `cbn*` bridge — so a Session still reaches `app` and `egress` on its own bridge — plus
+one `INPUT` drop for new connections from a `cbn*` bridge to any of the host's own addresses, which
+covers sshd and every published port behind each bridge gateway.
+
+Only new connections are dropped, because replies must pass. While a Session runs, the app and the
+egress proxy are also on its bridge, and Docker can route their outbound traffic through it. On
+2026-09-24 the app's default route moved to a test Session bridge as soon as it was connected. If
+the rule dropped every packet, the app's replies to cloudflared, on another private bridge, would
+be dropped, and kardboard.cc would go dark whenever a Session ran.
 
 Applying it needs the preview network recreated once, because a bridge name cannot be changed in
 place: `docker compose down && docker compose up -d`. Session networks are created fresh by the
@@ -58,12 +75,8 @@ runner and need nothing.
 
 ### What it does not cover
 
-- **A host reboot or `systemctl restart docker`** rebuilds the chains and loses the rules. Re-run
-  `apply`, or persist them with `iptables-persistent` or a systemd unit ordered after Docker.
-- **Host ports published on the bridge gateway.** A container can still reach the host at its
-  bridge gateway address, which reaches published ports 3070 and 3073 — the app and the preview
-  router. Both are services a Session may already reach by name, so this is not new exposure, but
-  it is not closed either.
+- **A host without the systemd unit.** A reboot loses the rules; install the unit above rather
+  than re-running `apply` by hand.
 - **IPv6.** Docker's IPv6 is off on minicore, so only `iptables` is touched. Turning IPv6 on means
   mirroring these rules in `ip6tables`.
 
@@ -82,3 +95,10 @@ getent hosts kardboard-session-<other id>
 
 `docker network inspect kardboard-session-<id>` should list exactly three containers: the Session,
 the app, and the egress proxy.
+
+Last verified on minicore on 2026-09-24: the rules and the systemd unit were installed, the stack
+was recreated so the preview bridge is `cbnprev`, and a throwaway container on a `cbn` bridge
+resolved DNS and reached the internet and `app` by name, but not 10.0.0.1, the host's LAN address,
+a published port on its own bridge gateway, or the tailnet resolver. kardboard.cc answered
+throughout while the app was joined to that test bridge. A real Session then ran on its own `kardboard-session-<id>` network, and the public
+preview host still answered through the router.

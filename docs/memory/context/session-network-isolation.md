@@ -3,13 +3,13 @@
 Read when: changing which containers a Session may reach, adding a service to `kardboard_workload`,
 naming a Docker bridge, or explaining why a Session failed with "could not create the session
 network".
-Status: verified in tests, unverified in production
+Status: verified
 Scope: component, `packages/runner`, `deploy/compose.yaml`, minicore host firewall
-Verified: 2026-09-15
+Verified: 2026-09-24
 Source: [network isolation runbook](../runbooks/network-isolation.md),
 [packages/runner/src/networks.ts](../../../packages/runner/src/networks.ts)
 Recheck when: the runner stops reading `kardboard_workload` membership to decide a Session's peers,
-the `cbn` bridge prefix changes, or the firewall rule is applied and observed on minicore
+the `cbn` bridge prefix changes, or the `kardboard-lan-isolation` unit is removed from minicore
 
 Two facts that are not visible from either file on its own.
 
@@ -26,6 +26,8 @@ misconfigured `workload` fails every Session on the Board with a message on the 
 `com.docker.network.bridge.name` to `cbn<32-bit FNV-1a of the session id>` and `deploy/compose.yaml`
 names the preview bridge `cbnprev`, because Linux allows fifteen characters for an interface name
 and `deploy/network-isolation.sh` matches `-i cbn+` to drop LAN traffic. Renaming either breaks the
-rule silently: containers keep working and regain the LAN. The rule is applied by hand on minicore
-and is lost on a host reboot or a Docker restart; it is not part of the stack and nothing in the
-tree reports whether it is installed.
+rule silently: containers keep working and regain the LAN. The rule is not part of the Compose
+stack: on minicore a systemd unit, `kardboard-lan-isolation`, re-applies it whenever Docker starts,
+and `kardboard-network-isolation check` shows what is installed. PR 13 merged on 2026-09-15 but the
+rule and the `cbnprev` bridge only reached minicore on 2026-09-24, because Watchtower applies images
+and never Compose or host changes.
