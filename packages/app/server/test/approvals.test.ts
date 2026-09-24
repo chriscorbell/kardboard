@@ -15,6 +15,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 // its JWT with it; everything it would send to GitHub is answered by the fake below.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-approvals-"));
 process.env.KARDBOARD_DATA_DIR = root;
+// These tests sign in with dev authentication, whatever a local .env chooses.
+process.env.KARDBOARD_AUTH = "dev";
 process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
 process.env.GITHUB_MERGE_APP_ID = "1";

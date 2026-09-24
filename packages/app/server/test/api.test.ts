@@ -9,6 +9,8 @@ import { and, eq } from "drizzle-orm";
 // authentication is what the tests sign in with: `X-Dev-User` picks the caller by email.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-api-"));
 process.env.KARDBOARD_DATA_DIR = root;
+// These tests sign in with dev authentication, whatever a local .env chooses.
+process.env.KARDBOARD_AUTH = "dev";
 process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");

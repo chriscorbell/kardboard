@@ -379,7 +379,8 @@ export type BoardEvent =
   | { type: "board.updated"; board: Board };
 
 // Mentions are @handle tokens. Handles are lowercase, from the user's email local part.
-export const MENTION_RE = /(^|[^\w@])@([a-z0-9][a-z0-9._-]{0,38})/gi;
+// A handle can contain dots and hyphens but not end with one, so "thanks @chris." mentions chris.
+export const MENTION_RE = /(^|[^\w@])@([a-z0-9](?:[a-z0-9._-]{0,37}[a-z0-9])?)/gi;
 
 export function extractMentionHandles(body: string): string[] {
   const out = new Set<string>();

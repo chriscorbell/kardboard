@@ -30,6 +30,11 @@ export function BackupsTab() {
           <p className="mb-4 text-[13px] text-ink-muted">
             {schedule} Database <span className="font-mono text-[12px]">{fileSize(view.databaseBytes)}</span>, snapshots in <span className="font-mono text-[12px]">{view.dir}</span>.
           </p>
+          {view.lastAttempt && !view.lastAttempt.ok ? (
+            <p className="mb-4 text-[13px] text-danger" title={absoluteTime(view.lastAttempt.at)}>
+              The last snapshot failed {relativeTime(view.lastAttempt.at)}: {view.lastAttempt.error}
+            </p>
+          ) : null}
           {view.snapshots.length === 0 ? (
             <EmptyState title="No snapshots yet" body="The first one is written when the server next reaches the scheduled hour, or now with the button above." />
           ) : (

@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 import fs from "node:fs";
 import path from "node:path";
@@ -54,6 +55,8 @@ if (fs.existsSync(path.join(clientDir, "index.html"))) {
 }
 
 app.onError((err, c) => {
+  // A malformed JSON body and the like are the caller's mistake, not a server fault.
+  if (err instanceof HTTPException && err.status < 500) return c.json({ error: err.message || "bad request" }, err.status);
   console.error(err);
   return c.json({ error: "internal", message: env.isProduction ? undefined : err.message }, 500);
 });
