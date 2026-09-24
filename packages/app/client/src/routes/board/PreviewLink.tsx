@@ -9,8 +9,9 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 const linkClass = "inline-flex items-center gap-1.5 no-underline transition-colors hover:text-accent";
 
 // The Preview item in the card sheet's work-links row. Besides the link it says what a person should
-// know before trusting what they see: that a build is still running, that it failed and why, or that
-// it shows an older commit than the one Approve would merge. Rendered as items of that flex row, so
+// know before trusting what they see: that a build is still running, that it failed and why, that a
+// rebuild was lost and it still shows the previous build, or that it shows an older commit than the
+// one Approve would merge. Rendered as items of that flex row, so
 // a failed build's error can open across the row's full width beneath it.
 export function PreviewLink({ card }: { card: Card }) {
   const reduce = useReducedMotion();
@@ -47,6 +48,7 @@ export function PreviewLink({ card }: { card: Card }) {
               transition={{ duration: 0.2, ease: EASE }}
               className="basis-full overflow-hidden"
             >
+              {shown.note ? <p className="mb-1.5 text-[12px] text-ink-muted">{shown.note}</p> : null}
               <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-control border border-line bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed text-ink-muted">{shown.error}</pre>
             </motion.div>
           ) : null}
@@ -70,10 +72,10 @@ export function PreviewLink({ card }: { card: Card }) {
         <ExternalLink className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
         Open preview
       </a>
-      {shown.stale ? (
+      {shown.warning ? (
         <span className="inline-flex items-center gap-1 text-warn" title={shown.note ?? undefined}>
           <AlertTriangle className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
-          Older commit
+          {shown.warning}
           <span className="sr-only">: {shown.note}</span>
         </span>
       ) : null}

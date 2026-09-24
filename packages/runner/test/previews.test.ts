@@ -9,6 +9,7 @@ import type Docker from "dockerode";
 import { previewBridgeName } from "../src/networks.js";
 import {
   buildAndRunPreview,
+  cancelPreviewBuild,
   cloneUrl,
   PreviewCancelled,
   PreviewError,
@@ -24,6 +25,7 @@ import {
 
 const req: PreviewRequest = {
   previewId: "pv1",
+  buildId: "b1",
   boardSlug: "kardboard",
   cardId: "k6u39mjgb5j2w8",
   host: "k6u39mjg.preview.xode.cc",
@@ -109,7 +111,7 @@ describe("the Preview build", () => {
 
 // Enough of Docker for a whole build: networks with their endpoints, images by tag, containers by
 // name, and a build whose progress stream a test controls. Calls are recorded in order.
-function fakeDocker(opts: { image?: string; container?: boolean; build?: (signal: AbortSignal) => Readable }) {
+function fakeDocker(opts: { image?: string; container?: boolean; build?: (signal: AbortSignal) => Readable; onStart?: () => void }) {
   const calls: string[] = [];
   const networks = new Map<string, string[]>([["kardboard_preview", ["router"]]]);
   const images = new Map<string, string>(opts.image ? [[previewImageTag("pv1"), opts.image]] : []);
@@ -177,7 +179,14 @@ function fakeDocker(opts: { image?: string; container?: boolean; build?: (signal
     createContainer: async (spec: Docker.ContainerCreateOptions) => {
       calls.push(`container create ${spec.name} on ${spec.HostConfig?.NetworkMode}`);
       containers.add(spec.name!);
-      return { id: "c-new", start: async () => {} };
+      return {
+        id: "c-new",
+        start: async () => opts.onStart?.(),
+        remove: async () => {
+          calls.push("container remove c-new");
+          containers.delete(spec.name!);
+        },
+      };
     },
     modem: {
       followProgress(stream: Readable, onFinished: (err: Error | null, out: unknown[]) => void, onProgress: (evt: unknown) => void) {
@@ -256,6 +265,13 @@ describe("building and running a Preview", () => {
     await stale;
     assert.ok(!first.calls.some((c) => c.startsWith("container create")), "the stale build never starts a container");
     assert.ok(!first.calls.includes("network remove kardboard_preview_pv1"), "nor takes the network from the one that replaced it");
+  });
+
+  it("takes down its own container when a newer build replaced it while the container started", async () => {
+    const docker = fakeDocker({ onStart: () => cancelPreviewBuild("pv1", "a newer build of this preview replaced it") });
+    await assert.rejects(buildAndRunPreview(docker, branchReq, limits, () => {}), PreviewCancelled);
+    assert.ok(docker.calls.includes("container remove c-new"), "a superseded build leaves nothing serving under its commit");
+    assert.ok(!docker.calls.includes("network remove kardboard_preview_pv1"), "the network stays for the build that replaced it");
   });
 
   it("stops the build of a Preview that is removed while it builds", async () => {

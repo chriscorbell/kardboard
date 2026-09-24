@@ -49,7 +49,7 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
   const lastMap = await latestEndedSessions(ids);
   const waitingMap = await waitingFor(rows, activeMap, lastMap);
   const previews = await db.select().from(schema.previews).where(inArray(schema.previews.cardId, ids));
-  const previewMap = new Map<string, CardPreview>(previews.map((p) => [p.cardId, { status: p.status, error: p.error, sha: p.sha, updatedAt: p.updatedAt }]));
+  const previewMap = new Map<string, CardPreview>(previews.map((p) => [p.cardId, { status: p.status, error: p.error, sha: p.sha, failedSha: p.failedSha, updatedAt: p.updatedAt }]));
   const awaiting = await awaitingReply(rows.filter((r) => r.column === "blocked").map((r) => r.id));
   return rows.map((r) => ({
     id: r.id,

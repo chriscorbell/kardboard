@@ -300,6 +300,8 @@ app.get("/sessions", async (c) => {
 
 const previewSchema = z.object({
   previewId: z.string().regex(ID_PATTERN),
+  // Absent from an app older than build ids; its reports then carry none, as they used to.
+  buildId: z.string().max(64).nullable().default(null),
   boardSlug: z.string(),
   cardId: z.string(),
   host: z.string(),
@@ -328,18 +330,25 @@ void prunePreviewNetworks(docker)
 
 // For the same reason the app is told when this process started: every Preview still marked building
 // from before then was being built by a runner that is gone, and nothing else would ever report it.
+// Except the builds this process has accepted itself, which it names: a request made in the moment
+// it came up predates it, and the app is restarting too on a deploy, so this report can be a minute
+// late. The list is read on each attempt, and kept only until the app has heard it.
 const startedAt = new Date().toISOString();
+let acceptedSinceStart: Set<string> | null = new Set();
 void deliverWithRetry(() =>
   fetch(`${env.appUrl}/api/internal/previews/interrupted`, {
     method: "POST",
     headers: { Authorization: `Bearer ${env.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ startedAt }),
+    body: JSON.stringify({ startedAt, accepted: [...(acceptedSinceStart ?? [])] }),
   }),
-).then((delivered) => delivered || console.error("[runner] could not tell the app which preview builds this restart interrupted"));
+).then((delivered) => {
+  acceptedSinceStart = null;
+  if (!delivered) console.error("[runner] could not tell the app which preview builds this restart interrupted");
+});
 
 // Retried like an exit report: a deploy restarts the app too, and a lost report left the Preview
-// showing "building" forever.
-async function reportPreview(previewId: string, body: { status: "running" | "failed"; containerId?: string; target?: string; error?: string; sha: string | null }) {
+// showing "building" forever. The build id tells the app which request this answers.
+async function reportPreview(previewId: string, body: { status: "running" | "failed"; buildId: string | null; containerId?: string; target?: string; error?: string; sha: string | null }) {
   const delivered = await deliverWithRetry(() =>
     fetch(`${env.appUrl}/api/internal/previews/${previewId}/state`, {
       method: "POST",
@@ -357,13 +366,15 @@ app.post("/previews", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const req: PreviewRequest = parsed.data;
   const logPath = path.join(env.logDir, `preview-${req.previewId}.log`);
-  fs.writeFileSync(logPath, `[preview] accepted ${req.host} at ${new Date().toISOString()}\n`);
+  fs.writeFileSync(logPath, `[preview] accepted ${req.host}${req.buildId ? ` build ${req.buildId}` : ""} at ${new Date().toISOString()}\n`);
   const onLog = (line: string) => fs.appendFileSync(logPath, `${line}\n`);
+  if (req.buildId) acceptedSinceStart?.add(req.buildId);
 
   let sha: string | null = null;
+  const { buildId } = req;
   void buildAndRunPreview(docker, req, previewLimits, onLog, (cloned) => (sha = cloned))
     .then(async ({ containerId, target }) => {
-      await reportPreview(req.previewId, { status: "running", containerId, target, sha });
+      await reportPreview(req.previewId, { status: "running", buildId, containerId, target, sha });
     })
     .catch(async (err: Error) => {
       // A newer build or the Preview's removal replaced this one, and reports for itself.
@@ -371,7 +382,7 @@ app.post("/previews", async (c) => {
       const message = err instanceof PreviewError ? err.message : `preview failed: ${err.message}`;
       onLog(message);
       console.error(`[runner] preview ${req.previewId} failed`, message);
-      await reportPreview(req.previewId, { status: "failed", error: message, sha });
+      await reportPreview(req.previewId, { status: "failed", buildId, error: message, sha });
     });
 
   return c.json({ accepted: true }, 202);

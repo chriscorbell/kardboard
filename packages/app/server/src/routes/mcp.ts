@@ -295,7 +295,7 @@ function buildServer(session: SessionRow): McpServer {
   server.registerTool(
     "preview_status",
     {
-      description: "Your own card's runner preview: building, running, or failed; the error and the end of the build log when it failed; and the commit it was built from beside the pull request head kardboard last recorded. Call it after request_preview, about once a minute while it is building, and before reporting.",
+      description: "Your own card's runner preview: building, running, or failed; the error, the commit that failed, and the end of the build log when it failed; a note when a rebuild was interrupted and the previous build still serves; and the commit of the last build that ran beside the pull request head kardboard last recorded. Call it after request_preview, about once a minute while it is building, and before reporting.",
       inputSchema: {},
     },
     async () => {
@@ -309,16 +309,22 @@ function buildServer(session: SessionRow): McpServer {
       if (!row) {
         return { content: [{ type: "text", text: JSON.stringify({ status: "none", note: "No preview has been requested for this card. Push the branch, then call request_preview." }) }] };
       }
+      const failed = row.status === "failed";
       const out = {
         status: row.status,
         url: previewUrlFor(row.host),
+        // On a running preview, the note that a rebuild was interrupted and the previous build serves.
         error: row.error,
+        // The last build that ran, which a building preview still serves. A failed build is failedSha.
         builtFromSha: row.sha,
+        ...(failed ? { failedSha: row.failedSha } : {}),
         pullRequestHeadSha: card.prHeadSha,
         // Only a yes or no when both are known. A building preview is still serving its previous build.
         isOfPullRequestHead: row.sha && card.prHeadSha ? row.sha === card.prHeadSha : null,
         updatedAt: row.updatedAt,
-        ...(row.status === "failed" ? { buildLogTail: await previewLogTail(row.id) } : {}),
+        // A build the runner refused never ran, and the log the runner has is an earlier build's, which
+        // would send the Session after an error it has already fixed. The error says why instead.
+        ...(failed && row.buildId ? { buildLogTail: await previewLogTail(row.id) } : {}),
       };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },

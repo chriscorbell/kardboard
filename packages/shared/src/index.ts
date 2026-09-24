@@ -212,9 +212,12 @@ export type PreviewStatus = (typeof PREVIEW_STATUSES)[number];
 
 export interface CardPreview {
   status: PreviewStatus;
+  /** Why the latest build did not replace what is served; on a running Preview, an interrupted rebuild. */
   error: string | null;
-  /** The commit the Preview was built from. While a rebuild runs it is still the one being served. */
+  /** The commit being served. A rebuild, and a failed one, leave the previous build serving. */
   sha: string | null;
+  /** The commit a failed build failed on, while the Preview is failed. */
+  failedSha: string | null;
   updatedAt: string;
 }
 

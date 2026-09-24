@@ -3,7 +3,7 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { env } from "../env.js";
 import { endSessionOnExit } from "../services/session-end.js";
-import { applyPreviewState, exchangePreviewCode, failBuildsInterruptedBy, PreviewError, previewRoutes } from "../services/previews.js";
+import { applyPreviewState, exchangePreviewCode, PreviewError, previewRoutes, settleBuildsInterruptedBy } from "../services/previews.js";
 
 // Called by the runner when a container exits, and by the preview router for its routing table and
 // its code exchange. Both reach the app over the control network with the shared runner token.
@@ -30,20 +30,29 @@ internal.post(
       error: z.string().nullish(),
       // The commit the runner cloned. Absent when the clone itself failed.
       sha: z.string().nullish(),
+      // The build this reports on, as the app named it in the request. Absent from an older runner.
+      buildId: z.string().nullish(),
     }),
   ),
   async (c) => {
-    await applyPreviewState(c.req.param("id"), c.req.valid("json"));
-    return c.json({ ok: true });
+    // A stale report is still answered 2xx: the runner would otherwise retry it for a minute.
+    const applied = await applyPreviewState(c.req.param("id"), c.req.valid("json"));
+    return c.json({ ok: true, applied });
   },
 );
 
 // A restarted runner has lost every build its previous process was running, and says when it started
-// so those Previews stop showing "building" now rather than at the stuck-build timeout.
-internal.post("/previews/interrupted", zValidator("json", z.object({ startedAt: z.string().datetime() })), async (c) => {
-  const failed = await failBuildsInterruptedBy(c.req.valid("json").startedAt);
-  return c.json({ ok: true, failed });
-});
+// so those Previews stop showing "building" now rather than at the stuck-build timeout. It also names
+// the builds it has itself accepted since, which are not lost.
+internal.post(
+  "/previews/interrupted",
+  zValidator("json", z.object({ startedAt: z.string().datetime(), accepted: z.array(z.string()).default([]) })),
+  async (c) => {
+    const { startedAt, accepted } = c.req.valid("json");
+    const settled = await settleBuildsInterruptedBy(startedAt, accepted);
+    return c.json({ ok: true, settled });
+  },
+);
 
 // Step two of the Preview sign-in redirect. The router never sees a kardboard credential; it hands
 // over the single-use code and gets back one cookie for one host.

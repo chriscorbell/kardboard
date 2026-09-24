@@ -251,10 +251,19 @@ export const previews = sqliteTable(
     containerId: text("container_id"),
     // Where the router proxies to, on the preview network: `http://kardboard-preview-<id>:<port>`.
     target: text("target"),
+    // Why the latest build did not replace what is served. On a running Preview, a rebuild that was
+    // interrupted and left the previous container serving.
     error: text("error"),
-    // The commit the runner last built, whether the build ran or failed. A rebuild keeps serving the
-    // previous container until it finishes, so while one runs this is still the commit being served.
+    // The commit being served: set only when a build reports its container running. A rebuild, and a
+    // failed one, leave the previous container up, so through both this is still what `target` serves.
     sha: text("sha"),
+    // The commit a failed build failed on, while the Preview is failed. Null when the clone itself
+    // failed, or the runner refused the build, since no commit was checked out.
+    failedSha: text("failed_sha"),
+    // The build the runner was last asked for. Its reports carry it back, and a report from any other
+    // build is stale and ignored. Null when the runner refused the latest request, so no report of it
+    // will come and the runner's build log is still an earlier build's.
+    buildId: text("build_id"),
     // Drives the seven-idle-day removal: touched whenever someone is let through to the Preview,
     // and whenever it is rebuilt.
     lastAccessAt: text("last_access_at").notNull().$defaultFn(now),

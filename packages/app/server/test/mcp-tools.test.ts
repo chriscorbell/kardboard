@@ -220,8 +220,8 @@ describe("preview_status", () => {
     assert.equal(status.url, "https://card-own.kardboard.cc");
   });
 
-  it("hands a failed build's error and the end of its log to the Session that has to fix it", async () => {
-    await preview({ status: "failed", error: "build failed: The command '/bin/sh -c pnpm build' returned a non-zero code: 1", sha: SHA_A });
+  it("hands a failed build's error, its commit, and the end of its log to the Session that has to fix it", async () => {
+    await preview({ status: "failed", error: "build failed: The command '/bin/sh -c pnpm build' returned a non-zero code: 1", sha: SHA_A, failedSha: SHA_B, buildId: "build-1" });
     const log = Array.from({ length: 100 }, (_, i) => `step ${i}`).join("\n");
     const original = runner.previewLog;
     runner.previewLog = async (id) => ({ exists: id === "pv-1", size: log.length, offset: 0, nextOffset: log.length, text: `${log}\nsrc/app.ts(3,1): error TS2304\n`, skipped: false });
@@ -230,9 +230,25 @@ describe("preview_status", () => {
       const status = json(await call(client, "preview_status"));
       assert.equal(status.status, "failed");
       assert.match(String(status.error), /non-zero code/);
+      assert.equal(status.failedSha, SHA_B);
+      assert.equal(status.builtFromSha, SHA_A, "the last build that ran, not the one that failed");
       const tail = String(status.buildLogTail).split("\n");
       assert.equal(tail.length, 60);
       assert.equal(tail.at(-1), "src/app.ts(3,1): error TS2304");
+    } finally {
+      runner.previewLog = original;
+    }
+  });
+
+  it("gives a build the runner refused no log, since the one the runner has is an earlier build's", async () => {
+    await preview({ status: "failed", error: "the runner refused the build: fetch failed", buildId: null });
+    const original = runner.previewLog;
+    runner.previewLog = async () => ({ exists: true, size: 30, offset: 0, nextOffset: 30, text: "src/app.ts(3,1): error TS2304\n", skipped: false });
+    try {
+      const { client } = await sessionOn(CARD);
+      const status = json(await call(client, "preview_status"));
+      assert.match(String(status.error), /refused/);
+      assert.equal("buildLogTail" in status, false);
     } finally {
       runner.previewLog = original;
     }

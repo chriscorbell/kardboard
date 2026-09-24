@@ -22,6 +22,8 @@ export interface StartSessionRequest {
 
 export interface StartPreviewRequest {
   previewId: string;
+  // Sent back with the build's report, so the app can tell this build's outcome from a replaced one's.
+  buildId: string;
   boardSlug: string;
   cardId: string;
   host: string;
