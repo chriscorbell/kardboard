@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Settings } from "@kardboard/shared";
+import { MAX_WALL_CLOCK_MINUTES, MIN_WALL_CLOCK_MINUTES, type Settings } from "@kardboard/shared";
 import { keys, request, useAdminSettings } from "../../lib/api";
 import { Avatar, Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { TabHeader } from "./AdminPage";
@@ -49,8 +49,8 @@ export function AgentTab() {
           <Field label="Global concurrent sessions" hint="Across all boards. Protects your own interactive use of the subscription.">
             <Input type="number" min={1} max={20} value={draft.globalMaxConcurrentSessions} onChange={(e) => setDraft({ ...draft, globalMaxConcurrentSessions: Number(e.target.value) })} />
           </Field>
-          <Field label="Session wall clock (minutes)" hint="A session that runs longer is stopped.">
-            <Input type="number" min={5} max={240} value={draft.sessionWallClockMinutes} onChange={(e) => setDraft({ ...draft, sessionWallClockMinutes: Number(e.target.value) })} />
+          <Field label="Session wall clock (minutes)" hint={`A session that runs longer is stopped. At most ${MAX_WALL_CLOCK_MINUTES}, since the session's GitHub token lasts one hour.`}>
+            <Input type="number" min={MIN_WALL_CLOCK_MINUTES} max={MAX_WALL_CLOCK_MINUTES} value={draft.sessionWallClockMinutes} onChange={(e) => setDraft({ ...draft, sessionWallClockMinutes: Number(e.target.value) })} />
           </Field>
         </div>
         <label className="flex items-start gap-2 text-[13px] text-ink-muted">

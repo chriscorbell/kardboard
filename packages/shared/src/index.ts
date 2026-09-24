@@ -409,6 +409,11 @@ export const boardMembersSchema = z.object({ userIds: z.array(z.string()) });
 // No ids means "mark everything read".
 export const markNotificationsReadSchema = z.object({ ids: z.array(z.string()).optional() });
 
+// A Session's GitHub token is minted once, at start, and lasts one hour, so a Session allowed to
+// run longer would lose the ability to push before its wall clock stopped it.
+export const MIN_WALL_CLOCK_MINUTES = 5;
+export const MAX_WALL_CLOCK_MINUTES = 55;
+
 export const settingsSchema = z.object({
   agentName: z.string().trim().min(1).max(40).optional(),
   agentAvatarUrl: z
@@ -417,7 +422,7 @@ export const settingsSchema = z.object({
     .nullable()
     .optional(),
   globalMaxConcurrentSessions: z.number().int().min(1).max(20).optional(),
-  sessionWallClockMinutes: z.number().int().min(5).max(240).optional(),
+  sessionWallClockMinutes: z.number().int().min(MIN_WALL_CLOCK_MINUTES).max(MAX_WALL_CLOCK_MINUTES).optional(),
   providerFallback: z.boolean().optional(),
 });
 export type Settings = {
