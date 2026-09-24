@@ -357,7 +357,7 @@ function buildServer(session: SessionRow): McpServer {
   server.registerTool(
     "finish",
     {
-      description: "End this session with a one-sentence outcome summary. Always call it last, including when the trigger batch turned out to be noise: a session that exits without calling it or commenting is recorded as failed, and its card's people are told it stopped.",
+      description: "End this session with a one-sentence outcome summary. Only the main agent calls it, never a subagent: it ends the whole session, subagents included. Always call it last, including when the trigger batch turned out to be noise: a session that exits without calling it or commenting is recorded as failed, and its card's people are told it stopped.",
       inputSchema: { summary: z.string().min(1).max(500), outcome: z.enum(["succeeded", "failed"]).default("succeeded") },
     },
     async ({ summary, outcome }) => {
