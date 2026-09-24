@@ -18,12 +18,12 @@ export type LimitSnapshot = Record<Provider, UsageLimit | null>;
 export const NO_LIMITS: LimitSnapshot = { claude: null, codex: null };
 
 const limitSchema = z.object({ at: z.string(), until: z.string().nullable() }).nullable();
+const snapshotSchema = z.object({ claude: limitSchema, codex: limitSchema });
+// Everything past the two Provider keys arrived with the credential and refusal reporting, and is
+// read on its own: provider fallback depends on the keys, and nothing wrong with the rest may cost
+// it them. A proxy from before sends only the keys, which reads here as "nothing seen".
 const authFailureSchema = z.object({ at: z.string(), status: z.number().nullable(), reason: z.string() }).nullable();
-// Everything past the two Provider keys arrived with the credential and refusal reporting. A proxy
-// from before that sends only the keys, which reads here as "nothing seen".
-const snapshotSchema = z.object({
-  claude: limitSchema,
-  codex: limitSchema,
+const extrasSchema = z.object({
   authFailures: z.object({ claude: authFailureSchema, codex: authFailureSchema }).optional(),
   refusals: z
     .object({
@@ -59,23 +59,27 @@ export async function readEgressStatus(now = new Date()): Promise<EgressStatus> 
       console.warn(`[limits] egress answered ${res.status}; treating provider usage as unknown`);
       return unknownStatus("unreachable", checkedAt);
     }
-    const parsed = snapshotSchema.safeParse(await res.json());
+    const body: unknown = await res.json();
+    const parsed = snapshotSchema.safeParse(body);
     if (!parsed.success) {
       console.warn("[limits] egress sent something unexpected; treating provider usage as unknown");
       return unknownStatus("unreachable", checkedAt);
     }
-    const data = parsed.data;
+    const limits = parsed.data;
+    const extrasParsed = extrasSchema.safeParse(body);
+    if (!extrasParsed.success) console.warn("[limits] egress sent an unexpected credential or refusal report; showing usage limits only");
+    const extras = extrasParsed.success ? extrasParsed.data : {};
     return {
       egress: "reachable",
       checkedAt,
-      limits: { claude: data.claude, codex: data.codex },
+      limits,
       providers: PROVIDERS.map((provider) => ({
         provider,
-        credentialLoaded: data.credentials?.[provider] ?? null,
-        limit: data[provider],
-        authFailure: data.authFailures?.[provider] ?? null,
+        credentialLoaded: extras.credentials?.[provider] ?? null,
+        limit: limits[provider],
+        authFailure: extras.authFailures?.[provider] ?? null,
       })),
-      refusals: data.refusals ?? { count: 0, last: null },
+      refusals: extras.refusals ?? { count: 0, last: null },
     };
   } catch (err) {
     console.warn("[limits] could not read provider limits from egress", (err as Error).message);

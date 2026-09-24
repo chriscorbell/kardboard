@@ -88,6 +88,24 @@ describe("alertAdmin", () => {
     assert.equal(row?.value, NOW.toISOString());
   });
 
+  it("gives the slot back when the emails could not be queued, so the next occurrence tries again", async () => {
+    const insert = db.insert.bind(db);
+    let failing = true;
+    // Queueing an email is an insert into outbound_emails; fail that one, leave the claim alone.
+    (db as { insert: unknown }).insert = ((table: unknown) => {
+      if (failing && table === schema.outboundEmails) throw new Error("disk full");
+      return insert(table as typeof schema.settings);
+    }) as unknown;
+    try {
+      await assert.rejects(alertAdmin({ key: "test.retry", subject: "A", body: "a" }, NOW), /disk full/);
+      assert.equal(await db.select().from(schema.settings).where(eq(schema.settings.key, "alert:test.retry")).get(), undefined);
+      failing = false;
+      assert.equal(await alertAdmin({ key: "test.retry", subject: "A", body: "a" }, later(1_000)), true);
+    } finally {
+      (db as { insert: unknown }).insert = insert;
+    }
+  });
+
   it("sends once when two callers race on one key", async () => {
     const results = await Promise.all([1, 2, 3].map(() => alertAdmin({ key: "test.race", subject: "A", body: "a" }, NOW)));
     assert.deepEqual(results.filter(Boolean).length, 1);
@@ -178,6 +196,13 @@ describe("what the egress proxy saw", () => {
         [null, null],
       ],
     );
+
+    // A report fallback does not need, gone wrong, leaves the limits fallback does need.
+    limitsBody = { claude: { at, until: null }, codex: null, authFailures: "garbled", refusals: { count: "many" } };
+    const garbled = await readEgressStatus();
+    assert.equal(garbled.egress, "reachable");
+    assert.deepEqual(garbled.limits, { claude: { at, until: null }, codex: null });
+    assert.equal(garbled.refusals.count, 0);
 
     limitsStatus = 500;
     assert.equal((await readEgressStatus()).egress, "unreachable");

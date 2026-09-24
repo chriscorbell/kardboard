@@ -239,16 +239,19 @@ describe("the Admin's Sessions list", () => {
     let cursor: string | null = null;
     let pages = 0;
     do {
-      const next: AdminSessionsPage = await page(cursor ? `?before=${cursor}` : "");
+      const next: AdminSessionsPage = await page(cursor ? `?before=${encodeURIComponent(cursor)}` : "");
       pages++;
       seen.push(...next.sessions.map((s) => s.id));
       cursor = next.nextCursor;
+      // The Session the cursor was taken from goes away before the next page is asked for.
+      if (cursor) await db.delete(schema.sessions).where(eq(schema.sessions.id, seen[seen.length - 1]!));
     } while (cursor);
     assert.equal(pages, 3);
     assert.equal(seen.length, 120);
     assert.equal(new Set(seen).size, 120);
     assert.equal(seen[0], "s-119");
     assert.equal(seen[119], "s-000");
+    assert.deepEqual(await page("?before=not-a-cursor"), { sessions: [], nextCursor: null });
   });
 
   it("finds one Session by id for a link to it, and 404s an unknown one", async () => {

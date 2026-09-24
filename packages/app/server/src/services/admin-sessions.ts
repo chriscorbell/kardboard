@@ -11,9 +11,20 @@ export interface SessionFilters {
   boardId?: string;
   status?: SessionStatus | "active";
   kind?: SessionKind;
-  /** The id of the last Session on the previous page. */
+  /** The previous page's `nextCursor`: where the last Session on it sat in the order. */
   before?: string;
   limit?: number;
+}
+
+// The cursor is the last Session's place in the order, its creation time and id, rather than its id
+// alone: a Session removed between two pages would otherwise leave nothing to find and restart the
+// list from the top.
+const cursorOf = (row: { createdAt: string; id: string }) => `${row.createdAt}|${row.id}`;
+
+function parseCursor(cursor: string): { createdAt: string; id: string } | null {
+  const bar = cursor.lastIndexOf("|");
+  if (bar <= 0 || bar === cursor.length - 1) return null;
+  return { createdAt: cursor.slice(0, bar), id: cursor.slice(bar + 1) };
 }
 
 /** Reads filters from query parameters, dropping any value that is not one the list knows. */
@@ -42,9 +53,11 @@ export async function listAdminSessions(filters: SessionFilters = {}): Promise<A
   if (filters.kind) where.push(eq(s.kind, filters.kind));
   if (filters.before) {
     // Newest first by creation, and by id within the same instant, so the cursor is exact even when
-    // two Sessions were created in the same millisecond. An unknown cursor starts from the top.
-    const cursor = await db.select({ id: s.id, createdAt: s.createdAt }).from(s).where(eq(s.id, filters.before)).get();
-    if (cursor) where.push(or(lt(s.createdAt, cursor.createdAt), and(eq(s.createdAt, cursor.createdAt), lt(s.id, cursor.id)))!);
+    // two Sessions were created in the same millisecond. A cursor that is not one answers nothing
+    // rather than the first page again, which a "Load more" would append as duplicates.
+    const cursor = parseCursor(filters.before);
+    if (!cursor) return { sessions: [], nextCursor: null };
+    where.push(or(lt(s.createdAt, cursor.createdAt), and(eq(s.createdAt, cursor.createdAt), lt(s.id, cursor.id)))!);
   }
   const rows = await db
     .select({ session: s, cardTitle: schema.cards.title })
@@ -54,7 +67,7 @@ export async function listAdminSessions(filters: SessionFilters = {}): Promise<A
     .orderBy(desc(s.createdAt), desc(s.id))
     .limit(limit + 1);
   const page = rows.slice(0, limit).map((r) => toAdmin(r.session, r.cardTitle));
-  return { sessions: page, nextCursor: rows.length > limit ? page[page.length - 1]!.id : null };
+  return { sessions: page, nextCursor: rows.length > limit ? cursorOf(page[page.length - 1]!) : null };
 }
 
 export async function getAdminSession(id: string): Promise<AdminSessionSummary | null> {

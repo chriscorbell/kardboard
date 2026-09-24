@@ -41,20 +41,31 @@ export async function alertAdmin(alert: AdminAlert, now = new Date()): Promise<b
   // Logged whether or not it is sent, so the kept app log has every occurrence.
   console.warn(`[alert] ${alert.key}: ${alert.subject}`);
   if (!(await claim(alert.key, now))) return false;
-  const admins = await db
-    .select({ id: schema.users.id })
-    .from(schema.users)
-    .where(and(eq(schema.users.role, "admin"), eq(schema.users.status, "active")));
-  for (const admin of admins) {
-    await queueEmail({
-      toUserId: admin.id,
-      subject: `kardboard: ${alert.subject}`,
-      heading: alert.subject,
-      body: alert.body,
-      linkUrl: `${env.publicUrl}${alert.path ?? "/admin"}`,
-      linkLabel: "Open the admin panel",
-      footer: "You are receiving this because you are the kardboard Admin. The same alert is sent at most once every six hours while the problem lasts.",
-    });
+  try {
+    const admins = await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(and(eq(schema.users.role, "admin"), eq(schema.users.status, "active")));
+    for (const admin of admins) {
+      await queueEmail({
+        toUserId: admin.id,
+        subject: `kardboard: ${alert.subject}`,
+        heading: alert.subject,
+        body: alert.body,
+        linkUrl: `${env.publicUrl}${alert.path ?? "/admin"}`,
+        linkLabel: "Open the admin panel",
+        footer: "You are receiving this because you are the kardboard Admin. The same alert is sent at most once every six hours while the problem lasts.",
+      });
+    }
+  } catch (err) {
+    // Nothing was queued, or not for everyone: give the slot back so the next occurrence tries
+    // again, rather than staying quiet for six hours about an alert nobody received.
+    await release(alert.key, now).catch(() => undefined);
+    throw err;
   }
   return true;
+}
+
+async function release(key: string, now: Date): Promise<void> {
+  await db.delete(schema.settings).where(and(eq(schema.settings.key, keyFor(key)), eq(schema.settings.value, now.toISOString())));
 }
