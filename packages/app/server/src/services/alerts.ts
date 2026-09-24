@@ -46,8 +46,17 @@ export async function alertAdmin(alert: AdminAlert, now = new Date()): Promise<b
       .select({ id: schema.users.id })
       .from(schema.users)
       .where(and(eq(schema.users.role, "admin"), eq(schema.users.status, "active")));
+    // Delivery happens after this returns. If it reaches no Admin, the slot is given back as it is
+    // for an email that could not even be queued, so the next occurrence tries again.
+    let pending = admins.length;
+    let delivered = 0;
+    const settled = (ok: boolean) => {
+      if (ok) delivered++;
+      if (--pending === 0 && delivered === 0) void release(alert.key, now).catch(() => undefined);
+    };
     for (const admin of admins) {
       await queueEmail({
+        onSettled: settled,
         toUserId: admin.id,
         subject: `kardboard: ${alert.subject}`,
         heading: alert.subject,

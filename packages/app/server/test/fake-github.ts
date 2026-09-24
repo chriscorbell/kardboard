@@ -4,13 +4,15 @@ import { generateKeyPairSync } from "node:crypto";
 // installation lookup, the token mint, pull request reads, the merge, the branch delete, and the
 // check runs and commit statuses on a commit. Every other host goes to the real `fetch`.
 //
-// `githubAppEnv` must run before the app's modules are imported, since the merge App is read from
-// the environment at import time. The App's key is real because the app signs its JWT with it.
+// `githubAppEnv` must run before the app's modules are imported, since the Apps are read from the
+// environment at import time. The App's key is real because the app signs its JWT with it.
 
-export function githubAppEnv(): void {
+export function githubAppEnv(apps: ("MERGE" | "SESSIONS")[] = ["MERGE"]): void {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-  process.env.GITHUB_MERGE_APP_ID = "1";
-  process.env.GITHUB_MERGE_APP_PRIVATE_KEY_B64 = Buffer.from(privateKey).toString("base64");
+  for (const app of apps) {
+    process.env[`GITHUB_${app}_APP_ID`] = "1";
+    process.env[`GITHUB_${app}_APP_PRIVATE_KEY_B64`] = Buffer.from(privateKey).toString("base64");
+  }
 }
 
 export interface FakePull {
@@ -37,6 +39,8 @@ export interface FakeStatus {
   state: string;
 }
 
+export type FakeRefusal = number | { status: number; headers: Record<string, string> };
+
 export interface FakeGitHub {
   pulls: Map<number, FakePull>;
   merges: { number: number; sha: string }[];
@@ -44,9 +48,12 @@ export interface FakeGitHub {
   refusal: { status: number; message: string } | null;
   /** The next merges are answered these ways, one each, before merging normally again. */
   mergeReplies: { status: number; message: string; then?: (p: FakePull) => void }[];
-  /** Check runs and commit statuses by commit; a number is the status GitHub answers instead. */
-  checkRuns: Map<string, FakeCheckRun[] | number>;
-  statuses: Map<string, FakeStatus[] | number>;
+  /**
+   * Check runs and commit statuses by commit. A number is the status GitHub answers instead, and a
+   * refusal can carry headers too, as a rate limit does.
+   */
+  checkRuns: Map<string, FakeCheckRun[] | FakeRefusal>;
+  statuses: Map<string, FakeStatus[] | FakeRefusal>;
   requests: string[];
   reset(): void;
   restore(): void;
@@ -97,7 +104,8 @@ export function installFakeGitHub(repo: string): FakeGitHub {
     if (url.hostname !== "api.github.com") return realFetch(input, init);
     const method = init?.method ?? "GET";
     github.requests.push(`${method} ${url.pathname}`);
-    const reply = (status: number, body: unknown) => new Response(body === null ? null : JSON.stringify(body), { status });
+    const reply = (status: number, body: unknown, headers?: Record<string, string>) => new Response(body === null ? null : JSON.stringify(body), { status, headers });
+    const refuse = (r: FakeRefusal) => (typeof r === "number" ? reply(r, { message: "Resource not accessible by integration" }) : reply(r.status, { message: "You have exceeded a secondary rate limit" }, r.headers));
     if (url.pathname === `/repos/${repo}/installation`) return reply(200, { id: 42 });
     if (url.pathname === "/app/installations/42/access_tokens") return reply(201, { token: "ghs_test", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
     if (url.pathname === `/repos/${repo}/pulls` && method === "GET") {
@@ -132,13 +140,13 @@ export function installFakeGitHub(repo: string): FakeGitHub {
     m = new RegExp(`^/repos/${repo}/commits/([0-9a-f]+)/check-runs$`).exec(url.pathname);
     if (m && method === "GET") {
       const runs = github.checkRuns.get(m[1]!) ?? [];
-      if (typeof runs === "number") return reply(runs, { message: "Resource not accessible by integration" });
+      if (!Array.isArray(runs)) return refuse(runs);
       return reply(200, { total_count: runs.length, check_runs: runs.map((r, i) => ({ id: i + 1, ...r, html_url: `https://github.com/${repo}/runs/${i + 1}` })) });
     }
     m = new RegExp(`^/repos/${repo}/commits/([0-9a-f]+)/status$`).exec(url.pathname);
     if (m && method === "GET") {
       const statuses = github.statuses.get(m[1]!) ?? [];
-      if (typeof statuses === "number") return reply(statuses, { message: "Resource not accessible by integration" });
+      if (!Array.isArray(statuses)) return refuse(statuses);
       const state = statuses.some((s) => s.state === "failure" || s.state === "error") ? "failure" : statuses.some((s) => s.state === "pending") || statuses.length === 0 ? "pending" : "success";
       return reply(200, { state, total_count: statuses.length, statuses: statuses.map((s) => ({ ...s, target_url: `https://ci.example.com/${s.context}` })) });
     }

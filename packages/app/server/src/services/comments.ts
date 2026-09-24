@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { extractMentionHandles, type Attachment, type Comment, type User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
@@ -10,7 +10,7 @@ import { recordEvent, type Actor } from "./events.js";
 import { enqueueTrigger } from "./orchestrator.js";
 import { getCard } from "./cards.js";
 import { findUsersByHandles } from "./users.js";
-import { canBeNotified, forgetMentionNotifications, notifyMentions } from "./notifications.js";
+import { canBeNotified, forgetCommentTraces, notifyMentions } from "./notifications.js";
 
 function toAttachment(row: typeof schema.attachments.$inferSelect): Attachment {
   return {
@@ -95,7 +95,9 @@ export async function createComment(input: {
     body: input.body,
   });
   let comment = (await getComment(id))!;
-  const newlyMentioned = await syncMentions(comment, card.boardId, input.actor);
+  // kardboard's own notices quote what went wrong in the Agent's words, which can name people; the
+  // Agent already reached them, and the notice's own notification goes to who it concerns.
+  const newlyMentioned = input.actor.kind === "system" ? [] : await syncMentions(comment, card.boardId, input.actor);
   comment = (await getComment(id))!;
   await recordEvent({
     boardId: card.boardId,
@@ -124,7 +126,9 @@ export async function updateComment(id: string, input: { body: string; actor: Ac
     .where(eq(schema.comments.id, id));
   let comment = (await getComment(id))!;
   const card = (await getCard(comment.cardId))!;
-  const newlyMentioned = await syncMentions(comment, card.boardId, input.actor);
+  // kardboard's own notices quote what went wrong in the Agent's words, which can name people; the
+  // Agent already reached them, and the notice's own notification goes to who it concerns.
+  const newlyMentioned = input.actor.kind === "system" ? [] : await syncMentions(comment, card.boardId, input.actor);
   comment = (await getComment(id))!;
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "comment.edited", payload: { commentId: id } });
   publish(card.boardId, { type: "comment.upserted", comment });
@@ -140,6 +144,16 @@ export function uploadPath(sha256: string): string {
   return path.join(env.dataDir, "uploads", sha256.slice(0, 2), sha256);
 }
 
+// A file deleted for good, a pasted secret say, also leaves the off-disk copy of the uploads. In the
+// background, since the copy is often a network share; what the share's own snapshots already hold
+// is beyond the app's reach.
+function forgetBackupCopy(sha256: string): void {
+  if (!env.backupCopyDir) return;
+  void fs.promises
+    .rm(path.join(env.backupCopyDir, "uploads", sha256.slice(0, 2), sha256), { force: true })
+    .catch((err: Error) => console.error(`[backup] could not remove a deleted attachment from ${env.backupCopyDir}: ${err.message}`));
+}
+
 /**
  * Removes a Comment for good: its body, every earlier revision of it, its Mentions, its
  * Attachments, and each uploaded file no other Attachment still points at. A pasted secret is the
@@ -147,6 +161,20 @@ export function uploadPath(sha256: string): string {
  * cannot be recalled. The event log records that the Comment was deleted and whose it was, never
  * what it said. Not a Trigger: taking words back is not a request for work.
  */
+// Uploads are stored once per content hash, so writing a file for a new Attachment and removing
+// the file once the last Attachment using it is deleted must not interleave, or the new one would
+// point at nothing. One process owns the data directory (ADR 0004); this chain orders the two per hash.
+const fileLocks = new Map<string, Promise<unknown>>();
+export function underFileLock<T>(sha256: string, fn: () => Promise<T>): Promise<T> {
+  const run = (fileLocks.get(sha256) ?? Promise.resolve()).then(fn, fn);
+  const settled = run.catch(() => undefined);
+  fileLocks.set(sha256, settled);
+  void settled.then(() => {
+    if (fileLocks.get(sha256) === settled) fileLocks.delete(sha256);
+  });
+  return run;
+}
+
 export async function deleteComment(id: string, actor: Actor): Promise<void> {
   const current = await getComment(id);
   if (!current) throw new Error("comment not found");
@@ -157,10 +185,19 @@ export async function deleteComment(id: string, actor: Actor): Promise<void> {
   await db.delete(schema.attachments).where(eq(schema.attachments.commentId, id));
   await db.delete(schema.mentions).where(eq(schema.mentions.commentId, id));
   await db.delete(schema.comments).where(eq(schema.comments.id, id));
-  await forgetMentionNotifications(card.id, [current.body, ...revisions.map((r) => r.body)]);
+  await forgetCommentTraces(id, card.id, [current.body, ...revisions.map((r) => r.body)]);
+  // A Session not yet started for this Comment has nothing left to read: its Trigger goes with it.
+  await db
+    .delete(schema.triggers)
+    .where(and(eq(schema.triggers.cardId, card.id), eq(schema.triggers.status, "pending"), sql`json_extract(${schema.triggers.payload}, '$.commentId') = ${id}`));
   for (const sha256 of hashes) {
-    const still = await db.select({ id: schema.attachments.id }).from(schema.attachments).where(eq(schema.attachments.sha256, sha256)).limit(1).get();
-    if (!still) fs.rmSync(uploadPath(sha256), { force: true });
+    await underFileLock(sha256, async () => {
+      const still = await db.select({ id: schema.attachments.id }).from(schema.attachments).where(eq(schema.attachments.sha256, sha256)).limit(1).get();
+      if (!still) {
+        fs.rmSync(uploadPath(sha256), { force: true });
+        forgetBackupCopy(sha256);
+      }
+    });
   }
   await recordEvent({
     boardId: card.boardId,

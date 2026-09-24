@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, isNull, lt, notInArray, or } from "drizzle-orm";
 import type { User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
@@ -45,28 +45,34 @@ export async function startPreview(cardId: string): Promise<PreviewRow> {
   if (!repo) throw new PreviewError("the board has no GitHub repository URL");
   if (runner.mode !== "http") throw new PreviewError("no runner is configured, so nothing can host a preview");
 
+  // A one-hour installation token, minted here rather than taken from the Session, so the clone
+  // credential is the app's and expires on its own. Minted before the row changes, so a GitHub
+  // failure leaves the Preview as it was rather than building with nothing to build it.
+  const { token } = await mintInstallationToken("sessions", repo.owner, repo.repo);
+
   const host = previewHostFor(card.id);
   const existing = await db.select().from(schema.previews).where(eq(schema.previews.cardId, card.id)).get();
   const id = existing?.id ?? newId();
+  // Every request is a build of its own. The runner reports with this id, and only the build the row
+  // names is believed: an earlier build finishing late is not what the Session is waiting on.
+  const buildId = newId();
   const nowIso = new Date().toISOString();
   if (existing) {
     // A rebuild is fresh work to review, so the idle window starts again; otherwise a Preview
     // nobody had opened for a week would be reaped within the hour of being rebuilt. The target and
-    // the built commit stay: the previous container keeps serving until the new one replaces it.
+    // the served commit stay: the previous container keeps serving until the new one replaces it.
     await db
       .update(schema.previews)
-      .set({ host, status: "building", branch: card.branch, error: null, lastAccessAt: nowIso, updatedAt: nowIso })
+      .set({ host, status: "building", branch: card.branch, error: null, failedSha: null, buildId, lastAccessAt: nowIso, updatedAt: nowIso })
       .where(eq(schema.previews.id, id));
   } else {
-    await db.insert(schema.previews).values({ id, boardId: board.id, cardId: card.id, host, status: "building", branch: card.branch, port: 3000 });
+    await db.insert(schema.previews).values({ id, boardId: board.id, cardId: card.id, host, status: "building", branch: card.branch, port: 3000, buildId });
   }
 
-  // A one-hour installation token, minted here rather than taken from the Session, so the clone
-  // credential is the app's and expires on its own.
-  const { token } = await mintInstallationToken("sessions", repo.owner, repo.repo);
   try {
     await runner.startPreview({
       previewId: id,
+      buildId,
       boardSlug: board.slug,
       cardId: card.id,
       host,
@@ -78,34 +84,69 @@ export async function startPreview(cardId: string): Promise<PreviewRow> {
       env: { KARDBOARD_PREVIEW_HOST: host, KARDBOARD_PREVIEW_URL: previewUrlFor(host) },
     });
   } catch (err) {
-    await applyPreviewState(id, { status: "failed", error: `the runner refused the build: ${(err as Error).message}` });
-    throw new PreviewError(`the runner refused the build: ${(err as Error).message}`);
+    const error = `the runner refused the build: ${(err as Error).message}`;
+    // The runner never had this build, so no report of it will come. An earlier build it was still
+    // running is what the Preview waits on again, so its report is believed when it comes. With none,
+    // the build log the runner holds is an earlier build's, and clearing the build id says so. Unless
+    // a newer request already replaced this one.
+    const stillBuilding = existing?.status === "building" && existing.buildId !== null;
+    const refused = await db
+      .update(schema.previews)
+      .set(
+        stillBuilding
+          ? { status: "building", error: null, failedSha: existing.failedSha, buildId: existing.buildId, updatedAt: new Date().toISOString() }
+          : { status: "failed", error, failedSha: null, buildId: null, updatedAt: new Date().toISOString() },
+      )
+      .where(and(eq(schema.previews.id, id), eq(schema.previews.buildId, buildId)))
+      .returning({ id: schema.previews.id });
+    if (refused.length) await publishCard(card.id);
+    throw new PreviewError(error);
   }
   return (await db.select().from(schema.previews).where(eq(schema.previews.id, id)).get())!;
 }
 
-// Reported by the runner when the build finishes, one way or the other, with the commit it built.
-// A failed rebuild leaves the previous container running, so a failure keeps the last target: the
-// router shows the failure, but a later rebuild can serve the old container while it runs.
-export async function applyPreviewState(
-  previewId: string,
-  state: { status: "running" | "failed"; containerId?: string | null; target?: string | null; error?: string | null; sha?: string | null },
-): Promise<void> {
+export interface PreviewReport {
+  status: "running" | "failed";
+  containerId?: string | null;
+  target?: string | null;
+  error?: string | null;
+  // The commit the runner cloned: what now serves on a running report, what failed on a failed one.
+  sha?: string | null;
+  // The build this reports on. A runner from before build ids sends none, and is believed as before.
+  buildId?: string | null;
+}
+
+// Reported by the runner when a build finishes, one way or the other. A report from a build the row
+// has moved past is dropped: a replaced build can finish late, since the runner retries its report
+// for a minute, and a failure from it would put the error page over a working Preview and send the
+// Session to fix a good build, while a success would stop the Session waiting on the one it asked for.
+//
+// A failed rebuild leaves the previous container running, so a failure keeps the target and the
+// served commit: the router shows the failure, but a later rebuild can serve the old container while
+// it runs. The commit that failed is kept apart from the one being served.
+export async function applyPreviewState(previewId: string, state: PreviewReport): Promise<boolean> {
   const row = await db.select().from(schema.previews).where(eq(schema.previews.id, previewId)).get();
-  if (!row) return;
+  if (!row) return false;
+  const fromBuild = state.buildId ?? null;
+  if (fromBuild !== null && fromBuild !== row.buildId) return false;
   const failed = state.status === "failed";
-  await db
+  const written = await db
     .update(schema.previews)
     .set({
       status: state.status,
       containerId: state.containerId ?? (failed ? row.containerId : null),
       target: state.target ?? (failed ? row.target : null),
       error: state.error ?? null,
-      sha: state.sha ?? (failed ? row.sha : null),
+      sha: failed ? row.sha : (state.sha ?? null),
+      failedSha: failed ? (state.sha ?? null) : null,
       updatedAt: new Date().toISOString(),
     })
-    .where(eq(schema.previews.id, previewId));
+    // Checked again as it writes, so a request made between the read and here is not overwritten.
+    .where(and(eq(schema.previews.id, previewId), fromBuild === null ? undefined : eq(schema.previews.buildId, fromBuild)))
+    .returning({ id: schema.previews.id });
+  if (written.length === 0) return false;
   await publishCard(row.cardId);
+  return true;
 }
 
 // The Card carries its Preview's status, so a change here is a change to the Card on every open
@@ -117,6 +158,7 @@ async function publishCard(cardId: string): Promise<void> {
 }
 
 export const INTERRUPTED_BUILD = "The build was interrupted before it finished, so there is nothing new to show. Request the preview again.";
+export const INTERRUPTED_REBUILD = "The rebuild was interrupted before it finished, so the preview still shows the previous build. Request the preview again.";
 
 // A build lives only in the runner's memory, and every deploy restarts the runner, so a build in
 // flight then is lost without a report. The runner says so when it comes back (below); this is the
@@ -124,25 +166,46 @@ export const INTERRUPTED_BUILD = "The build was interrupted before it finished, 
 // its report can spend retrying and some slack, a Preview still marked building is not building.
 const BUILD_SLACK_MS = 5 * 60_000;
 
-async function failBuildsRequestedBefore(cutoffIso: string): Promise<number> {
-  const stuck = await db
-    .update(schema.previews)
-    .set({ status: "failed", error: INTERRUPTED_BUILD, updatedAt: new Date().toISOString() })
-    .where(and(eq(schema.previews.status, "building"), lt(schema.previews.updatedAt, cutoffIso)))
-    .returning({ cardId: schema.previews.cardId });
-  for (const row of stuck) await publishCard(row.cardId);
-  return stuck.length;
+// A lost rebuild takes nothing down: the previous container is not the runner's process, and it is
+// still what the router serves, so the Preview goes back to running with a note of what was lost. A
+// lost first build has nothing to serve, and fails. Builds named in `spare` are alive in the runner.
+async function settleBuildsRequestedBefore(cutoffIso: string, spare: string[] = []): Promise<number> {
+  const lost = await db
+    .select()
+    .from(schema.previews)
+    .where(
+      and(
+        eq(schema.previews.status, "building"),
+        lt(schema.previews.updatedAt, cutoffIso),
+        spare.length ? or(isNull(schema.previews.buildId), notInArray(schema.previews.buildId, spare)) : undefined,
+      ),
+    );
+  let settled = 0;
+  for (const row of lost) {
+    const serving = row.target !== null;
+    const written = await db
+      .update(schema.previews)
+      .set({ status: serving ? "running" : "failed", error: serving ? INTERRUPTED_REBUILD : INTERRUPTED_BUILD, updatedAt: new Date().toISOString() })
+      // Only the build that was found lost: a request or report since then is newer news.
+      .where(and(eq(schema.previews.id, row.id), eq(schema.previews.status, "building"), row.buildId === null ? isNull(schema.previews.buildId) : eq(schema.previews.buildId, row.buildId)))
+      .returning({ id: schema.previews.id });
+    if (written.length === 0) continue;
+    settled++;
+    await publishCard(row.cardId);
+  }
+  return settled;
 }
 
-export function failStuckBuilds(nowMs = Date.now()): Promise<number> {
-  return failBuildsRequestedBefore(new Date(nowMs - env.previewBuildTimeoutMinutes * 60_000 - BUILD_SLACK_MS).toISOString());
+export function settleStuckBuilds(nowMs = Date.now()): Promise<number> {
+  return settleBuildsRequestedBefore(new Date(nowMs - env.previewBuildTimeoutMinutes * 60_000 - BUILD_SLACK_MS).toISOString());
 }
 
 // The runner reports the moment it started, and every build requested before then went to the
-// process that is gone. A build requested in the instant the new runner came up can be caught too;
-// its own report still arrives when it finishes and puts the row right.
-export function failBuildsInterruptedBy(runnerStartedAt: string): Promise<number> {
-  return failBuildsRequestedBefore(runnerStartedAt);
+// process that is gone, except the ones it names: a Session can ask for a Preview in the moment the
+// new runner comes up, so the request reaches the new process while the row predates it. A build
+// that reaches it after this report arrived is caught anyway, and its own report puts the row right.
+export function settleBuildsInterruptedBy(runnerStartedAt: string, accepted: string[] = []): Promise<number> {
+  return settleBuildsRequestedBefore(runnerStartedAt, accepted);
 }
 
 export async function getPreviewForCard(cardId: string): Promise<PreviewRow | undefined> {
@@ -289,8 +352,8 @@ export function startPreviewReaper(): void {
   setTimeout(tick, 30_000).unref?.();
   // Every few minutes rather than hourly, and once now: a Session may be waiting on the build.
   const unstick = () =>
-    void failStuckBuilds()
-      .then((n) => n && console.log(`[preview] marked ${n} lost build(s) failed`))
+    void settleStuckBuilds()
+      .then((n) => n && console.log(`[preview] settled ${n} lost build(s)`))
       .catch((err) => console.error("[preview] stuck build check failed", err));
   unstick();
   setInterval(unstick, 5 * 60_000).unref?.();

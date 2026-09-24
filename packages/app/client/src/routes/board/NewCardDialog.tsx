@@ -9,6 +9,7 @@ import { postComment, UploadFailed, type PostProgress } from "../../lib/commentP
 import { filesFromPaste, useFileDrop } from "../../lib/fileInput";
 import { partitionBySize, tooLargeMessage } from "../../lib/files";
 import { useCoarsePointer } from "../../lib/pointer";
+import { toast } from "../../lib/toast";
 import { attachmentOnlyBody, FileChips } from "./Composer";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
@@ -43,6 +44,8 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slu
   useEffect(() => {
     if (open) {
       session.current += 1;
+      // An upload left running by closing the dialog must not hold up the next card.
+      submitting.current = false;
       setTitle("");
       setDescription("");
       setPriority("none");
@@ -92,8 +95,12 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slu
       setUploading(false);
       finish(state.card, at);
     } catch (err) {
-      if (session.current !== at) return;
-      const which = err instanceof UploadFailed ? `${(err.file as File).name} did not upload.` : "The files did not upload.";
+      const which = err instanceof UploadFailed ? `${(err.file as File).name} did not upload.` : "the files did not upload.";
+      // The dialog was closed while this ran, so nothing on screen would say so.
+      if (session.current !== at) {
+        toast(`"${state.card.title}" was created, but ${which} Open the card to attach it again.`);
+        return;
+      }
       setUpload((u) => u && { ...u, progress, error: `The card is created, but ${which} ${(err as Error).message}` });
       setUploading(false);
     }

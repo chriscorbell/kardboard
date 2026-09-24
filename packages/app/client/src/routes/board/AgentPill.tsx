@@ -53,6 +53,11 @@ export function AgentPill({ slug, board, agent, working, isAdmin }: { slug: stri
           <span className="hidden sm:inline">{board.paused ? "Resume" : "Pause"}</span>
         </Button>
       ) : null}
+      {setPaused.error ? (
+        <span role="alert" className="sr-only">
+          {board.paused ? "Could not resume" : "Could not pause"}: {setPaused.error.message}
+        </span>
+      ) : null}
     </>
   );
 }

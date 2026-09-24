@@ -5,6 +5,9 @@ import { newId } from "../ids.js";
 export interface Actor {
   kind: ActorKind;
   id: string | null;
+  // The Session acting as the Agent. Every Session shares the Agent's identity, so this is what
+  // tells them apart on the record: which Session created a Card, say, and may therefore edit it.
+  sessionId?: string;
 }
 
 export const SYSTEM_ACTOR: Actor = { kind: "system", id: null };
@@ -23,6 +26,7 @@ export async function recordEvent(input: {
     actorKind: input.actor.kind,
     actorId: input.actor.id,
     type: input.type,
-    payload: input.payload ?? {},
+    // A payload that names a Session of its own keeps it.
+    payload: { ...(input.actor.sessionId ? { sessionId: input.actor.sessionId } : {}), ...(input.payload ?? {}) },
   });
 }

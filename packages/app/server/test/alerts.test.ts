@@ -163,6 +163,13 @@ describe("what the egress proxy saw", () => {
     assert.match(alerts[1]!.body, /3 refused/);
   });
 
+  it("quotes a refused path as code, so a Session cannot put a link in the Admin's email", () => {
+    const [alert] = egressAlerts(reachable({ last: { at: NOW.toISOString(), provider: "claude", method: "GET", path: "/v1/[Your token was revoked, sign in again](https://evil.example/login)" } }), later(60_000));
+    assert.ok(alert);
+    assert.doesNotMatch(alert.body, /\]\(https/);
+    assert.match(alert.body, /`GET \/v1\/Your token was revoked, sign in againhttps:\/\/evil.example\/login`/);
+  });
+
   it("stays quiet about events older than two polls, and about a proxy it could not read", () => {
     const old = new Date(NOW.getTime() - EGRESS_RECENT_MS - 1_000).toISOString();
     assert.deepEqual(egressAlerts(reachable({ authFailure: { at: old, status: 401, reason: "x" }, last: { at: old, provider: "codex", method: "GET", path: "/wham" } }), NOW), []);

@@ -227,6 +227,91 @@ describe("a session that stops short", () => {
   });
 });
 
+describe("a start that keeps failing", () => {
+  it("sets the request aside after three rounds and tells the card's people", async () => {
+    fake.failStarts = 99;
+    const card = await makeCard();
+    const longAgo = new Date(Date.now() - 30 * 60_000).toISOString();
+    for (const id of ["round-1", "round-2"]) {
+      await db.insert(schema.sessions).values({ id, boardId: BOARD, cardId: card, provider: "claude", status: "failed", outcomeSummary: "Could not start: image not found", endedAt: longAgo, createdAt: longAgo });
+    }
+    await addTrigger(card);
+    scheduleDispatch(card, 0);
+    await until("the third round has failed", async () => (await sessionsOn(card)).filter((s) => s.status === "failed").length === 3);
+    await until("the card's people are told", async () => (await systemComments(card)).length === 1);
+
+    assert.match((await systemComments(card))[0]!.body, /could not be started 3 times in a row/);
+    assert.deepEqual(await notified(), ["ada", "admin"]);
+    const pending = await db.select().from(schema.triggers).where(and(eq(schema.triggers.cardId, card), eq(schema.triggers.status, "pending")));
+    assert.deepEqual(pending, [], "the pumps no longer retry it");
+    assert.equal((await getCard(card))!.waiting, null);
+  });
+});
+
+describe("a start that keeps failing, with a change made during the last round", () => {
+  it("sets aside only what the failed rounds were for", async () => {
+    fake.failStarts = 99;
+    const card = await makeCard();
+    const longAgo = new Date(Date.now() - 30 * 60_000).toISOString();
+    for (const id of ["early-1", "early-2"]) {
+      await db.insert(schema.sessions).values({ id, boardId: BOARD, cardId: card, provider: "claude", status: "failed", outcomeSummary: "Could not start: image not found", endedAt: longAgo, createdAt: longAgo });
+    }
+    await addTrigger(card);
+    scheduleDispatch(card, 0);
+    await until("the third round has started", async () => (await sessionsOn(card)).length === 3);
+    await db.insert(schema.triggers).values({ id: "later", boardId: BOARD, cardId: card, kind: "comment_posted", actorUserId: "ada", payload: {}, createdAt: new Date(Date.now() + 1_000).toISOString() });
+    await until("the card's people are told", async () => (await systemComments(card)).length === 1);
+
+    const pending = await db.select().from(schema.triggers).where(and(eq(schema.triggers.cardId, card), eq(schema.triggers.status, "pending")));
+    assert.deepEqual(pending.map((t) => t.id), ["later"]);
+  });
+});
+
+describe("a re-run whose change was taken back", () => {
+  it("clears the flag rather than promising a session that has nothing to do", async () => {
+    const card = await makeCard();
+    const session = await running(card);
+    await db.update(schema.cards).set({ pendingRerun: true }).where(eq(schema.cards.id, card));
+    const { endSession } = await import("../src/services/orchestrator.js");
+    await endSession(session, "failed", "It stopped unexpectedly (exit code 1).");
+    await until("the notice is posted", async () => (await systemComments(card)).length === 1);
+
+    assert.doesNotMatch((await systemComments(card))[0]!.body, /starting again/);
+    const after = (await getCard(card))!;
+    assert.equal(after.pendingRerun, false);
+    assert.equal(after.lastSession?.status, "failed", "so Try again is offered");
+  });
+});
+
+describe("a session that fails on a paused board", () => {
+  it("does not promise a re-run that the pause holds back", async () => {
+    const card = await makeCard();
+    const session = await running(card);
+    await addTrigger(card);
+    await db.update(schema.cards).set({ pendingRerun: true }).where(eq(schema.cards.id, card));
+    await db.update(schema.boards).set({ paused: true }).where(eq(schema.boards.id, BOARD));
+    const { endSession } = await import("../src/services/orchestrator.js");
+    await endSession(session, "failed", "It stopped unexpectedly (exit code 1).");
+    await until("the notice is posted", async () => (await systemComments(card)).length === 1);
+
+    assert.doesNotMatch((await systemComments(card))[0]!.body, /starting again/);
+    assert.equal((await getCard(card))!.waiting?.reason, "paused");
+  });
+});
+
+describe("a notice that quotes the agent", () => {
+  it("names nobody a second time", async () => {
+    const card = await makeCard();
+    const session = await running(card);
+    const { endSession } = await import("../src/services/orchestrator.js");
+    await endSession(session, "failed", "Asked @grace which schema to use.");
+    await until("the notice is posted", async () => (await systemComments(card)).length === 1);
+
+    assert.deepEqual(await notified("mention"), []);
+    assert.deepEqual(await db.select().from(schema.mentions), []);
+  });
+});
+
 describe("a container that exits cleanly", () => {
   it("fails a session that neither commented nor reported, and says so", async () => {
     const card = await makeCard();
@@ -320,6 +405,16 @@ describe("try again", () => {
   it("is refused on a card in done", async () => {
     const card = await failedCard("done");
     assert.equal((await call(MEMBER, "POST", `/cards/${card}/retry`)).status, 409);
+  });
+
+  it("is refused when the last session did not fail", async () => {
+    const card = await makeCard();
+    const at = new Date(Date.now() - 60_000).toISOString();
+    await db.insert(schema.sessions).values({ id: `session-${n++}`, boardId: BOARD, cardId: card, provider: "claude", status: "succeeded", outcomeSummary: "Opened a pull request.", startedAt: at, endedAt: at, createdAt: at });
+    const res = await call(MEMBER, "POST", `/cards/${card}/retry`);
+    assert.equal(res.status, 409);
+    assert.match(((await res.json()) as { error: string }).error, /did not fail/);
+    assert.equal((await call(MEMBER, "POST", `/cards/${await makeCard()}/retry`)).status, 409, "nor on a card that never ran");
   });
 });
 

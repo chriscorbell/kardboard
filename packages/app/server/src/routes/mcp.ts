@@ -6,7 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { and, desc, eq, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
@@ -31,10 +31,11 @@ const DONE_SHOWN = 15;
 const EARLIER_SESSIONS_SHOWN = 10;
 
 // The agent-native interface. Every tool runs under a Session's identity; authorization is the
-// Session's Board plus, for pull-request state, its own Card. Sweeps cannot touch work state.
+// Session's Board plus, for pull-request state, its own Card, and for card edits, the Cards that are
+// its own (see `editRefusal`). Sweeps cannot touch work state or edit cards.
 function buildServer(session: SessionRow): McpServer {
   const server = new McpServer({ name: "kardboard", version: "0.1.0" });
-  const actor = { kind: "agent" as const, id: null };
+  const actor = { kind: "agent" as const, id: null, sessionId: session.id };
 
   async function assertBoardCard(cardId: string) {
     const card = await getCard(cardId);
@@ -124,7 +125,7 @@ function buildServer(session: SessionRow): McpServer {
 
   server.registerTool(
     "read_attachment",
-    { description: "Fetch an attachment by id. PNG, JPEG, GIF, and WebP images come back as images and text files as text; any other file, such as a PDF, comes back as a one-line note of its name, type, and size.", inputSchema: { attachment_id: z.string() } },
+    { description: "Fetch an attachment by id. PNG, JPEG, GIF, and WebP images up to 3.75 MB come back as images and text files as text; any other file, such as a PDF or a larger image, comes back as a one-line note of its name, type, and size.", inputSchema: { attachment_id: z.string() } },
     async ({ attachment_id }) => {
       const att = await getAttachment(attachment_id);
       if (!att) throw new Error("attachment not found");
@@ -172,11 +173,31 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
+  // Which Cards a Session may rewrite. Its own, which it is working on and answers for, and the ones
+  // it made, whose words are the Agent's. Not a Card someone else's Session holds, which that Session
+  // is reading and may be rewriting too, and not a closed Card, whose text is the record of what was
+  // asked. Nor anyone else's open Card, not even its title or priority: both are its author's call, a
+  // Session with no Claim on it has heard nothing from the author to justify changing them, and a
+  // Comment says the same thing without taking the author's words away.
+  async function editRefusal(card: NonNullable<Awaited<ReturnType<typeof getCard>>>): Promise<string | null> {
+    if (card.column === "done") return `card ${card.id} is in Done, and a closed card is not edited. Comment on it instead.`;
+    if (card.activeSession && card.activeSession.id !== session.id) return `card ${card.id} is being worked on by session ${card.activeSession.id}. Leave it to that session, and comment if it needs to know something.`;
+    if (card.id === session.cardId || (session.cardId && card.parentCardId === session.cardId)) return null;
+    const created = await db
+      .select({ id: schema.events.id })
+      .from(schema.events)
+      .where(and(eq(schema.events.cardId, card.id), eq(schema.events.type, "card.created"), eq(schema.events.actorKind, "agent"), sql`json_extract(${schema.events.payload}, '$.sessionId') = ${session.id}`))
+      .get();
+    if (created) return null;
+    return `card ${card.id} is not yours to edit: you may edit your own card, its child cards, and cards you created. Comment on it instead.`;
+  }
+
   // Tidying a card is not a request for work, so an edit here, unlike a person's, starts nothing.
+  // What a field said before is kept on the card's history, so an edit never loses the author's words.
   server.registerTool(
     "update_card",
     {
-      description: "Change a card's title, description, or priority: during intake, to give a vague card a title that says what it asks for, set its priority, or lay out the description. Keep everything the author asked for; add and clarify, never drop. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again. Omit card_id for your own card. Editing a card starts no session.",
+      description: "Change the title, description, or priority of your own card, one of its child cards, or a card you created: during intake, to give a vague card a title that says what it asks for, set its priority, or lay out the description. Keep everything the author asked for; add and clarify, never drop. Cards in Done, cards another session is working on, and other people's cards are refused: comment on those instead. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again. Omit card_id for your own card. Editing a card starts no session.",
       inputSchema: {
         card_id: z.string().optional(),
         title: z.string().trim().min(1).max(200).optional(),
@@ -186,10 +207,13 @@ function buildServer(session: SessionRow): McpServer {
       },
     },
     async ({ card_id, title, description, priority, revision }) => {
+      // A sweep corrects which column a card is in. What a card says is its author's.
+      if (session.kind !== "card" || !session.cardId) throw new Error("a hygiene sweep does not edit cards: move a card that drifted, and explain the move in a comment.");
       const id = card_id ?? session.cardId;
-      if (!id) throw new Error("card_id required for a sweep session");
-      await assertBoardCard(id);
+      const current = await assertBoardCard(id);
       if (title === undefined && description === undefined && priority === undefined) throw new Error("nothing to change: pass a title, a description, or a priority");
+      const refusal = await editRefusal(current);
+      if (refusal) throw new Error(refusal);
       let card;
       try {
         card = await updateCard(id, { title, description, priority, revision, actor });
@@ -261,7 +285,8 @@ function buildServer(session: SessionRow): McpServer {
       const card = (await getCard(session.cardId))!;
       if (!card.prHeadSha) throw new Error(note ?? "no pull request is recorded for this card yet; open it and report it with set_work_state first");
       const read = await refreshCardChecks(card.id, repo, card.prHeadSha);
-      const out = { state: read.state, prNumber: card.prNumber, sha: card.prHeadSha, checks: read.checks, ...(note ? { note } : {}) };
+      const notes = [note, read.unavailable ? `GitHub did not answer this time (${read.unavailable}), so this is not the real state of the checks; call get_checks again in a moment` : null].filter(Boolean);
+      const out = { state: read.state, prNumber: card.prNumber, sha: card.prHeadSha, checks: read.checks, ...(notes.length ? { note: notes.join("; ") } : {}) };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
   );
@@ -295,7 +320,7 @@ function buildServer(session: SessionRow): McpServer {
   server.registerTool(
     "preview_status",
     {
-      description: "Your own card's runner preview: building, running, or failed; the error and the end of the build log when it failed; and the commit it was built from beside the pull request head kardboard last recorded. Call it after request_preview, about once a minute while it is building, and before reporting.",
+      description: "Your own card's runner preview: building, running, or failed; the error, the commit that failed, and the end of the build log when it failed; a note when a rebuild was interrupted and the previous build still serves; and the commit of the last build that ran beside the pull request head kardboard last recorded. Call it after request_preview, about once a minute while it is building, and before reporting.",
       inputSchema: {},
     },
     async () => {
@@ -309,16 +334,22 @@ function buildServer(session: SessionRow): McpServer {
       if (!row) {
         return { content: [{ type: "text", text: JSON.stringify({ status: "none", note: "No preview has been requested for this card. Push the branch, then call request_preview." }) }] };
       }
+      const failed = row.status === "failed";
       const out = {
         status: row.status,
         url: previewUrlFor(row.host),
+        // On a running preview, the note that a rebuild was interrupted and the previous build serves.
         error: row.error,
+        // The last build that ran, which a building preview still serves. A failed build is failedSha.
         builtFromSha: row.sha,
+        ...(failed ? { failedSha: row.failedSha } : {}),
         pullRequestHeadSha: card.prHeadSha,
         // Only a yes or no when both are known. A building preview is still serving its previous build.
         isOfPullRequestHead: row.sha && card.prHeadSha ? row.sha === card.prHeadSha : null,
         updatedAt: row.updatedAt,
-        ...(row.status === "failed" ? { buildLogTail: await previewLogTail(row.id) } : {}),
+        // A build the runner refused never ran, and the log the runner has is an earlier build's, which
+        // would send the Session after an error it has already fixed. The error says why instead.
+        ...(failed && row.buildId ? { buildLogTail: await previewLogTail(row.id) } : {}),
       };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     },
@@ -327,7 +358,7 @@ function buildServer(session: SessionRow): McpServer {
   server.registerTool(
     "finish",
     {
-      description: "End this session with a one-sentence outcome summary. Always call it last, including when the trigger batch turned out to be noise: a session that exits without calling it or commenting is recorded as failed, and its card's people are told it stopped.",
+      description: "End this session with a one-sentence outcome summary. Only the main agent calls it, never a subagent: it ends the whole session, subagents included. Always call it last, including when the trigger batch turned out to be noise: a session that exits without calling it or commenting is recorded as failed, and its card's people are told it stopped.",
       inputSchema: { summary: z.string().min(1).max(500), outcome: z.enum(["succeeded", "failed"]).default("succeeded") },
     },
     async ({ summary, outcome }) => {

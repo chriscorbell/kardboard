@@ -1,10 +1,26 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Approval, Card, ChecksSummary, SessionSummary } from "@kardboard/shared";
-import { approveGate, checksPageUrl, closeStatement, currentChecks, mergeStatement, reviewGuidance, reviewStage, sentence, showChecks } from "../src/routes/board/reviewState.js";
+import {
+  approveGate,
+  checksPageUrl,
+  checksUnreadable,
+  closeStatement,
+  compareUrl,
+  currentChecks,
+  followPin,
+  headMove,
+  mergeStatement,
+  repin,
+  retryHold,
+  reviewGuidance,
+  reviewStage,
+  sentence,
+  showChecks,
+} from "../src/routes/board/reviewState.js";
 
 const HEAD = "a".repeat(40);
-const card = { id: "card-1", prNumber: 41, prUrl: "https://github.com/acme/widgets/pull/41", prHeadSha: HEAD, prBaseRef: "main", previewUrl: null, activeSession: null, checks: null } as unknown as Card;
+const card = { id: "card-1", prNumber: 41, prUrl: "https://github.com/acme/widgets/pull/41", prHeadSha: HEAD, prBaseRef: "main", previewUrl: null, activeSession: null, waiting: null, checks: null } as unknown as Card;
 const approval = (fields: Partial<Approval> = {}): Approval => ({ id: "a1", cardId: "card-1", userId: "ada", prNumber: 41, headSha: HEAD, createdAt: "2026-09-24T10:00:00.000Z", invalidatedAt: null, mergeError: null, ...fields });
 const checks = (fields: Partial<ChecksSummary>): ChecksSummary => ({ state: "passing", total: 3, failed: 0, pending: 0, sha: HEAD, updatedAt: "2026-09-24T10:00:00.000Z", ...fields });
 
@@ -22,6 +38,72 @@ describe("the review stage", () => {
     assert.equal(reviewStage({ ...card, activeSession: {} as SessionSummary }, []).kind, "working");
     assert.equal(reviewStage({ ...card, prNumber: null, prUrl: null }, []).kind, "no_pr");
     assert.equal(reviewStage(card, [approval({ invalidatedAt: "2026-09-24T10:05:00.000Z" })]).kind, "ready", "a voided approval asks for a fresh one");
+  });
+
+  it("holds Approve while a comment or change waits for a session", () => {
+    const waiting = { ...card, waiting: { reason: "coalescing" as const, since: "2026-09-24T10:00:00.000Z" } };
+    assert.equal(reviewStage(waiting, []).kind, "waiting");
+    assert.equal(reviewStage({ ...waiting, waiting: { reason: "paused" as const, since: "2026-09-24T10:00:00.000Z" } }, []).kind, "waiting", "a paused board holds it just the same");
+  });
+
+  it("holds a merge retry for the same reasons, and says why", () => {
+    assert.equal(retryHold(card, "Milo"), null);
+    assert.match(retryHold({ ...card, activeSession: {} as SessionSummary }, "Milo") ?? "", /^Milo is working on this card/);
+    assert.match(retryHold({ ...card, waiting: { reason: "slot", since: "2026-09-24T10:00:00.000Z" } }, "Milo") ?? "", /^Milo hasn't read the latest comment or change yet/);
+  });
+});
+
+describe("the head the member is reviewing", () => {
+  const HEAD_B = "b".repeat(40);
+  const at = (prHeadSha: string | null, id = "card-1") => ({ id, prHeadSha });
+
+  it("follows the card until the first read from GitHub has settled, then stays put", () => {
+    let pin = followPin(null, at(HEAD), false);
+    assert.deepEqual(pin, { cardId: "card-1", sha: HEAD, settled: false });
+    pin = followPin(pin, at(HEAD_B), false);
+    assert.equal(pin.sha, HEAD_B, "the sync brought the card up to date; nobody has seen the old head as settled");
+    assert.equal(headMove(pin, at(HEAD_B)), null);
+
+    pin = followPin(pin, at(HEAD_B), true);
+    const settled = pin;
+    pin = followPin(pin, at(HEAD), true);
+    assert.equal(pin, settled, "the same pin comes back, so it can be kept in state without a loop");
+    assert.equal(pin.sha, HEAD_B, "a later push does not move what the member is approving");
+  });
+
+  it("says how the pull request moved, and takes up the new head only when asked", () => {
+    const pin = followPin(null, at(HEAD), true);
+    assert.deepEqual(headMove(pin, at(HEAD_B)), { from: HEAD, to: HEAD_B });
+    const looked = repin(at(HEAD_B));
+    assert.equal(looked.sha, HEAD_B);
+    assert.equal(headMove(looked, at(HEAD_B)), null);
+  });
+
+  it("takes up the first head shown when there was none to differ from", () => {
+    let pin = followPin(null, at(null), true);
+    pin = followPin(pin, at(HEAD), true);
+    assert.equal(pin.sha, HEAD);
+    assert.equal(headMove(pin, at(HEAD)), null);
+  });
+
+  it("starts again for another card", () => {
+    const pin = followPin(null, at(HEAD), true);
+    assert.deepEqual(followPin(pin, at(HEAD_B, "card-2"), false), { cardId: "card-2", sha: HEAD_B, settled: false });
+  });
+
+  it("links to what changed between the two heads", () => {
+    assert.equal(compareUrl("https://github.com/acme/widgets/pull/41", { from: HEAD, to: HEAD_B }), `https://github.com/acme/widgets/compare/${HEAD}...${HEAD_B}`);
+    assert.equal(compareUrl("https://gitlab.example.com/merge/3", { from: HEAD, to: HEAD_B }), null);
+    assert.equal(compareUrl(null, { from: HEAD, to: HEAD_B }), null);
+  });
+});
+
+describe("a refusal for checks GitHub did not show", () => {
+  it("is told apart by the reason the server gives with it", () => {
+    assert.equal(checksUnreadable({ status: 503, data: { error: "kardboard couldn't read the checks…", reason: "checks_unavailable" } }), true);
+    assert.equal(checksUnreadable({ status: 409, data: { error: "The check failed…" } }), false);
+    assert.equal(checksUnreadable(null), false);
+    assert.equal(checksUnreadable(new Error("network")), false);
   });
 });
 

@@ -108,6 +108,29 @@ export function pruneSnapshots(keep: number, dir: string = env.backupDir, now = 
   return removed;
 }
 
+// pruneSnapshots for the off-disk copy, which is usually a network share: every call is awaited, so
+// a share that stalls holds up the copy, and its timeout, rather than the whole app.
+async function pruneCopiedSnapshots(keep: number, dir: string, now: Date): Promise<void> {
+  const names = await fsp.readdir(dir).catch(() => [] as string[]);
+  const found: BackupSnapshot[] = [];
+  for (const name of names) {
+    const parsed = parseName(name);
+    if (!parsed) continue;
+    const stat = await fsp.stat(path.join(dir, name)).catch(() => null);
+    if (stat?.isFile()) found.push({ name, bytes: stat.size, takenAt: parsed.takenAt, kind: parsed.kind });
+  }
+  found.sort((a, b) => (a.takenAt !== b.takenAt ? (a.takenAt < b.takenAt ? 1 : -1) : attemptOf(b.name) - attemptOf(a.name)));
+  for (const kind of ["regular", "pre_migrate"] as const) {
+    for (const snapshot of found.filter((f) => f.kind === kind).slice(atLeastOne(keep))) await fsp.rm(path.join(dir, snapshot.name), { force: true });
+  }
+  for (const name of names) {
+    if (!name.endsWith(PARTIAL_SUFFIX)) continue;
+    const stat = await fsp.stat(path.join(dir, name)).catch(() => null);
+    if (stat && now.getTime() - stat.mtimeMs < STALE_PARTIAL_MS) continue;
+    await fsp.rm(path.join(dir, name), { force: true });
+  }
+}
+
 // Opens the finished file as its own database and checks it end to end. A snapshot that cannot be
 // read here would be worthless in a recovery, so a failure removes it rather than publishing it.
 export async function verifySnapshot(file: string): Promise<void> {
@@ -267,7 +290,7 @@ export async function copyOffDisk(file: string, options: { copyDir: string; keep
     const marked = await fsp.stat(path.join(options.copyDir, COPY_TARGET_MARKER)).catch(() => null);
     if (!marked) throw new Error(`${options.copyDir} has no ${COPY_TARGET_MARKER} file, so it is not taken for the backup target; is the share mounted?`);
     await copyFileSafely(file, path.join(options.copyDir, name));
-    pruneSnapshots(options.keep, options.copyDir, now);
+    await pruneCopiedSnapshots(options.keep, options.copyDir, now);
     uploadsCopied = await mirrorUploads(options.uploadsDir, path.join(options.copyDir, "uploads"));
     return { at: now.toISOString(), ok: true, error: null, snapshot: name, uploadsCopied };
   } catch (err) {

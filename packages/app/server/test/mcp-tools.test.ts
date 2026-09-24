@@ -20,7 +20,7 @@ const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { mcp } = await import("../src/routes/mcp.js");
 const { runner } = await import("../src/services/runner-client.js");
 const { MAX_CHILDREN } = await import("../src/services/children.js");
-const { attachmentContent, looksLikeText } = await import("../src/services/attachment-content.js");
+const { attachmentContent, INLINE_IMAGE_LIMIT, looksLikeText, sniffImage } = await import("../src/services/attachment-content.js");
 
 await runMigrations();
 
@@ -98,12 +98,69 @@ describe("update_card", () => {
     assert.equal((await db.select().from(schema.triggers)).length, 0, "an Agent edit is not a Trigger");
   });
 
-  it("edits another card on the board when named", async () => {
+  it("keeps what each changed field said before, so the author's words are never lost", async () => {
+    await db.update(schema.cards).set({ description: "make the export work pls" }).where(eq(schema.cards.id, CARD));
+    const { client, sessionId } = await sessionOn(CARD);
+    const result = await call(client, "update_card", { description: "Export invoices as CSV.\n\nOriginal ask: make the export work pls", priority: "none", revision: 0 });
+    assert.notEqual(result.isError, true, text(result));
+    const [edited] = await db.select().from(schema.events).where(and(eq(schema.events.cardId, CARD), eq(schema.events.type, "card.edited")));
+    assert.deepEqual(edited!.payload, { sessionId, fields: ["description"], previous: { description: "make the export work pls" } }, "an unchanged priority is not an edit");
+  });
+
+  it("edits a child of its own card and a card it created itself", async () => {
+    await card("card-child", { parentCardId: CARD, column: "blocked", creatorKind: "agent", creatorId: null });
+    const { client } = await sessionOn(CARD);
+    const made = json(await call(client, "create_card", { title: "Rotate the deploy key", column: "ready" })).cardId as string;
+
+    for (const id of ["card-child", made]) {
+      const result = await call(client, "update_card", { card_id: id, title: "A clearer title", revision: 0 });
+      assert.notEqual(result.isError, true, text(result));
+      assert.equal((await row(id)).title, "A clearer title");
+    }
+  });
+
+  it("refuses someone else's card, even its title", async () => {
     await card("card-other");
     const { client } = await sessionOn(CARD);
-    const result = await call(client, "update_card", { card_id: "card-other", description: "Steps to reproduce: …", revision: 0 });
-    assert.notEqual(result.isError, true, text(result));
-    assert.equal((await row("card-other")).description, "Steps to reproduce: …");
+    const result = await call(client, "update_card", { card_id: "card-other", title: "Retitled", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /not yours to edit.*Comment on it instead/);
+    assert.equal((await row("card-other")).title, "Card card-other");
+  });
+
+  it("refuses a card another Session created", async () => {
+    const { client: maker } = await sessionOn(CARD);
+    const made = json(await call(maker, "create_card", { title: "An Admin step" })).cardId as string;
+    await card("card-second", { column: "in_progress" });
+    const { client } = await sessionOn("card-second");
+    const result = await call(client, "update_card", { card_id: made, title: "Mine now", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /not yours to edit/);
+  });
+
+  it("refuses a card another Session is working on", async () => {
+    await card("card-child", { parentCardId: CARD, creatorKind: "agent", creatorId: null });
+    await db.insert(schema.sessions).values({ id: "session-child", boardId: BOARD, cardId: "card-child", provider: "claude", status: "running" });
+    const { client } = await sessionOn(CARD);
+    const result = await call(client, "update_card", { card_id: "card-child", description: "Do it differently", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /being worked on by session session-child/);
+  });
+
+  it("refuses a card in Done, its own included", async () => {
+    await db.update(schema.cards).set({ column: "done" }).where(eq(schema.cards.id, CARD));
+    const { client } = await sessionOn(CARD);
+    const result = await call(client, "update_card", { title: "Tidied after the fact", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /in Done/);
+  });
+
+  it("gives a hygiene sweep no edits, since it corrects columns rather than what cards say", async () => {
+    const { client } = await sessionOn(null, "sweep");
+    const result = await call(client, "update_card", { card_id: CARD, priority: "high", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /hygiene sweep does not edit cards/);
+    assert.equal((await row(CARD)).priority, "none");
   });
 
   it("refuses an edit made from an old revision and says where the card is now", async () => {
@@ -220,8 +277,8 @@ describe("preview_status", () => {
     assert.equal(status.url, "https://card-own.kardboard.cc");
   });
 
-  it("hands a failed build's error and the end of its log to the Session that has to fix it", async () => {
-    await preview({ status: "failed", error: "build failed: The command '/bin/sh -c pnpm build' returned a non-zero code: 1", sha: SHA_A });
+  it("hands a failed build's error, its commit, and the end of its log to the Session that has to fix it", async () => {
+    await preview({ status: "failed", error: "build failed: The command '/bin/sh -c pnpm build' returned a non-zero code: 1", sha: SHA_A, failedSha: SHA_B, buildId: "build-1" });
     const log = Array.from({ length: 100 }, (_, i) => `step ${i}`).join("\n");
     const original = runner.previewLog;
     runner.previewLog = async (id) => ({ exists: id === "pv-1", size: log.length, offset: 0, nextOffset: log.length, text: `${log}\nsrc/app.ts(3,1): error TS2304\n`, skipped: false });
@@ -230,9 +287,25 @@ describe("preview_status", () => {
       const status = json(await call(client, "preview_status"));
       assert.equal(status.status, "failed");
       assert.match(String(status.error), /non-zero code/);
+      assert.equal(status.failedSha, SHA_B);
+      assert.equal(status.builtFromSha, SHA_A, "the last build that ran, not the one that failed");
       const tail = String(status.buildLogTail).split("\n");
       assert.equal(tail.length, 60);
       assert.equal(tail.at(-1), "src/app.ts(3,1): error TS2304");
+    } finally {
+      runner.previewLog = original;
+    }
+  });
+
+  it("gives a build the runner refused no log, since the one the runner has is an earlier build's", async () => {
+    await preview({ status: "failed", error: "the runner refused the build: fetch failed", buildId: null });
+    const original = runner.previewLog;
+    runner.previewLog = async () => ({ exists: true, size: 30, offset: 0, nextOffset: 30, text: "src/app.ts(3,1): error TS2304\n", skipped: false });
+    try {
+      const { client } = await sessionOn(CARD);
+      const status = json(await call(client, "preview_status"));
+      assert.match(String(status.error), /refused/);
+      assert.equal("buildLogTail" in status, false);
     } finally {
       runner.previewLog = original;
     }
@@ -321,6 +394,45 @@ describe("read_attachment", () => {
     const { client } = await sessionOn(CARD);
     const result = await call(client, "read_attachment", { attachment_id: "att-png" });
     assert.equal((result.content as { type: string }[])[0]!.type, "image");
+  });
+
+  it("sends an image under the type its bytes say, not the one it was uploaded as", async () => {
+    await upload("att-jpeg", "photo.png", "image/png", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]));
+    const { client } = await sessionOn(CARD);
+    const [content] = (await call(client, "read_attachment", { attachment_id: "att-jpeg" })).content as { type: string; mimeType?: string }[];
+    assert.deepEqual([content!.type, content!.mimeType], ["image", "image/jpeg"]);
+  });
+});
+
+describe("which attachments go to the model as images", () => {
+  const png = (bytes: number) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(bytes - 8)]);
+
+  it("knows the four vision formats by their first bytes", () => {
+    assert.equal(sniffImage(png(16)), "image/png");
+    assert.equal(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xdb])), "image/jpeg");
+    assert.equal(sniffImage(Buffer.from("GIF89a\x01\x00", "latin1")), "image/gif");
+    assert.equal(sniffImage(Buffer.from("RIFF\x24\x00\x00\x00WEBPVP8 ", "latin1")), "image/webp");
+    assert.equal(sniffImage(Buffer.from("RIFF\x24\x00\x00\x00WAVEfmt ", "latin1")), null, "a RIFF file is not always a WebP");
+    assert.equal(sniffImage(Buffer.from([0x89, 0x50])), null);
+  });
+
+  it("finds a PNG uploaded under a generic type", () => {
+    const content = attachmentContent({ filename: "shot", mime: "application/octet-stream" }, png(16));
+    assert.equal(content.type === "image" && content.mimeType, "image/png");
+  });
+
+  it("describes an image too large for the model rather than sending it", () => {
+    // The model's limit is 5 MB of base64, which is three quarters of that in file size.
+    const largest = (INLINE_IMAGE_LIMIT / 4) * 3;
+    assert.equal(attachmentContent({ filename: "ok.png", mime: "image/png" }, png(largest)).type, "image");
+    const content = attachmentContent({ filename: "full-page.png", mime: "image/png" }, png(largest + 1));
+    assert.equal(content.type, "text");
+    assert.match((content as { text: string }).text, /^full-page\.png: image\/png, 3\.8 MB\. Too large to show/);
+  });
+
+  it("does not send bytes that only claim to be an image", () => {
+    const content = attachmentContent({ filename: "shot.png", mime: "image/png" }, Buffer.from([0x00, 0x01, 0x02, 0x03, 0xfe, 0xff]));
+    assert.deepEqual(content, { type: "text", text: "shot.png: uploaded as image/png, 6 bytes, but its contents are not a PNG, JPEG, GIF, or WebP image. Not shown." });
   });
 });
 

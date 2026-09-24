@@ -16,12 +16,17 @@ export interface StartSessionRequest {
   wallClockMinutes: number;
   prompt: string;
   githubToken: string | null;
+  // When the GitHub token expires, as GitHub reported it. The token is minted before the runner pulls
+  // the image, so the container stops its agent before the token runs out if that comes first.
+  githubTokenExpiresAt?: string | null;
   gitName: string;
   gitEmail: string;
 }
 
 export interface StartPreviewRequest {
   previewId: string;
+  // Sent back with the build's report, so the app can tell this build's outcome from a replaced one's.
+  buildId: string;
   boardSlug: string;
   cardId: string;
   host: string;

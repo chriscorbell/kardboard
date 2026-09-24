@@ -10,6 +10,26 @@ WALL_CLOCK_MINUTES="${KARDBOARD_WALL_CLOCK_MINUTES:-45}"
 
 log() { printf '[session %s] %s\n' "$KARDBOARD_SESSION_ID" "$*" >&2; }
 
+# How long the provider CLI may run, in seconds, for `timeout`: the wall clock, or less when the
+# Sessions GitHub token runs out first. The app mints that token before the runner pulls this image,
+# and the wall clock starts only now, so a slow pull plus the wall clock can outlast the token's hour,
+# and a Session that can no longer push loses its work. It stops two minutes before the token does.
+# GITHUB_TOKEN_EXPIRES_AT is Unix seconds; the runner leaves it out when there is no token.
+session_time_limit() {
+  local limit left
+  limit=$(awk -v m="$WALL_CLOCK_MINUTES" 'BEGIN { s = int(m * 60 + 0.5); print (s < 1 ? 1 : s) }')
+  if [ -n "${GITHUB_TOKEN_EXPIRES_AT:-}" ] && [ "$GITHUB_TOKEN_EXPIRES_AT" -eq "$GITHUB_TOKEN_EXPIRES_AT" ] 2>/dev/null; then
+    left=$((GITHUB_TOKEN_EXPIRES_AT - $(date +%s) - 120))
+    if [ "$left" -lt "$limit" ]; then
+      # `timeout` reads 0 as no limit at all, so a token already that close still gets a minute.
+      if [ "$left" -lt 60 ]; then left=60; fi
+      log "stopping after ${left}s rather than ${limit}s: the GitHub token expires first"
+      limit="$left"
+    fi
+  fi
+  printf '%s\n' "$limit"
+}
+
 # The runner mounts the Board's dependency cache at /cache and the image points every package tool
 # into it. A volume first created by an image without a /cache of its own belongs to root; rather
 # than fail every install on it, the tools fall back to their defaults for this Session.
@@ -62,6 +82,17 @@ if [ -n "${KARDBOARD_REPO_URL:-}" ]; then
   fi
 fi
 
+# After the clone, which spends some of the token's life too.
+TIME_LIMIT="$(session_time_limit)"
+# The agent is told when it will be stopped, so it pushes and reports before then rather than losing
+# work it had not pushed; the stop may come before the wall clock when the GitHub token expires first.
+DEADLINE="$(date -u -d "@$(( $(date +%s) + TIME_LIMIT ))" '+%H:%M UTC' 2>/dev/null || true)"
+if [ -n "$DEADLINE" ]; then
+  PROMPT="${PROMPT}
+
+This session is stopped at ${DEADLINE}. Leave time before then to push your branch, record it with set_work_state, report on the card, and call finish."
+fi
+
 case "$KARDBOARD_PROVIDER" in
   claude)
     log "starting claude code"
@@ -76,7 +107,7 @@ JSON
     # Planning and subagents: TodoWrite is deprecated in favour of the Task* tools, and Agent was
     # called Task before Claude Code 2.1.63. The image does not pin Claude Code, so both generations
     # are listed; these are permission rules, and a name a version lacks simply matches nothing.
-    exec timeout --signal=TERM "${WALL_CLOCK_MINUTES}m" \
+    exec timeout --signal=TERM "${TIME_LIMIT}s" \
       claude -p "$PROMPT" "${MODEL_ARGS[@]}" \
         --mcp-config /tmp/mcp.json \
         --permission-mode acceptEdits \
@@ -134,7 +165,7 @@ TOML
     # `--full-auto` was removed in codex-cli 0.154 and Codex exits 2 on it. The Session container is
     # itself the sandbox, which is the case this flag documents. stdin is already at EOF after the
     # prompt was read; closing it explicitly stops Codex waiting for more input.
-    exec timeout --signal=TERM "${WALL_CLOCK_MINUTES}m" \
+    exec timeout --signal=TERM "${TIME_LIMIT}s" \
       codex exec --dangerously-bypass-approvals-and-sandbox "${CODEX_ARGS[@]}" "$PROMPT" < /dev/null
     ;;
   *)

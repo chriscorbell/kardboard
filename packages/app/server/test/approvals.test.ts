@@ -26,8 +26,9 @@ githubAppEnv();
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { ApprovalError, approveCard, followUpFor, linkPullRequest, listApprovals, retryMerge } = await import("../src/services/approvals.js");
-const { getCard } = await import("../src/services/cards.js");
-const { classifyMergeRefusal, summarizeChecks } = await import("../src/services/github.js");
+const { getCard, updateCard } = await import("../src/services/cards.js");
+const { createComment } = await import("../src/services/comments.js");
+const { classifyMergeRefusal, summarizeChecks, transientStatus } = await import("../src/services/github.js");
 const { api } = await import("../src/routes/api.js");
 const { mcp } = await import("../src/routes/mcp.js");
 
@@ -199,6 +200,63 @@ describe("approving a card", () => {
     assert.equal(res.status, 409);
     assert.match(((await res.json()) as { error: string }).error, /moved on/);
     assert.deepEqual(github.merges, []);
+  });
+});
+
+describe("approving while the Agent has work on the card still to start", () => {
+  const pending = async () => (await db.select().from(schema.triggers).where(eq(schema.triggers.cardId, CARD))).map((t) => `${t.kind}:${t.status}`);
+
+  it("is refused while a change request waits for a session, and the request is kept", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    await createComment({ cardId: CARD, actor: MEMBER, body: "Please also rename the button" });
+
+    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), (err: unknown) => err instanceof ApprovalError && err.status === 409 && err.message === "Milo hasn't read the latest comment yet. Approve once it has.");
+
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await listApprovals(CARD), []);
+    assert.deepEqual(await pending(), ["comment_posted:pending"], "the comment still gets its session");
+    assert.equal((await getCard(CARD))!.column, "review");
+  });
+
+  it("is refused while an edit waits on a paused board", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    await db.update(schema.boards).set({ paused: true }).where(eq(schema.boards.id, "board-1"));
+    const card = (await getCard(CARD))!;
+    await updateCard(CARD, { description: "Also the footer.", revision: card.revision, actor: MEMBER });
+
+    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), /is paused on this board, and hasn't read the latest change to this card yet. Approve once the Admin resumes the board/);
+    assert.deepEqual(github.merges, []);
+  });
+
+  it("is refused when a comment arrives while GitHub is being asked", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    const fake = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input instanceof Request ? input.url : input).includes("/check-runs")) await createComment({ cardId: CARD, actor: MEMBER, body: "Wait, one more thing" });
+      return fake(input, init);
+    }) as typeof fetch;
+    try {
+      await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), /hasn't read the latest comment yet/);
+    } finally {
+      globalThis.fetch = fake;
+    }
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await listApprovals(CARD), []);
+  });
+
+  it("refuses a merge retry the same way, through the API", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.refusal = { status: 403, message: "Resource not accessible by integration" };
+    await approveCard(CARD, MEMBER, HEAD_A);
+    github.refusal = null;
+    await createComment({ cardId: CARD, actor: MEMBER, body: "Actually, hold on" });
+
+    const res = await api.request(`/cards/${CARD}/retry-merge`, { method: "POST", headers: { "x-dev-user": "ada@example.com" } });
+
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { error: string }).error, "Milo hasn't read the latest comment yet. Try the merge again once it has.");
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await pending(), ["comment_posted:pending"]);
   });
 });
 
@@ -428,6 +486,46 @@ describe("a 405 from GitHub's merge", () => {
     assert.equal(classifyMergeRefusal("Head branch is out of date", { mergeable: true, mergeableState: "behind" }), "conflict");
     assert.equal(classifyMergeRefusal("At least 1 approving review is required", { mergeable: true, mergeableState: "blocked" }), "refused");
   });
+
+  it("is not taken for GitHub still checking when the pull request was closed, or could not be read again", () => {
+    assert.equal(classifyMergeRefusal("Pull Request is not mergeable", { state: "closed", merged: false, mergeable: null, mergeableState: "unknown" }), "closed");
+    assert.equal(classifyMergeRefusal("Pull Request is not mergeable", null), "refused");
+    assert.equal(classifyMergeRefusal("Base branch was modified. Review and try the merge again.", null), "retry", "GitHub's own words still say to ask again");
+    assert.equal(classifyMergeRefusal("Merge conflict", null), "conflict");
+  });
+
+  it("voids the approval, without asking again, when the pull request was closed meanwhile", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({
+      status: 405,
+      message: "Pull Request is not mergeable",
+      then: (p) => {
+        p.state = "closed";
+        p.closedAt = "2026-09-24T10:00:00.000Z";
+        p.mergeable = null;
+      },
+    });
+
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.notEqual(approval.invalidatedAt, null);
+    assert.equal(approval.mergeError, null);
+    assert.equal(github.requests.filter((r) => r.endsWith("/merge")).length, 1);
+    const said = (await db.select().from(schema.comments).where(eq(schema.comments.cardId, CARD))).map((c) => c.body);
+    assert.deepEqual(said, ["@ada Pull request #7 was closed on GitHub before it could merge, so nothing was merged."]);
+    assert.deepEqual(await db.select().from(schema.triggers).where(eq(schema.triggers.cardId, CARD)), [], "no session is sent to a closed pull request");
+  });
+
+  it("reports GitHub's refusal as it was when the pull request cannot be read again", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.mergeReplies.push({ status: 405, message: "Pull Request is not mergeable", then: () => github.pulls.delete(7) });
+
+    const approval = await approveCard(CARD, MEMBER, HEAD_A);
+
+    assert.equal(approval.invalidatedAt, null);
+    assert.equal(approval.mergeError, "405 Pull Request is not mergeable");
+    assert.equal(github.requests.filter((r) => r.endsWith("/merge")).length, 1, "not asked again as if GitHub were still checking");
+  });
 });
 
 describe("a pull request's checks", () => {
@@ -444,6 +542,17 @@ describe("a pull request's checks", () => {
     assert.equal(summarizeChecks({ runs: null, statuses: [run("ci", "success")] }).state, "unknown");
     assert.equal(summarizeChecks({ runs: [run("build", "success")], statuses: null }).state, "unknown");
     assert.equal(summarizeChecks({ runs: [run("build", "cancelled")], statuses: null }).state, "failing");
+  });
+
+  it("tell a refusal to show them from GitHub failing to answer", () => {
+    const rateLimited = new Headers({ "x-ratelimit-remaining": "0" });
+    assert.equal(transientStatus(502), true);
+    assert.equal(transientStatus(429), true);
+    assert.equal(transientStatus(403, new Headers({ "retry-after": "30" })), true);
+    assert.equal(transientStatus(403, rateLimited), true);
+    assert.equal(transientStatus(403, new Headers()), false, "a permission the Merge app was not granted");
+    assert.equal(transientStatus(404), false);
+    assert.equal(transientStatus(401), false);
   });
 });
 
@@ -498,6 +607,58 @@ describe("approving over the checks", () => {
     await approveCard(CARD, MEMBER, HEAD_A);
 
     assert.equal(github.merges.length, 1);
+  });
+
+  it("is refused while GitHub fails to say how the checks went, and the card keeps what it last read", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    const lastRead = { state: "passing" as const, total: 1, failed: 0, pending: 0, sha: HEAD_A, updatedAt: "2026-09-24T10:00:00.000Z" };
+    await db.update(schema.cards).set({ checks: lastRead }).where(eq(schema.cards.id, CARD));
+    github.checkRuns.set(HEAD_A, 502);
+
+    await assert.rejects(
+      approveCard(CARD, MEMBER, HEAD_A),
+      (err: unknown) => err instanceof ApprovalError && err.status === 503 && err.reason === "checks_unavailable" && /couldn't read the checks on pull request #7 from GitHub just now/.test(err.message),
+    );
+
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await listApprovals(CARD), []);
+    assert.deepEqual((await getCard(CARD))!.checks, lastRead);
+  });
+
+  it("takes a secondary rate limit for GitHub failing to answer, not for a missing permission", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.statuses.set(HEAD_A, { status: 403, headers: { "retry-after": "60" } });
+
+    const res = await approve("ada@example.com", {});
+
+    assert.equal(res.status, 503);
+    const body = (await res.json()) as { error: string; reason?: string };
+    assert.equal(body.reason, "checks_unavailable", "the client can offer the Admin a way past it");
+    assert.match(body.error, /Try again in a moment/);
+    assert.deepEqual(github.merges, []);
+  });
+
+  it("merges without the checks when the Admin overrides, and records that they did", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.checkRuns.set(HEAD_A, 502);
+
+    const res = await approve("root@example.com", { overrideChecks: true });
+
+    assert.equal(res.status, 201);
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
+    const approved = await db.select().from(schema.events).where(eq(schema.events.type, "card.approved")).get();
+    assert.deepEqual([approved?.payload.checks, approved?.payload.overrideChecks], ["unknown", true]);
+  });
+
+  it("gates a retry on checks GitHub fails to show", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    github.refusal = { status: 403, message: "Resource not accessible by integration" };
+    await approveCard(CARD, MEMBER, HEAD_A);
+    github.refusal = null;
+    github.checkRuns.set(HEAD_A, 504);
+
+    await assert.rejects(retryMerge(CARD, MEMBER), /couldn't read the checks/);
+    assert.deepEqual(github.merges, []);
   });
 
   it("merges while checks are still running; warning about that is the client's job", async () => {

@@ -142,6 +142,43 @@ describe("waking the parent", () => {
     assert.deepEqual(await triggersFor(parent.id), ["children_done"]);
   });
 
+  it("wakes the parent once for one settlement, however often a child comes back to Done", async () => {
+    const parent = await request();
+    const only = await child(parent, "The only piece");
+    await toDone(only, { merged: true });
+
+    // Reopened and back in Done the same way, as a merge completed a second time would put it.
+    const done = (await getCard(only.id))!;
+    await moveCard(only.id, { column: "in_progress", position: done.position, revision: done.revision, actor: AGENT });
+    await toDone(only);
+
+    assert.deepEqual(await triggersFor(parent.id), ["children_done"]);
+    const woken = await db.select().from(schema.events).where(and(eq(schema.events.cardId, parent.id), eq(schema.events.type, "card.children_done")));
+    assert.equal(woken.length, 1);
+  });
+
+  it("wakes the parent again when what a child came to has changed", async () => {
+    const parent = await request();
+    const only = await child(parent, "The only piece");
+    await toDone(only);
+
+    const closed = (await getCard(only.id))!;
+    await moveCard(only.id, { column: "in_progress", position: closed.position, revision: closed.revision, actor: AGENT });
+    await toDone(only, { merged: true });
+
+    assert.deepEqual(await triggersFor(parent.id), ["children_done", "children_done"]);
+  });
+
+  it("wakes the parent once when its last two children finish together", async () => {
+    const parent = await request();
+    const first = await child(parent, "First piece");
+    const second = await child(parent, "Second piece");
+
+    await Promise.all([toDone(first), toDone(second)]);
+
+    assert.deepEqual(await triggersFor(parent.id), ["children_done"]);
+  });
+
   it("leaves a parent that is itself closed alone", async () => {
     const parent = await request();
     const only = await child(parent, "The only piece");

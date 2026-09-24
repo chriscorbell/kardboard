@@ -12,19 +12,89 @@ export type ReviewStage =
   /** Approved and not refused: the merge is under way, or a Session will carry it out. */
   | { kind: "approved"; approval: Approval }
   | { kind: "working" }
+  /** A comment, edit or move is still waiting for a Session, which may change the pull request. */
+  | { kind: "waiting" }
   /** Nothing recorded to merge, so nothing to approve. */
   | { kind: "no_pr" }
   | { kind: "ready" };
 
-export function reviewStage(card: Pick<Card, "activeSession" | "prNumber" | "prUrl">, approvals: Approval[]): ReviewStage {
+export function reviewStage(card: Pick<Card, "activeSession" | "waiting" | "prNumber" | "prUrl">, approvals: Approval[]): ReviewStage {
   const refused = approvalAwaitingRetry(approvals);
   if (refused) return { kind: "refused", approval: refused };
   const live = approvals.find((a) => !a.invalidatedAt);
   if (live) return { kind: "approved", approval: live };
   if (card.activeSession) return { kind: "working" };
+  if (card.waiting) return { kind: "waiting" };
   if (!card.prNumber && !card.prUrl) return { kind: "no_pr" };
   return { kind: "ready" };
 }
+
+/**
+ * Why Try merging again is held back, as the server holds it: a Session at work, or one still to
+ * start on a comment or change nobody has answered. Null when nothing holds it.
+ */
+export function retryHold(card: Pick<Card, "activeSession" | "waiting">, agentName: string): string | null {
+  if (card.activeSession) return `${agentName} is working on this card. You can try again once the session has finished.`;
+  if (card.waiting?.reason === "paused") return `${agentName} is paused on this board and hasn't read the latest change yet. You can try again once the Admin resumes it.`;
+  if (card.waiting) return `${agentName} hasn't read the latest comment or change yet. You can try again once it has.`;
+  return null;
+}
+
+// ---- the head the Member is reviewing ----
+
+/**
+ * The pull request head a Member is looking at, which is what Approve sends. The poll and the sync
+ * rewrite the Card's head whenever GitHub's moves, so the head at the moment of the click may be
+ * one the Member never saw. The pin follows the Card until the block's first read from GitHub has
+ * settled, and while it has shown no head at all; after that a new head is taken up only when the
+ * Member asks to look at it.
+ */
+export interface ReviewPin {
+  cardId: string;
+  sha: string | null;
+  settled: boolean;
+}
+
+/** The pin as of this render. The same object back when nothing changed, so it can be kept in state. */
+export function followPin(pin: ReviewPin | null, card: Pick<Card, "id" | "prHeadSha">, readSettled: boolean): ReviewPin {
+  if (pin && pin.cardId === card.id && pin.settled && pin.sha !== null) return pin;
+  if (pin && pin.cardId === card.id && pin.sha === card.prHeadSha && pin.settled === readSettled) return pin;
+  return { cardId: card.id, sha: card.prHeadSha, settled: readSettled };
+}
+
+/** The Member chose to look at the head the Card shows now. */
+export function repin(card: Pick<Card, "id" | "prHeadSha">): ReviewPin {
+  return { cardId: card.id, sha: card.prHeadSha, settled: true };
+}
+
+export interface HeadMove {
+  from: string;
+  to: string;
+}
+
+/** How the pull request moved on from the head the Member is looking at, or null if it has not. */
+export function headMove(pin: ReviewPin, card: Pick<Card, "id" | "prHeadSha">): HeadMove | null {
+  if (pin.cardId !== card.id || !pin.settled || !pin.sha || !card.prHeadSha || pin.sha === card.prHeadSha) return null;
+  return { from: pin.sha, to: card.prHeadSha };
+}
+
+/** GitHub's page of what changed from one head to the other. */
+export function compareUrl(prUrl: string | null, move: HeadMove): string | null {
+  const repo = prUrl ? /^(https:\/\/github\.com\/[^/]+\/[^/]+)\/pull\/\d+/.exec(prUrl.trim()) : null;
+  return repo ? `${repo[1]}/compare/${move.from}...${move.to}` : null;
+}
+
+/**
+ * Whether Approve or a retry was just refused because GitHub did not answer about the checks. The
+ * server says so with a `reason` beside its sentence, which the request error carries as `data`.
+ */
+export function checksUnreadable(error: unknown): boolean {
+  const data = error && typeof error === "object" ? (error as { data?: unknown }).data : undefined;
+  return Boolean(data && typeof data === "object" && (data as { reason?: unknown }).reason === "checks_unavailable");
+}
+
+/** Said before the Admin merges without the checks GitHub did not show. */
+export const SKIP_CHECKS_WARNING = "GitHub didn't say how the checks went, so this merges without them.";
 
 /** The checks worth showing: those read for the head the Card shows, not an older one. */
 export function currentChecks(card: Pick<Card, "checks" | "prHeadSha">): ChecksSummary | null {
@@ -80,7 +150,7 @@ export function approveGate(checks: ChecksSummary | null, isAdmin: boolean): App
   return { blocked: false, override: false, reason: null, warning: null };
 }
 
-const shortSha = (sha: string) => sha.slice(0, 7);
+export const shortSha = (sha: string) => sha.slice(0, 7);
 
 /** The confirmation's plain statement of what Approve does. */
 export function mergeStatement(card: Pick<Card, "prNumber" | "prHeadSha" | "prBaseRef">): string {

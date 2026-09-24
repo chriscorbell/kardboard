@@ -49,6 +49,11 @@ describe("the workflow every card Session follows", () => {
     assert.match(text, /8\. End by calling finish with a one-sentence outcome\. Always call it/);
   });
 
+  it("keeps the report, card moves, and finish to the main agent, since subagents share its tools", async () => {
+    const text = await prompt([trigger("comment_posted")]);
+    assert.match(text, /Only you, the main agent, post the report, move cards, and call finish\. Subagents you start are for research and code work only/);
+  });
+
   it("treats an LGTM comment as a pointer to the Approve button", async () => {
     assert.match(await prompt([trigger("comment_posted")]), /"LGTM" or "approved" is not an Approval/);
   });

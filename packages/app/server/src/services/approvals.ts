@@ -3,7 +3,7 @@ import { approvalAwaitingRetry, describeChecks, type Approval, type Card, type C
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { recordEvent, type Actor } from "./events.js";
-import { closeCardWork, enqueueTrigger } from "./orchestrator.js";
+import { closeCardWork, enqueueTrigger, scheduleDispatch } from "./orchestrator.js";
 import { publish } from "./realtime.js";
 import { getBoardById } from "./boards.js";
 import { createComment } from "./comments.js";
@@ -34,7 +34,9 @@ export async function listApprovals(cardId: string): Promise<Approval[]> {
 export class ApprovalError extends Error {
   constructor(
     message: string,
-    public status: 400 | 409 = 400,
+    public status: 400 | 409 | 503 = 400,
+    /** A machine word for a refusal the client acts on, beside the sentence it shows. */
+    public reason?: "checks_unavailable",
   ) {
     super(message);
   }
@@ -114,6 +116,30 @@ export async function recordPullRequest(cardId: string, pr: PullRequest): Promis
   return setCardWorkState(cardId, { prNumber: pr.number, prUrl: pr.url, prHeadSha: pr.headSha, prBaseRef: pr.baseRef || null, ...(stale ? { checks: null } : {}) });
 }
 
+/**
+ * recordPullRequest for a caller that read the pull request from GitHub some time ago: it is
+ * recorded only if the Card still names `expected` as its head, so an answer that was in flight
+ * while a Session reported a newer head cannot put the older one back over it. Returns whether it
+ * was recorded.
+ */
+export async function recordPullRequestIfUnchanged(cardId: string, pr: PullRequest, expected: string | null): Promise<boolean> {
+  const before = await db.select({ checks: schema.cards.checks }).from(schema.cards).where(eq(schema.cards.id, cardId)).get();
+  const stale = Boolean(before?.checks && before.checks.sha !== pr.headSha);
+  const written = await db
+    .update(schema.cards)
+    .set({ prNumber: pr.number, prUrl: pr.url, prHeadSha: pr.headSha, prBaseRef: pr.baseRef || null, ...(stale ? { checks: null } : {}), updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.cards.id, cardId), expected === null ? isNull(schema.cards.prHeadSha) : eq(schema.cards.prHeadSha, expected)))
+    .returning({ id: schema.cards.id });
+  if (written.length === 0) return false;
+  await db
+    .update(schema.approvals)
+    .set({ invalidatedAt: new Date().toISOString() })
+    .where(and(eq(schema.approvals.cardId, cardId), isNull(schema.approvals.invalidatedAt), or(isNull(schema.approvals.headSha), ne(schema.approvals.headSha, pr.headSha))));
+  const card = (await getCard(cardId))!;
+  publish(card.boardId, { type: "card.upserted", card });
+  return true;
+}
+
 /** Whether what the Card records of its pull request differs from what GitHub says now. */
 function recordedDiffers(card: CardRow, pr: PullRequest): boolean {
   return pr.headSha !== card.prHeadSha || pr.number !== card.prNumber || pr.url !== card.prUrl || (pr.baseRef || null) !== card.prBaseRef;
@@ -185,6 +211,11 @@ export function followUpFor(outcome: MergeOutcome, prNumber: number, mention: st
       comment: `${mention} Pull request #${prNumber} can't be merged as it stands (${outcome.message}). I'll bring the branch up to date and ask you to approve again.`.trim(),
     };
   }
+  if (outcome.reason === "closed") {
+    // Someone closed it on GitHub. The Approval was for that pull request as it stood, and the poll
+    // moves the Card to Blocked and asks what should happen next.
+    return { kind: "invalidated", rerun: false, comment: `${mention} Pull request #${prNumber} was closed on GitHub before it could merge, so nothing was merged.`.trim() };
+  }
   if (outcome.reason === "pending") {
     // GitHub had not finished working out whether it can merge, even when asked again. Nothing is
     // wrong with the pull request, so nothing is voided and nobody is sent to change the branch.
@@ -204,6 +235,8 @@ export function followUpFor(outcome: MergeOutcome, prNumber: number, mention: st
 // on the Card to say why nothing merged.
 async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: PullRequest; headSha: string; repo: Repo; mention: string; actorUserId: string }): Promise<void> {
   const { card, approvalId, pr, repo, mention } = input;
+  // Every hold was checked before this; a change made from here on is not what the merge was for.
+  const mergedAt = new Date().toISOString();
   const outcome: MergeOutcome = await mergePullRequest(repo.owner, repo.repo, pr.number, input.headSha, `${pr.title} (#${pr.number})`, pr.body).catch((err: Error) => ({
     ok: false as const,
     reason: "error" as const,
@@ -213,7 +246,7 @@ async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: P
 
   if (followUp.kind === "merged") {
     await db.update(schema.approvals).set({ mergeError: null }).where(eq(schema.approvals.id, approvalId));
-    await completeMerge(card, { prNumber: pr.number, headRef: pr.headRef, mergeSha: followUp.sha, repo, actor: AGENT, comment: `${mention} Merged pull request #${pr.number} and moved this card to Done.`.trim() });
+    await completeMerge(card, { prNumber: pr.number, headRef: pr.headRef, mergeSha: followUp.sha, repo, actor: AGENT, mergedAt, comment: `${mention} Merged pull request #${pr.number} and moved this card to Done.`.trim() });
     return;
   }
 
@@ -238,14 +271,16 @@ async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: P
  * still at work is ended and the Preview torn down, and the Card lands in Done whatever moved it
  * meanwhile. Safe to run again on a Card a restart left half way through.
  */
-export async function completeMerge(card: CardRow, input: { prNumber: number; headRef: string; mergeSha: string | null; repo: Repo; actor: Actor; comment: string; onGitHub?: boolean }): Promise<void> {
+export async function completeMerge(card: CardRow, input: { prNumber: number; headRef: string; mergeSha: string | null; repo: Repo; actor: Actor; comment: string; onGitHub?: boolean; mergedAt?: string | null }): Promise<void> {
   const merges = await db.select({ payload: schema.events.payload }).from(schema.events).where(and(eq(schema.events.cardId, card.id), eq(schema.events.type, "card.merged")));
   if (!merges.some((e) => e.payload.prNumber === input.prNumber)) {
     await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "card.merged", payload: { prNumber: input.prNumber, mergeSha: input.mergeSha, ...(input.onGitHub ? { onGitHub: true } : {}) } });
   }
   await deleteBranch(input.repo.owner, input.repo.repo, input.headRef).catch(() => {});
   // The merge is the end of this card's work: a Session still running on it must not reopen it.
-  await closeCardWork(card.id, AGENT);
+  // Except a change someone made after the merge went ahead: a comment then is about the merged
+  // work, and like a comment on any Card in Done it opens the Card again below.
+  await closeCardWork(card.id, AGENT, { keepTriggersAfter: input.mergedAt ?? undefined });
   // GitHub has accepted the merge, so the Card ends in Done whatever moved it in the meantime.
   for (let attempt = 1; ; attempt++) {
     const fresh = (await getCard(card.id))!;
@@ -258,20 +293,60 @@ export async function completeMerge(card: CardRow, input: { prNumber: number; he
     }
   }
   await createComment({ cardId: card.id, body: input.comment, actor: AGENT });
+  const late = await db.select({ id: schema.triggers.id }).from(schema.triggers).where(and(eq(schema.triggers.cardId, card.id), eq(schema.triggers.status, "pending"))).get();
+  if (late) scheduleDispatch(card.id, 1_000);
 }
 
 /**
  * The checks gate on a merge. CI is read again for the head about to merge rather than taken from
  * what the Card last showed, and a failing run refuses the merge unless the Admin chose to merge
- * anyway. Pending and unknown do not refuse: the Member was warned of the first before approving,
- * and the second is a repository that does not let kardboard see its checks at all.
+ * anyway. So does a read GitHub failed to answer, since the checks it could not show may be the
+ * failing ones. Pending and unknown do not refuse: the Member was warned of the first before
+ * approving, and the second is a repository that does not let kardboard see its checks at all.
+ * `overridden` is whether the Admin's choice is what let the merge through.
  */
-async function checksGate(card: CardRow, repo: Repo, pr: PullRequest, headSha: string, overrideChecks: boolean): Promise<ChecksSummary> {
-  const summary = toChecksSummary(await refreshCardChecks(card.id, repo, headSha), headSha);
-  if (summary.state === "failing" && !overrideChecks) {
-    throw new ApprovalError(`${describeChecks(summary)} on pull request #${pr.number}, so it can't be merged yet. Once they pass it can be; the Admin can also merge it anyway.`, 409);
+async function checksGate(card: CardRow, repo: Repo, pr: PullRequest, headSha: string, overrideChecks: boolean): Promise<{ summary: ChecksSummary; overridden: boolean }> {
+  const read = await refreshCardChecks(card.id, repo, headSha);
+  const summary = toChecksSummary(read, headSha);
+  if (read.unavailable) {
+    if (!overrideChecks) {
+      throw new ApprovalError(`kardboard couldn't read the checks on pull request #${pr.number} from GitHub just now, so nothing was merged. Try again in a moment.`, 503, "checks_unavailable");
+    }
+    return { summary, overridden: true };
   }
-  return summary;
+  if (summary.state === "failing") {
+    if (!overrideChecks) {
+      throw new ApprovalError(`${describeChecks(summary)} on pull request #${pr.number}, so it can't be merged yet. Once they pass it can be; the Admin can also merge it anyway.`, 409);
+    }
+    return { summary, overridden: true };
+  }
+  return { summary, overridden: false };
+}
+
+/**
+ * Why Approve or a merge retry has to wait for the Agent, or null when it need not. A Session still
+ * at work can push again, so what the Member looked at is not settled yet. Nor is it while a Trigger
+ * waits to start one — a comment asking for a change, an edit, a move, held by the batching window,
+ * a paused Board, or full slots — since that Session may push too, and a merge now would close the
+ * Card and drop the request unanswered.
+ */
+async function agentHold(cardId: string, then: string): Promise<string | null> {
+  const card = await getCard(cardId);
+  if (!card) return null;
+  const agent = (await getAgentProfile()).name;
+  if (card.activeSession) return `${agent} is still working on this card. ${then} once the session has finished.`;
+  const pending = await db
+    .select({ kind: schema.triggers.kind })
+    .from(schema.triggers)
+    .where(and(eq(schema.triggers.cardId, cardId), eq(schema.triggers.status, "pending")));
+  if (pending.length === 0) return null;
+  // On a paused Board nothing will read it until the Admin resumes, which is worth saying.
+  if (card.waiting?.reason === "paused") return `${agent} is paused on this board, and hasn't read the latest change to this card yet. ${then} once the Admin resumes the board and ${agent} has read it.`;
+  const kinds = new Set(pending.map((t) => t.kind));
+  if (kinds.has("comment_posted") || kinds.has("comment_edited")) return `${agent} hasn't read the latest comment yet. ${then} once it has.`;
+  if (kinds.has("card_edited")) return `${agent} hasn't read the latest edit to this card yet. ${then} once it has.`;
+  if (kinds.has("card_moved") || kinds.has("card_created")) return `${agent} hasn't picked up the latest change to this card yet. ${then} once it has.`;
+  return `${agent} is about to pick this card up again. ${then} once that session has finished.`;
 }
 
 // Approval is bound to the pull request head the Member was shown: the client sends back the head
@@ -287,14 +362,14 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
   if (!card) throw new Error("card not found");
   if (card.column !== "review") throw new ApprovalError("Only cards in Review can be approved.");
   if (!actor.id) throw new ApprovalError("Approval needs a signed-in user.");
-  // A Session still at work can push again, so what the Member looked at is not settled yet.
-  if (card.activeSession) throw new ApprovalError(`${(await getAgentProfile()).name} is still working on this card. Approve once the session has finished.`, 409);
+  const hold = await agentHold(cardId, "Approve");
+  if (hold) throw new ApprovalError(hold, 409);
   const board = (await getBoardById(card.boardId))!;
   const repo = parseRepoUrl(board.repoUrl);
   const mention = await mentionFor(actor.id);
 
   let pr: PullRequest | null = null;
-  let checks: ChecksSummary | null = null;
+  let checks: { summary: ChecksSummary; overridden: boolean } | null = null;
   if (repo && githubConfigured("merge")) {
     pr = await resolvePullRequest(card, repo.owner, repo.repo);
     if (!pr || pr.state !== "open") throw new ApprovalError("No open pull request is linked to this card yet, so there is nothing to approve.");
@@ -314,6 +389,9 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
   } else if (card.prHeadSha && reviewedSha !== card.prHeadSha) {
     throw new ApprovalError("This card changed since you loaded it. Look again and approve if it still looks right.", 409);
   }
+  // Reading GitHub takes a moment, and a comment or a Session can arrive in it.
+  const late = await agentHold(cardId, "Approve");
+  if (late) throw new ApprovalError(late, 409);
 
   const id = newId();
   const headSha = pr?.headSha ?? reviewedSha;
@@ -323,7 +401,7 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
     cardId,
     actor,
     type: "card.approved",
-    payload: { approvalId: id, prNumber: pr?.number ?? card.prNumber, headSha, ...(checks ? { checks: checks.state } : {}), ...(checks?.state === "failing" ? { overrideChecks: true } : {}) },
+    payload: { approvalId: id, prNumber: pr?.number ?? card.prNumber, headSha, ...(checks ? { checks: checks.summary.state } : {}), ...(checks?.overridden ? { overrideChecks: true } : {}) },
   });
   publish(card.boardId, { type: "card.upserted", card: (await getCard(cardId))! });
 
@@ -351,7 +429,8 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
   if (!card) throw new Error("card not found");
   if (!actor.id) throw new ApprovalError("Retrying a merge needs a signed-in user.");
   if (card.column !== "review") throw new ApprovalError("Only cards in Review can be merged.");
-  if (card.activeSession) throw new ApprovalError(`${(await getAgentProfile()).name} is working on this card. Try the merge again once the session has finished.`, 409);
+  const hold = await agentHold(cardId, "Try the merge again");
+  if (hold) throw new ApprovalError(hold, 409);
 
   const approval = approvalAwaitingRetry(await listApprovals(cardId));
   if (!approval) throw new ApprovalError("No approval on this card is waiting on a refused merge.");
@@ -372,6 +451,8 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
   // A head that moved fails the merge's own precondition below, which voids the Approval and asks
   // for a fresh look; the checks of a commit nobody approved have nothing to say about that.
   const checks = pr.headSha === approval.headSha ? await checksGate(card, repo, pr, approval.headSha, overrideChecks) : null;
+  const late = await agentHold(cardId, "Try the merge again");
+  if (late) throw new ApprovalError(late, 409);
 
   const mention = await mentionFor(actor.id);
   await recordEvent({
@@ -379,7 +460,7 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
     cardId,
     actor,
     type: "card.merge_retried",
-    payload: { approvalId: approval.id, prNumber: pr.number, ...(checks ? { checks: checks.state } : {}), ...(checks?.state === "failing" ? { overrideChecks: true } : {}) },
+    payload: { approvalId: approval.id, prNumber: pr.number, ...(checks ? { checks: checks.summary.state } : {}), ...(checks?.overridden ? { overrideChecks: true } : {}) },
   });
   await mergeOnApproval({ card, approvalId: approval.id, pr, headSha: approval.headSha, repo, mention, actorUserId: actor.id });
   return (await readApproval(approval.id))!;

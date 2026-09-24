@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
@@ -31,7 +32,7 @@ import { env } from "../env.js";
 import { refreshFromClerk, requireAdmin, requireUser, type AuthVariables } from "../auth.js";
 import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardPeople, listBoardsForUser, listMembers, listMentionable, setBoardPaused, setMembers, updateBoard } from "../services/boards.js";
 import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, retryCard, RetryRefused, updateCard } from "../services/cards.js";
-import { addAttachment, createComment, deleteComment, getAttachment, getComment, listComments, updateComment } from "../services/comments.js";
+import { addAttachment, createComment, deleteComment, getAttachment, getComment, listComments, underFileLock, updateComment } from "../services/comments.js";
 import { getAgentProfile, getSettings, updateSettings } from "../services/settings.js";
 import { getPreferences, getUser, inviteUser, listUsers, setUserStatus, updatePreferences } from "../services/users.js";
 import { sendInvitation } from "../services/email.js";
@@ -211,8 +212,9 @@ api.post("/cards/:id/move", json(moveCardSchema), async (c) => {
 });
 
 // `headSha` is the pull request head the Card showed the Member. Approval is bound to it, and is
-// refused if the pull request has moved on since, or while its checks are failing unless the Admin
-// sends `overrideChecks`.
+// refused if the pull request has moved on since, while the Agent has work on the Card still to
+// start or finish, or while its checks are failing or cannot be read unless the Admin sends
+// `overrideChecks`. A refusal the client acts on carries a `reason` beside the sentence.
 api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullable().optional(), overrideChecks: z.boolean().optional() })), async (c) => {
   const card = await getCard(c.req.param("id"));
   if (!card) return c.json({ error: "not_found" }, 404);
@@ -222,7 +224,7 @@ api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullab
   try {
     return c.json(await approveCard(card.id, actorOf(c), input.headSha ?? null, { overrideChecks: overrideFor(c, input.overrideChecks) }), 201);
   } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
+    if (err instanceof ApprovalError) return c.json({ error: err.message, ...(err.reason ? { reason: err.reason } : {}) }, err.status);
     throw err;
   }
 });
@@ -239,7 +241,7 @@ api.post("/cards/:id/retry-merge", async (c) => {
   try {
     return c.json(await retryMerge(card.id, actorOf(c), { overrideChecks: overrideFor(c, body.success ? body.data.overrideChecks : undefined) }));
   } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message }, err.status);
+    if (err instanceof ApprovalError) return c.json({ error: err.message, ...(err.reason ? { reason: err.reason } : {}) }, err.status);
     throw err;
   }
 });
@@ -310,7 +312,11 @@ api.delete("/comments/:id", async (c) => {
   return c.body(null, 204);
 });
 
-api.post("/comments/:id/attachments", async (c) => {
+// The multipart body is read into memory, so it is refused as it streams in once it passes the
+// limit, rather than after all of it has arrived.
+const uploadLimit = bodyLimit({ maxSize: MAX_ATTACHMENT_BYTES + 1024 * 1024, onError: (c) => c.json({ error: "file exceeds 25 MB" }, 413) });
+
+api.post("/comments/:id/attachments", uploadLimit, async (c) => {
   const comment = await getComment(c.req.param("id"));
   if (!comment) return c.json({ error: "not_found" }, 404);
   const card = (await getCard(comment.cardId))!;
@@ -327,13 +333,17 @@ api.post("/comments/:id/attachments", async (c) => {
   const dir = path.join(env.dataDir, "uploads", sha256.slice(0, 2));
   fs.mkdirSync(dir, { recursive: true });
   const target = path.join(dir, sha256);
-  if (!fs.existsSync(target)) fs.writeFileSync(target, bytes);
-  const att = await addAttachment({
-    commentId: comment.id,
-    filename: file.name || "attachment",
-    mime: file.type || "application/octet-stream",
-    size: file.size,
-    sha256,
+  // Under the same lock as removing an unused file, so a Comment deleted at this moment cannot take
+  // the file this Attachment is about to point at.
+  const att = await underFileLock(sha256, async () => {
+    if (!fs.existsSync(target)) fs.writeFileSync(target, bytes);
+    return addAttachment({
+      commentId: comment.id,
+      filename: file.name || "attachment",
+      mime: file.type || "application/octet-stream",
+      size: file.size,
+      sha256,
+    });
   });
   return c.json(att, 201);
 });

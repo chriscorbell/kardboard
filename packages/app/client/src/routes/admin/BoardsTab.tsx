@@ -57,7 +57,9 @@ export function BoardsTab() {
         agentImage: draft.agentImage || null,
         maxConcurrentSessions: draft.maxConcurrentSessions,
         promptAppend: draft.promptAppend,
-        paused: draft.paused,
+        // Sent only when the box changed here, so saving an unrelated edit never undoes a pause made
+        // from the Board page since this dialog opened.
+        ...(editing === "new" || draft.paused !== (editing as AdminBoard).paused ? { paused: draft.paused } : {}),
       };
       const board = editing === "new" ? await request<Board>("/admin/boards", { method: "POST", body: JSON.stringify(body) }) : await request<Board>(`/admin/boards/${(editing as AdminBoard).id}`, { method: "PATCH", body: JSON.stringify(body) });
       await request(`/admin/boards/${board.id}/members`, { method: "PUT", body: JSON.stringify({ userIds: draft.memberIds }) });

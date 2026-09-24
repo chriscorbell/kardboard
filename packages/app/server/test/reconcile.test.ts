@@ -16,7 +16,7 @@ process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 githubAppEnv();
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
-const { getCard } = await import("../src/services/cards.js");
+const { getCard, moveCard } = await import("../src/services/cards.js");
 const { approveCard, listApprovals, retryMerge, underCardLock } = await import("../src/services/approvals.js");
 const { reconcileCard, reconcileOnDemand, reconcilePullRequests } = await import("../src/services/reconcile.js");
 const { api } = await import("../src/routes/api.js");
@@ -91,6 +91,20 @@ describe("a pull request merged on GitHub", () => {
     assert.deepEqual(await db.select().from(schema.triggers), [], "nothing here is a Trigger");
   });
 
+  it("keeps a change someone made after the merge, so it opens the card again", async () => {
+    mergedOnGitHub();
+    await db.insert(schema.triggers).values([
+      { id: "before", boardId: "board-1", cardId: CARD, kind: "comment_posted", actorUserId: "ada", payload: {}, createdAt: "2026-09-24T09:59:00.000Z" },
+      { id: "after", boardId: "board-1", cardId: CARD, kind: "comment_posted", actorUserId: "ada", payload: {}, createdAt: "2026-09-24T10:01:00.000Z" },
+    ]);
+
+    assert.equal(await reconcileCard(CARD), "merged");
+
+    const status = new Map((await db.select().from(schema.triggers)).map((t) => [t.id, t.status]));
+    assert.equal(status.get("before"), "consumed", "what came before the merge was the merged work");
+    assert.equal(status.get("after"), "pending", "a comment on merged work reopens the card, as on any card in Done");
+  });
+
   it("wakes the parent of a split request with this piece counted as implemented", async () => {
     await db.insert(schema.cards).values({ id: "parent", boardId: "board-1", title: "The whole request", column: "blocked", creatorKind: "user", creatorId: "ada" });
     await db.update(schema.cards).set({ parentCardId: "parent", creatorKind: "agent", creatorId: null }).where(eq(schema.cards.id, CARD));
@@ -115,6 +129,88 @@ describe("a pull request merged on GitHub", () => {
     assert.equal(card.outcome, "implemented");
     assert.equal((await events("card.merged")).length, 1);
     assert.deepEqual(await comments(), ["Merged pull request #7 and moved this card to Done."]);
+  });
+});
+
+describe("a card reopened after its pull request merged", () => {
+  const AGENT_ACTOR = { kind: "agent" as const, id: null };
+
+  it("forgets the merged pull request, so the poll leaves the new work alone", async () => {
+    await approveCard(CARD, { kind: "user", id: "bea" }, HEAD_A);
+    const done = (await getCard(CARD))!;
+    assert.equal(done.column, "done");
+
+    // A comment reopens it, and the Session takes it to In Progress to open a new pull request.
+    const reopened = await moveCard(CARD, { column: "in_progress", position: done.position, revision: done.revision, actor: AGENT_ACTOR });
+    assert.deepEqual([reopened.prNumber, reopened.prUrl, reopened.prHeadSha, reopened.prBaseRef, reopened.checks], [null, null, null, null, null]);
+    assert.equal(reopened.branch, BRANCH, "the branch stays the card's for its whole life");
+    assert.ok((await listApprovals(CARD)).every((a) => a.invalidatedAt), "the approval the merge spent does not stand on the reopened card");
+
+    await startSession();
+    const asked = github.requests.length;
+    const said = (await comments()).length;
+    assert.equal(await reconcileCard(CARD), "skipped");
+
+    const card = (await getCard(CARD))!;
+    assert.equal(card.column, "in_progress");
+    assert.notEqual(card.activeSession, null, "the session doing the new work is not ended");
+    assert.deepEqual(github.requests.slice(asked), [], "the branch the session pushes to is not deleted");
+    assert.equal((await comments()).length, said);
+    assert.equal((await events("card.merged")).length, 1);
+  });
+
+  it("keeps a pull request that was closed without a merge", async () => {
+    const review = (await getCard(CARD))!;
+    const done = await moveCard(CARD, { column: "done", position: review.position, revision: review.revision, actor: { kind: "user", id: "ada" } });
+    const reopened = await moveCard(CARD, { column: "in_progress", position: done.position, revision: done.revision, actor: AGENT_ACTOR });
+    assert.deepEqual([reopened.prNumber, reopened.prHeadSha], [7, HEAD_A], "the work may go on in the same pull request");
+  });
+
+  it("is not completed again when it still names the merged pull request", async () => {
+    // A card reopened before moveCard forgot a merged pull request: merged, in Done, and out again.
+    await db.update(schema.cards).set({ column: "in_progress" }).where(eq(schema.cards.id, CARD));
+    await db.insert(schema.events).values([
+      { id: "e1", boardId: "board-1", cardId: CARD, actorKind: "agent", actorId: null, type: "card.merged", payload: { prNumber: 7, mergeSha: "c".repeat(40) }, createdAt: "2026-09-24T10:00:00.000Z" },
+      { id: "e2", boardId: "board-1", cardId: CARD, actorKind: "agent", actorId: null, type: "card.moved", payload: { from: "review", to: "done" }, createdAt: "2026-09-24T10:00:00.001Z" },
+      { id: "e3", boardId: "board-1", cardId: CARD, actorKind: "agent", actorId: null, type: "card.moved", payload: { from: "done", to: "in_progress" }, createdAt: "2026-09-24T11:00:00.000Z" },
+    ]);
+    await db.insert(schema.approvals).values({ id: "approval-1", cardId: CARD, userId: "bea", prNumber: 7, headSha: HEAD_A });
+    await startSession();
+    mergedOnGitHub();
+
+    assert.equal(await reconcileCard(CARD), "skipped");
+
+    const card = (await getCard(CARD))!;
+    assert.equal(card.column, "in_progress");
+    assert.notEqual(card.activeSession, null);
+    assert.equal(card.prNumber, null, "the merged pull request is forgotten, as moveCard now does");
+    assert.notEqual((await listApprovals(CARD))[0]!.invalidatedAt, null);
+    assert.deepEqual(
+      github.requests.filter((r) => r.startsWith("DELETE")),
+      [],
+    );
+    assert.deepEqual(await comments(), []);
+    assert.equal(await reconcileCard(CARD), "skipped", "and the next poll has nothing to ask GitHub");
+  });
+});
+
+describe("a card reopened after its pull request merged on GitHub while it sat in Done", () => {
+  it("forgets the pull request rather than completing it over the new work", async () => {
+    // Closed in Done by a person, merged on GitHub afterwards, which the poll never saw, then reopened.
+    await db.update(schema.cards).set({ column: "in_progress" }).where(eq(schema.cards.id, CARD));
+    mergedOnGitHub();
+    const merged = github.pulls.get(7)!;
+    merged.closedAt = "2026-09-24T10:00:00.000Z";
+    await db.insert(schema.events).values({ id: "left-done", boardId: "board-1", cardId: CARD, actorKind: "user", actorId: "ada", type: "card.moved", payload: { from: "done", to: "in_progress" }, createdAt: "2026-09-24T11:00:00.000Z" });
+    await startSession();
+
+    assert.equal(await reconcileCard(CARD), "skipped");
+
+    const card = (await getCard(CARD))!;
+    assert.equal(card.column, "in_progress");
+    assert.notEqual(card.activeSession, null);
+    assert.equal(card.prNumber, null);
+    assert.deepEqual(github.requests.filter((r) => r.startsWith("DELETE")), []);
   });
 });
 
@@ -195,12 +291,55 @@ describe("a merge a restart cut short", () => {
 
     const [approval] = await listApprovals(CARD);
     assert.equal(approval!.invalidatedAt, null);
-    assert.match(approval!.mergeError ?? "", /restarted/);
-    assert.match((await comments())[0]!, /^@bea kardboard restarted while merging pull request #7/);
+    assert.equal(approval!.mergeError, "The merge on this approval did not finish, and nothing was merged.");
+    assert.match((await comments())[0]!, /^@bea The merge of pull request #7 on this approval did not finish, and nothing was merged\./);
+    assert.doesNotMatch((await comments())[0]!, /restart/, "the poll cannot tell a restart from an older approval, so it does not say which");
 
     await retryMerge(CARD, { kind: "user", id: "bea" });
     assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
     assert.equal((await getCard(CARD))!.column, "done");
+  });
+});
+
+describe("a poll GitHub answers slowly", () => {
+  // Runs `meanwhile` while the poll waits for GitHub's answer about pull request #7.
+  async function whileAsking<T>(meanwhile: () => Promise<unknown>, fn: () => Promise<T>): Promise<T> {
+    const fake = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/pulls/7") && (init?.method ?? "GET") === "GET") await meanwhile();
+      return fake(input, init);
+    }) as typeof fetch;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = fake;
+    }
+  }
+
+  it("does not put back an older head over the one a Session reported meanwhile", async () => {
+    const HEAD_C = "f".repeat(40);
+    github.pulls.get(7)!.sha = HEAD_B;
+
+    const result = await whileAsking(() => db.update(schema.cards).set({ prHeadSha: HEAD_C }).where(eq(schema.cards.id, CARD)), () => reconcileCard(CARD));
+
+    assert.equal(result, "unchanged");
+    assert.equal((await getCard(CARD))!.prHeadSha, HEAD_C);
+    assert.deepEqual(await comments(), []);
+    assert.deepEqual(await events("pull_request.head_changed"), []);
+  });
+
+  it("does not move a card to Blocked when a Session started meanwhile", async () => {
+    const p = github.pulls.get(7)!;
+    p.state = "closed";
+    p.closedAt = "2026-09-24T10:00:00.000Z";
+
+    const result = await whileAsking(() => startSession(), () => reconcileCard(CARD));
+
+    assert.equal(result, "unchanged");
+    assert.equal((await getCard(CARD))!.column, "review");
+    assert.deepEqual(await comments(), []);
+    assert.deepEqual(await events("pull_request.closed"), [], "the closing is still to be handled once the session is done");
   });
 });
 
@@ -212,6 +351,18 @@ describe("the poll", () => {
 
     const checks = (await getCard(CARD))!.checks;
     assert.deepEqual([checks?.state, checks?.pending, checks?.sha], ["pending", 1, HEAD_A]);
+  });
+
+  it("keeps the CI it last read when GitHub fails to answer", async () => {
+    github.checkRuns.set(HEAD_A, [{ name: "test", status: "completed", conclusion: "success" }]);
+    await reconcileCard(CARD);
+    const before = (await getCard(CARD))!.checks;
+    assert.equal(before?.state, "passing");
+
+    github.checkRuns.set(HEAD_A, 502);
+    await reconcileCard(CARD);
+
+    assert.deepEqual((await getCard(CARD))!.checks, before, "a bad moment at GitHub is not news about the checks");
   });
 
   it("leaves Done cards, cards with no pull request, and cards on boards without GitHub alone", async () => {

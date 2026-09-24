@@ -49,7 +49,7 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
   const lastMap = await latestEndedSessions(ids);
   const waitingMap = await waitingFor(rows, activeMap, lastMap);
   const previews = await db.select().from(schema.previews).where(inArray(schema.previews.cardId, ids));
-  const previewMap = new Map<string, CardPreview>(previews.map((p) => [p.cardId, { status: p.status, error: p.error, sha: p.sha, updatedAt: p.updatedAt }]));
+  const previewMap = new Map<string, CardPreview>(previews.map((p) => [p.cardId, { status: p.status, error: p.error, sha: p.sha, failedSha: p.failedSha, updatedAt: p.updatedAt }]));
   const awaiting = await awaitingReply(rows.filter((r) => r.column === "blocked").map((r) => r.id));
   return rows.map((r) => ({
     id: r.id,
@@ -253,12 +253,14 @@ export async function updateCard(
     .returning({ id: schema.cards.id });
   if (written.length === 0) throw new ConflictError("card changed since you loaded it");
   const card = (await getCard(id))!;
+  // What each changed field said before, so no edit, a person's or the Agent's, loses an author's words.
+  const previous = Object.fromEntries(Object.keys(changed).map((field) => [field, current[field as "title" | "description" | "priority"]]));
   await recordEvent({
     boardId: card.boardId,
     cardId: card.id,
     actor: input.actor,
     type: "card.edited",
-    payload: { fields: Object.keys(changed) },
+    payload: { fields: Object.keys(changed), previous },
   });
   publish(card.boardId, { type: "card.upserted", card });
   // Priority alone is a signal to the next Session, not a reason to start one.
@@ -274,6 +276,40 @@ export async function updateCard(
   return card;
 }
 
+/** When kardboard recorded the merge of this pull request of the Card, or null if it never did. */
+export async function mergeRecordedAt(cardId: string, prNumber: number | null): Promise<string | null> {
+  if (!prNumber) return null;
+  const merges = await db
+    .select({ payload: schema.events.payload, createdAt: schema.events.createdAt })
+    .from(schema.events)
+    .where(and(eq(schema.events.cardId, cardId), eq(schema.events.type, "card.merged")));
+  return merges.find((e) => e.payload.prNumber === prNumber)?.createdAt ?? null;
+}
+
+// Everything a Card records of its pull request, forgotten together.
+const NO_PULL_REQUEST = { prUrl: null, prNumber: null, prHeadSha: null, prBaseRef: null, checks: null };
+
+async function voidStandingApprovals(cardId: string): Promise<void> {
+  await db.update(schema.approvals).set({ invalidatedAt: new Date().toISOString() }).where(and(eq(schema.approvals.cardId, cardId), isNull(schema.approvals.invalidatedAt)));
+}
+
+/**
+ * What moveCard forgets of a reopened Card, for a Card that left Done before it did so: one still
+ * naming the pull request it merged, which the poll would otherwise read as merged and close again.
+ * Only while the Card still names that pull request, so a new one a Session has just reported stays.
+ */
+export async function forgetMergedPullRequest(cardId: string, prNumber: number): Promise<void> {
+  const written = await db
+    .update(schema.cards)
+    .set({ ...NO_PULL_REQUEST, updatedAt: new Date().toISOString() })
+    .where(and(eq(schema.cards.id, cardId), eq(schema.cards.prNumber, prNumber)))
+    .returning({ id: schema.cards.id });
+  if (written.length === 0) return;
+  await voidStandingApprovals(cardId);
+  const card = (await getCard(cardId))!;
+  publish(card.boardId, { type: "card.upserted", card });
+}
+
 export async function moveCard(
   id: string,
   input: { column: Column; position: number; revision: number; actor: Actor; silent?: boolean },
@@ -284,6 +320,10 @@ export async function moveCard(
   const columnChanged = current.column !== input.column;
   const enteringDone = columnChanged && input.column === "done";
   const leavingDone = columnChanged && current.column === "done";
+  // A reopened Card whose pull request was merged opens a new one from its own branch, so the merged
+  // one is forgotten: left on the Card, the poll would read it as merged and close the Card again,
+  // ending the Session that reopened it. One closed without a merge stays; the work may go on there.
+  const forgetPullRequest = leavingDone && (await mergeRecordedAt(id, current.prNumber)) !== null;
   // As in updateCard: of two moves made from the same revision, only the first is written.
   const written = await db
     .update(schema.cards)
@@ -298,6 +338,9 @@ export async function moveCard(
     .where(and(eq(schema.cards.id, id), eq(schema.cards.revision, input.revision)))
     .returning({ id: schema.cards.id });
   if (written.length === 0) throw new ConflictError("card changed since you loaded it");
+  // Apart from the move, and only while the Card still names the merged pull request: a Session
+  // that reported a new one in the meantime keeps it, since reporting does not change the revision.
+  if (forgetPullRequest && current.prNumber) await forgetMergedPullRequest(id, current.prNumber);
   let card = (await getCard(id))!;
   if (columnChanged) {
     await recordEvent({
@@ -307,10 +350,9 @@ export async function moveCard(
       type: "card.moved",
       payload: { from: current.column, to: input.column },
     });
-    // Leaving Review for anything but Done voids a standing Approval; Done is where a consumed Approval ends up.
-    if (current.column === "review" && input.column !== "done") {
-      await db.update(schema.approvals).set({ invalidatedAt: new Date().toISOString() }).where(and(eq(schema.approvals.cardId, id), isNull(schema.approvals.invalidatedAt)));
-    }
+    // Leaving Review for anything but Done voids a standing Approval, and Done is where an Approval
+    // ends: spent by its merge, or withdrawn by closing the Card. A reopened Card is approved afresh.
+    if ((current.column === "review" && input.column !== "done") || leavingDone) await voidStandingApprovals(id);
     // A human move to Done closes the card: the active Session is cancelled and nothing re-runs.
     if (input.column === "done" && input.actor.kind === "user") {
       await closeCardWork(id, input.actor);
@@ -338,8 +380,8 @@ export class RetryRefused extends Error {
 
 /**
  * Try again: a `retry_requested` Trigger that starts a Session at once rather than after the
- * batching window, since pressing the button is the whole request. Refused while a Session holds
- * the Card, which would make it a pending re-run nobody asked for, and in Done, where a Comment is
+ * batching window, since pressing the button is the whole request. Refused unless the Card's last
+ * Session failed or ran out of time, while a Session holds the Card, which would make it a pending re-run nobody asked for, and in Done, where a Comment is
  * how a closed Card is reopened. The Trigger carries the Session it follows, so the next one can
  * read what went wrong.
  */
@@ -350,6 +392,9 @@ export async function retryCard(id: string, actor: Actor): Promise<Card> {
   if (card.activeSession) throw new RetryRefused(`${agent.name} is already working on this card.`);
   if (card.column === "done") throw new RetryRefused("This card is done. Add a comment to reopen it.");
   const last = card.lastSession;
+  // Try again follows a run that stopped short, and the next Session is told so; anything else is
+  // a request for new work, which a Comment makes.
+  if (!last || (last.status !== "failed" && last.status !== "timed_out")) throw new RetryRefused(`${agent.name}'s last session on this card did not fail. Add a comment to ask for more.`);
   const payload = last ? { sessionId: last.id, status: last.status, outcomeSummary: last.outcomeSummary } : {};
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor, type: "card.retry_requested", payload });
   await enqueueTrigger({ card, kind: "retry_requested", actorUserId: actor.id, payload, promptly: true });

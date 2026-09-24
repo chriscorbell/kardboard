@@ -11,17 +11,20 @@ import { readCommitChecks, type CommitChecks } from "./github.js";
 
 type Repo = { owner: string; repo: string };
 
-export function toChecksSummary(read: Omit<CommitChecks, "checks">, sha: string, at = new Date()): ChecksSummary {
+export function toChecksSummary(read: Pick<CommitChecks, "state" | "total" | "failed" | "pending">, sha: string, at = new Date()): ChecksSummary {
   return { state: read.state, total: read.total, failed: read.failed, pending: read.pending, sha, updatedAt: at.toISOString() };
 }
 
 /**
  * Reads CI for `sha` and stores it on the Card, as long as that is still the head the Card shows:
- * a slow read must not put an older commit's checks over a newer one's. The Card is published only
- * when the summary changed, since the poll reads it every couple of minutes.
+ * a slow read must not put an older commit's checks over a newer one's. Nor does a read GitHub
+ * failed to answer replace what the Card last knew with `unknown`, which would say the repository
+ * hides its checks when it only had a bad moment. The Card is published only when the summary
+ * changed, since the poll reads it every couple of minutes.
  */
 export async function refreshCardChecks(cardId: string, repo: Repo, sha: string): Promise<CommitChecks> {
   const read = await readCommitChecks(repo.owner, repo.repo, sha);
+  if (read.unavailable) return read;
   const row = await db.select({ prHeadSha: schema.cards.prHeadSha, checks: schema.cards.checks }).from(schema.cards).where(eq(schema.cards.id, cardId)).get();
   if (!row || row.prHeadSha !== sha) return read;
   const summary = toChecksSummary(read, sha);

@@ -13,6 +13,8 @@ import { createPreviewNetwork, removePreviewNetwork } from "./networks.js";
 
 export interface PreviewRequest {
   previewId: string;
+  // The app's name for this build, returned with its report. Null from an app older than build ids.
+  buildId: string | null;
   boardSlug: string;
   cardId: string;
   host: string;
@@ -216,10 +218,18 @@ export async function buildAndRunPreview(
     await buildImage(docker, dir, previewBuildOptions(req, limits, network, signal), req, signal, onLog);
     signal.throwIfAborted();
 
-    // Replace any earlier container for this preview: a new push rebuilds in place.
+    // Replace any earlier container for this preview: a new push rebuilds in place. Past this point
+    // a newer build replacing this one no longer stops it: the earlier container is gone, and this
+    // one serves under the same name until the newer build swaps it out, where stopping here would
+    // leave the Preview with nothing to serve for the length of that build.
     await removePreviewContainer(docker, req.previewId);
     const container = await docker.createContainer(previewContainerSpec(req, limits, network));
-    await container.start();
+    try {
+      await container.start();
+    } catch (err) {
+      await container.remove({ force: true }).catch(() => {});
+      throw err;
+    }
     onLog(`[preview] started ${previewContainerName(req.previewId)} on :${req.port}`);
 
     // The tag has moved to the new image, and the old image's container is gone, so nothing uses it.
