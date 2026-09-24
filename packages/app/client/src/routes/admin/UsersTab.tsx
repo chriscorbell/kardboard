@@ -63,15 +63,20 @@ export function UsersTab() {
           {users.data.map((u) => (
             <li key={u.id} className="flex items-center gap-3 px-4 py-3">
               <Avatar name={u.name} url={u.avatarUrl} size={30} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13.5px] font-medium text-ink">
-                  {u.name} <span className="font-mono text-[11.5px] font-normal text-ink-faint">@{u.handle}</span>
-                </p>
-                <p className="truncate text-[12.5px] text-ink-muted">{u.email}</p>
+              {/* On a phone the chips sit under the name instead of squeezing it to nothing. */}
+              <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
+                <div className="min-w-0 sm:flex-1">
+                  <p className="truncate text-[13.5px] font-medium text-ink">
+                    {u.name} <span className="font-mono text-[11.5px] font-normal text-ink-faint">@{u.handle}</span>
+                  </p>
+                  <p className="truncate text-[12.5px] text-ink-muted">{u.email}</p>
+                </div>
+                <div className="mt-1.5 flex items-center gap-1.5 sm:mt-0 sm:gap-3">
+                  {u.role === "admin" ? <Chip tone="accent">Admin</Chip> : null}
+                  {resentTo === u.id ? <Chip tone="ok">invitation sent</Chip> : <Chip tone={STATUS_TONE[u.status]}>{u.status}</Chip>}
+                  <span className="hidden w-16 text-right font-mono text-[11px] text-ink-faint sm:inline">{relativeTime(u.createdAt)}</span>
+                </div>
               </div>
-              {u.role === "admin" ? <Chip tone="accent">Admin</Chip> : null}
-              {resentTo === u.id ? <Chip tone="ok">invitation sent</Chip> : <Chip tone={STATUS_TONE[u.status]}>{u.status}</Chip>}
-              <span className="w-16 text-right font-mono text-[11px] text-ink-faint">{relativeTime(u.createdAt)}</span>
               <Menu
                 align="right"
                 trigger={<Button size="sm" variant="ghost">Manage</Button>}

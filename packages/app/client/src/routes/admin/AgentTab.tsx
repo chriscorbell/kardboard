@@ -45,7 +45,7 @@ export function AgentTab() {
             </Field>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Global concurrent sessions" hint="Across all boards. Protects your own interactive use of the subscription.">
             <Input type="number" min={1} max={20} value={draft.globalMaxConcurrentSessions} onChange={(e) => setDraft({ ...draft, globalMaxConcurrentSessions: Number(e.target.value) })} />
           </Field>

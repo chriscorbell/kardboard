@@ -45,6 +45,16 @@ export function SessionsTab() {
             const active = ACTIVE_SESSION_STATUSES.includes(s.status);
             const board = boardOf(s.boardId);
             const open = expanded === s.id;
+            const actions = active ? (
+              <>
+                <Button size="sm" variant="ghost" icon={<Square className="size-3.5" strokeWidth={2} />} onClick={() => cancel.mutate({ id: s.id, rerun: false })}>
+                  Cancel
+                </Button>
+                <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" strokeWidth={2} />} onClick={() => cancel.mutate({ id: s.id, rerun: true })}>
+                  Re-run
+                </Button>
+              </>
+            ) : null;
             return (
               <li key={s.id} className="px-4 py-3">
                 <div className="flex items-start gap-3">
@@ -61,6 +71,9 @@ export function SessionsTab() {
                   <div className="min-w-0 flex-1">
                     <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
                       <span className="font-mono text-[11.5px] text-ink-faint">{shortId(s.id)}</span>
+                      <span className="font-mono text-[11px] text-ink-faint sm:hidden" title={absoluteTime(s.createdAt)}>
+                        {relativeTime(s.createdAt)}
+                      </span>
                       <Chip tone={TONE[s.status]}>{s.status.replace("_", " ")}</Chip>
                       <Chip>{s.kind === "sweep" ? "sweep" : s.provider === "claude" ? "Claude Code" : "Codex"}</Chip>
                       {board ? (
@@ -75,20 +88,13 @@ export function SessionsTab() {
                     </p>
                     {s.intent ? <p className="mt-1 text-[12.5px] text-ink-muted">{s.intent}</p> : null}
                     {s.outcomeSummary ? <p className="mt-0.5 text-[12.5px] text-ink-faint">{s.outcomeSummary}</p> : null}
+                    {/* On a phone the actions go under the text rather than beside it. */}
+                    {actions ? <div className="-ml-2.5 mt-1.5 flex gap-1 sm:hidden">{actions}</div> : null}
                   </div>
-                  <span className="w-20 shrink-0 text-right font-mono text-[11px] text-ink-faint" title={absoluteTime(s.createdAt)}>
+                  <span className="hidden w-20 shrink-0 text-right font-mono text-[11px] text-ink-faint sm:block" title={absoluteTime(s.createdAt)}>
                     {relativeTime(s.createdAt)}
                   </span>
-                  {active ? (
-                    <span className="flex shrink-0 gap-1">
-                      <Button size="sm" variant="ghost" icon={<Square className="size-3.5" strokeWidth={2} />} onClick={() => cancel.mutate({ id: s.id, rerun: false })}>
-                        Cancel
-                      </Button>
-                      <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" strokeWidth={2} />} onClick={() => cancel.mutate({ id: s.id, rerun: true })}>
-                        Re-run
-                      </Button>
-                    </span>
-                  ) : null}
+                  {actions ? <span className="hidden shrink-0 gap-1 sm:flex">{actions}</span> : null}
                 </div>
                 {open ? <SessionTranscript sessionId={s.id} live={active} /> : null}
               </li>
