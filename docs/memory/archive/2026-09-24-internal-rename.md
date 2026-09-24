@@ -19,7 +19,11 @@ Deliberately kept: `cardboard.xode.cc` in `KARDBOARD_REDIRECT_HOSTS`, which is a
 - The kardboard Board's slug changed from `cardboard` to `kardboard`, so older `/b/cardboard/...` links no longer resolve.
 - Public health, the legacy 308 redirect, and the preview router's 404 for an unknown host were checked after startup. A verification Card on the kardboard Board ran a real Session on the new agent image and its own `kardboard-session-<id>` network. The Session reached all eleven `kardboard` MCP tools and ran `git ls-remote` against the renamed repository. The Card was then closed.
 - The `cardboard` rulesets on `chriscorbell/kardboard` and `chriscorbell/kino` were renamed in place to `kardboard`. The [kardboard-onboard skill](https://github.com/chriscorbell/skills/tree/main/kardboard-onboard) now creates a `kardboard` ruleset and describes the `kardboard/` branch prefix.
-- The LAN isolation rule from PR 13 had never been applied on minicore. It was applied, verified, and persisted with a systemd unit; see [the network isolation runbook](../../runbooks/network-isolation.md).
+- The LAN isolation rule from PR 13 had never been applied on minicore. It was applied, verified, and persisted with a systemd unit. It was then narrowed to new connections: the app's default route moved onto a Session bridge while joined to it, and dropping replies would have taken kardboard.cc offline. See [the network isolation runbook](../../runbooks/network-isolation.md).
+
+## Review that followed
+
+A full review of the project ran the same day. Its fixes shipped as PRs 19 to 24: Session lifecycle races and restarts, Approval bound to the reviewed head and authorization gaps, client fixes (attachments under Clerk, realtime reconnect, focus, touch), and runner, preview router, and egress hardening. A second verification Session after PR 23 confirmed the gateway fix and an egress allowlist with no refusals. What is still unobserved is in [the v1 gaps note](../work/2026-09-14-v1-gaps.md).
 
 ## Recovery
 
