@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, GitBranch, GitPullRequest, History, Link2, Pencil, Reply, Trash2, Upload, X } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Person, type Priority, type Provider, type User } from "@kardboard/shared";
@@ -660,18 +660,20 @@ function BlockedQuestion({ card, comments, agent, handles, onReply }: { card: Ca
               {relativeTime(question.createdAt)}
             </span>
           </div>
-          <ClampedMarkdown body={question.body} handles={handles} />
-          <Button size="sm" variant="primary" className="mt-3" icon={<Reply className="size-3.5" strokeWidth={2} />} onClick={onReply}>
-            Reply
-          </Button>
+          <ClampedMarkdown body={question.body} handles={handles}>
+            <Button size="sm" variant="primary" className="ml-auto" icon={<Reply className="size-3.5" strokeWidth={2} />} onClick={onReply}>
+              Reply
+            </Button>
+          </ClampedMarkdown>
         </motion.section>
       ) : null}
     </AnimatePresence>
   );
 }
 
-// A long question is cut to a few lines, fading out, with a control to read the rest in place.
-function ClampedMarkdown({ body, handles }: { body: string; handles: Map<string, string> }) {
+// A long question is cut to a few lines, fading out, with a control to read the rest in place. The
+// toggle sits under the text, on one row with whatever actions are passed in.
+function ClampedMarkdown({ body, handles, children }: { body: string; handles: Map<string, string>; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [open, setOpen] = useState(false);
@@ -690,11 +692,15 @@ function ClampedMarkdown({ body, handles }: { body: string; handles: Map<string,
       <div ref={box} className={cx("mt-2 overflow-hidden", !open && "max-h-40", !open && overflows && "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}>
         <Markdown body={body} handles={handles} />
       </div>
-      {overflows || open ? (
-        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="mt-1 text-[12px] text-ink-muted transition-colors hover:text-ink">
-          {open ? "Show less" : "Read the whole question"}
-        </button>
-      ) : null}
+      <div className="mt-3 flex items-center gap-3">
+        {overflows || open ? (
+          <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-1 text-[12px] text-ink-muted transition-colors hover:text-ink">
+            {open ? "Show less" : "Read the whole question"}
+            <ChevronDown className={cx("size-3.5 transition-transform", open && "rotate-180")} strokeWidth={1.75} />
+          </button>
+        ) : null}
+        {children}
+      </div>
     </>
   );
 }
