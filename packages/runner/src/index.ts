@@ -6,8 +6,8 @@ import path from "node:path";
 import { z } from "zod";
 import { codexWiring } from "./codex.js";
 import { readLogSlice } from "./logs.js";
-import { createSessionNetwork, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
-import { buildAndRunPreview, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
+import { createSessionNetwork, prunePreviewNetworks, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
+import { buildAndRunPreview, PreviewCancelled, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
 import { resumeLogFrom, runningSessions } from "./reattach.js";
 
 // The runner is the only process with the Docker socket. It knows how to do exactly two things:
@@ -26,8 +26,9 @@ const env = {
   // `workload` it is meant to reach, so two Sessions cannot see each other. Set this to `shared`
   // to put Sessions back on `workload` together if the per-session wiring ever has to be backed out.
   perSessionNetwork: (process.env.KARDBOARD_SESSION_NETWORK ?? "per-session") !== "shared",
-  // Previews are branch-controlled code, so they get their own network: the router can reach them
-  // and they can reach the internet, but not the app, the egress proxy, or the runner.
+  // Previews are branch-controlled code, so each gets a network of its own: the router can reach
+  // them and they can reach the internet, but not the app, the egress proxy, the runner, or each
+  // other. This is the network the router lives on, which each Preview's network is peered from.
   previewNetwork: process.env.KARDBOARD_PREVIEW_NETWORK ?? "kardboard_preview",
   logDir: process.env.KARDBOARD_LOG_DIR ?? "/data/logs",
   logRetentionDays: Number(process.env.KARDBOARD_LOG_RETENTION_DAYS ?? "14"),
@@ -37,6 +38,8 @@ const env = {
   previewMemoryBytes: Number(process.env.KARDBOARD_PREVIEW_MEMORY_BYTES ?? String(1024 * 1024 * 1024)),
   previewNanoCpus: Number(process.env.KARDBOARD_PREVIEW_NANO_CPUS ?? String(1e9)),
   previewPidsLimit: Number(process.env.KARDBOARD_PREVIEW_PIDS_LIMIT ?? "512"),
+  previewBuildMemoryBytes: Number(process.env.KARDBOARD_PREVIEW_BUILD_MEMORY_BYTES ?? String(2 * 1024 * 1024 * 1024)),
+  previewBuildTimeoutMinutes: Number(process.env.KARDBOARD_PREVIEW_BUILD_TIMEOUT_MINUTES ?? "15"),
   // A path on the Docker host: the runner never opens it, it only names it in a bind.
   codexAuthFile: process.env.CODEX_AUTH_FILE ?? "",
   codexViaEgress: /^(1|true|yes)$/i.test(process.env.KARDBOARD_CODEX_VIA_EGRESS ?? ""),
@@ -291,11 +294,19 @@ const previewSchema = z.object({
 });
 
 const previewLimits = {
-  network: env.previewNetwork,
+  routerNetwork: env.previewNetwork,
   memoryBytes: env.previewMemoryBytes,
   nanoCpus: env.previewNanoCpus,
   pidsLimit: env.previewPidsLimit,
+  buildMemoryBytes: env.previewBuildMemoryBytes,
+  buildTimeoutMs: env.previewBuildTimeoutMinutes * 60_000,
 };
+
+// A Preview network is removed with its Preview, but a first build the runner died during leaves
+// one holding only the router. No build survives a runner restart, so they can all go now.
+void prunePreviewNetworks(docker)
+  .then((removed) => removed.length && console.log(`[runner] removed ${removed.length} orphaned preview network(s)`))
+  .catch((err) => console.error("[runner] preview network prune failed", err));
 
 async function reportPreview(previewId: string, body: { status: "running" | "failed"; containerId?: string; target?: string; error?: string }) {
   try {
@@ -324,6 +335,8 @@ app.post("/previews", async (c) => {
       await reportPreview(req.previewId, { status: "running", containerId, target });
     })
     .catch(async (err: Error) => {
+      // A newer build or the Preview's removal replaced this one, and reports for itself.
+      if (err instanceof PreviewCancelled) return console.log(`[runner] preview ${req.previewId} build stopped: ${err.message}`);
       const message = err instanceof PreviewError ? err.message : `preview failed: ${err.message}`;
       onLog(message);
       console.error(`[runner] preview ${req.previewId} failed`, message);
