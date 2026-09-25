@@ -235,7 +235,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           )}
         </div>
         <div className="px-6 pb-4">
-          <NewComment ref={composer} cardId={card.id} members={view.members} agent={view.agent} placeholder={composerHint ?? undefined} onPosted={() => setComposerHint(null)} />
+          <NewComment ref={composer} cardId={card.id} members={view.members} known={view.people} agent={view.agent} placeholder={composerHint ?? undefined} onPosted={() => setComposerHint(null)} />
         </div>
         <Activity entries={detail.data?.activity ?? []} people={people} agentName={view.agent.name} />
       </div>
@@ -464,6 +464,7 @@ function CommentList({
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Comment | null>(null);
+  const known = useMemo(() => [...people.values()], [people]);
   const updateComment = useUpdateComment(cardId);
   const deleteComment = useDeleteComment(cardId);
   const closeDelete = () => {
@@ -516,6 +517,7 @@ function CommentList({
                   <div className="mt-1.5">
                     <Composer
                       members={mentionable}
+                      known={known}
                       agent={agent}
                       initialBody={c.body}
                       submitLabel="Save"
@@ -568,8 +570,8 @@ function CommentList({
   );
 }
 
-const NewComment = forwardRef<ComposerHandle, { cardId: string; members: User[]; agent: AgentProfile; placeholder?: string; onPosted?: () => void }>(function NewComment(
-  { cardId, members, agent, placeholder, onPosted },
+const NewComment = forwardRef<ComposerHandle, { cardId: string; members: User[]; known: Person[]; agent: AgentProfile; placeholder?: string; onPosted?: () => void }>(function NewComment(
+  { cardId, members, known, agent, placeholder, onPosted },
   ref,
 ) {
   const create = useCreateComment(cardId);
@@ -578,6 +580,7 @@ const NewComment = forwardRef<ComposerHandle, { cardId: string; members: User[];
       <Composer
         ref={ref}
         members={members}
+        known={known}
         agent={agent}
         placeholder={placeholder}
         onSubmit={(body, files, onProgress) => create.mutateAsync({ body, files, onProgress }).then(() => onPosted?.())}

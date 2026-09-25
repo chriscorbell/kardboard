@@ -9,11 +9,14 @@ import { partitionBySize, tooLargeMessage } from "../../lib/files";
 import { fileSize } from "../../lib/format";
 import { useCoarsePointer } from "../../lib/pointer";
 import { composerKeyAction } from "./composerKeys";
-import { mentionCandidates } from "./mentionCandidates";
+import { mentionCandidates, type MentionCandidate } from "./mentionCandidates";
+import { mentionInsert, mentionsForEditing, mentionsForPosting, nameBook } from "./mentionText";
 
 type Props = {
   /** Who the @ list offers: people who can open the Board now. */
   members: Person[];
+  /** Everyone else the Board can name, so a Comment being edited shows their Mentions by name too. */
+  known?: Pick<Person, "handle" | "name">[];
   agent: AgentProfile;
   onSubmit: (body: string, files: File[], onProgress: UploadProgress) => Promise<void>;
   initialBody?: string;
@@ -35,10 +38,12 @@ export function attachmentOnlyBody(count: number): string {
 
 // A textarea with @mention completion. Typing "@" opens a list of Board members filtered by what follows.
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { members, agent, onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus, placeholder },
+  { members, known, agent, onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus, placeholder },
   handle,
 ) {
-  const [body, setBody] = useState(initialBody);
+  // People are shown by name while writing and posted as @handles; see mentionText.ts.
+  const book = useMemo(() => nameBook([{ handle: agent.name, name: agent.name }, ...members, ...(known ?? [])]), [agent.name, members, known]);
+  const [body, setBody] = useState(() => mentionsForEditing(initialBody, book));
   const [files, setFiles] = useState<File[]>([]);
   const [progress, setProgress] = useState<ReadonlyMap<File, number>>(new Map());
   const [busy, setBusy] = useState(false);
@@ -55,7 +60,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const candidates = useMemo(() => (mention ? mentionCandidates(agent, members, mention.query) : []), [members, mention, agent]);
 
   useEffect(() => {
-    if (autoFocus) ref.current?.focus();
+    const el = ref.current;
+    if (!autoFocus || !el) return;
+    el.focus();
+    // Editing picks up where the Comment ends, not before its first word.
+    el.setSelectionRange(el.value.length, el.value.length);
   }, [autoFocus]);
 
   const addFiles = (picked: File[]) => {
@@ -87,14 +96,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     } else setMention(null);
   };
 
-  const pick = (handle: string) => {
+  const pick = (person: MentionCandidate) => {
     if (!mention) return;
+    const text = mentionInsert(person, book);
     const caret = ref.current?.selectionStart ?? body.length;
-    const next = `${body.slice(0, mention.start)}@${handle} ${body.slice(caret)}`;
+    const next = `${body.slice(0, mention.start)}@${text} ${body.slice(caret)}`;
     setBody(next);
     setMention(null);
     requestAnimationFrame(() => {
-      const pos = mention.start + handle.length + 2;
+      const pos = mention.start + text.length + 2;
       ref.current?.setSelectionRange(pos, pos);
       ref.current?.focus();
     });
@@ -112,7 +122,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     const sentBody = body;
     const sentFiles = files;
     try {
-      await onSubmit(sentBody.trim() || attachmentOnlyBody(sentFiles.length), sentFiles, (file, fraction) => setProgress((p) => new Map(p).set(file, fraction)));
+      await onSubmit(mentionsForPosting(sentBody.trim(), book) || attachmentOnlyBody(sentFiles.length), sentFiles, (file, fraction) => setProgress((p) => new Map(p).set(file, fraction)));
       setBody((b) => (b === sentBody ? "" : b));
       setFiles((fs) => fs.filter((f) => !sentFiles.includes(f)));
       setProgress((p) => new Map([...p].filter(([f]) => !sentFiles.includes(f))));
@@ -155,7 +165,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               return;
             }
             case "mention-pick":
-              pick(candidates[highlight]!.handle);
+              pick(candidates[highlight]!);
               return;
             case "mention-close":
               setMention(null);
@@ -180,7 +190,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
                 aria-selected={i === highlight}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  pick(c.handle);
+                  pick(c);
                 }}
                 onMouseEnter={() => setHighlight(i)}
                 className={cx("flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-[13px]", i === highlight ? "bg-overlay text-ink" : "text-ink-muted")}
