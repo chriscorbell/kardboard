@@ -15,9 +15,7 @@
 
 ## What it does
 
-The app runs at [kardboard.cc](https://kardboard.cc). [Domain configuration](docs/runbooks/domains.md) covers sign-in, email, and Card preview hostnames.
-
-kardboard is a kanban board for one project per board. Your clients, teammates, or you write cards. About a minute after a card is created, edited, commented on, or moved, kardboard starts a **Session**: a disposable container running Claude Code (or Codex) that clones the project, reads the board over MCP, and either does the work or asks a clarifying question on the card.
+**kardboard** is a kanban board for one project per board. Your clients, teammates, or you write cards. About a minute after a card is created, edited, commented on, or moved, kardboard starts a **Session**: a disposable container running Claude Code (or Codex) that clones the project, reads the board over MCP, and either does the work or asks a clarifying question on the card.
 
 When the work is done, the Session opens a pull request and moves the card to Review. A member presses **Approve**, and kardboard merges the pull request, moves the card to Done, and lets everyone know. Sessions can push branches but can never merge; that authority stays with kardboard.
 
@@ -61,8 +59,6 @@ A request too large for one pull request is split into child cards instead. Each
 | `packages/preview-router` | Routes runner-hosted previews by hostname behind a signed cookie. |
 | `images/agent` | The default Session image: Node, Bun, Python, Go, git, gh, Claude Code, Codex. |
 | `packages/shared` | Types and schemas shared by server and client. |
-
-Vocabulary is defined in [CONTEXT.md](CONTEXT.md). Design decisions with trade-offs live in [docs/adr](docs/adr/), and the full design in [docs/design.md](docs/design.md).
 
 ## Getting started
 
@@ -117,10 +113,3 @@ External services you need to set up once:
 Runner-hosted previews require a root `Dockerfile` that listens on `$PORT`. This repository's root `Dockerfile` links to `packages/app/Dockerfile`, so previews build the branch's app with a separate, seeded database and no production credentials. Access is checked by the preview router before requests reach that app. See [the preview runbook](docs/runbooks/previews.md) for DNS, certificates, and host configuration.
 
 Each board points at one repository. To prepare one, run the `kardboard-onboard` skill from [chriscorbell/skills](https://github.com/chriscorbell/skills) in that repository with your coding agent, or follow the same steps by hand: give `AGENTS.md` a verified acceptance command, install both GitHub Apps, create the `kardboard` ruleset, and add the board in the admin panel.
-
-> [!NOTE]
-> kardboard is itself a board on kardboard. Some of its own changes arrive as pull requests from Milo.
-
-## Status
-
-The full loop runs in production: sign-in, card to Session, pull request, Approval, merge, deploy. Runner-hosted previews are configured on minicore with `{card}.kardboard.cc` URLs; [the preview runbook](docs/runbooks/previews.md) records setup and verification limits. See [docs/design.md](docs/design.md) for the current status and [docs/runbooks](docs/runbooks/) for operations.
