@@ -14,6 +14,7 @@ process.env.KARDBOARD_PUBLIC_URL = "https://kardboard.test";
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { emailWanted, listNotifications, markCardNotificationsRead, markNotificationsRead, notifyCardMoved, notifyMentions } = await import("../src/services/notifications.js");
 const { createComment } = await import("../src/services/comments.js");
+const { getAgentProfile } = await import("../src/services/settings.js");
 
 await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -128,10 +129,24 @@ describe("notifyMentions", () => {
       assert.equal(view.unread, 1);
       assert.equal(view.notifications[0]!.kind, "mention");
       assert.equal(view.notifications[0]!.title, "Grace mentioned you");
-      assert.equal(view.notifications[0]!.body, c.body);
+      // The bell reads as the card does: people by name, not by handle.
+      assert.equal(view.notifications[0]!.body, "@Ada @Linus have a look");
       assert.equal(view.notifications[0]!.cardTitle, "Enter key in the comment box");
     }
     assert.equal((await listNotifications(author)).notifications.length, 0);
+  });
+
+  it("names the Agent too, and leaves code and unknown handles as written", async () => {
+    const author = await member("Grace");
+    const ada = await member("Ada");
+    const card = await makeCard(BOARD, author);
+    const agent = (await getAgentProfile()).name;
+    const c = comment(card.id, author, `@${ada.handle}, @${agent.toLowerCase()} says run \`@${ada.handle}/pkg\`; ask @nobody`);
+    await db.insert(schema.comments).values({ id: c.id, cardId: card.id, authorKind: "user", authorId: author.id, body: c.body });
+
+    await notifyMentions(card, c, [ada.id], { kind: "user", id: author.id });
+
+    assert.equal((await listNotifications(ada)).notifications[0]!.body, `@Ada, @${agent} says run \`@${ada.handle}/pkg\`; ask @nobody`);
   });
 
   it("truncates a long comment to a preview", async () => {

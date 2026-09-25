@@ -601,6 +601,31 @@ export type BoardEvent =
 // A handle can contain dots and hyphens but not end with one, so "thanks @chris." mentions chris.
 export const MENTION_RE = /(^|[^\w@])@([a-z0-9](?:[a-z0-9._-]{0,37}[a-z0-9])?)/gi;
 
+// Fenced blocks and inline code, which keep an @ as typed: `@tanstack/react-query` names a package.
+const CODE_SPANS = /(```[\s\S]*?```|`[^`\n]*`)/;
+
+/**
+ * The text as a person should read it: each @handle that `nameOf` knows becomes @ and the name.
+ * Handles it does not know, and anything in code, are left as written. Comments are stored with
+ * handles, which is what a Mention is and what the Agent writes; this is only for showing them.
+ */
+export function mentionsAsNames(text: string, nameOf: (handle: string) => string | undefined): string {
+  return outsideCode(text, (part) =>
+    part.replace(MENTION_RE, (all, before: string, handle: string) => {
+      const name = nameOf(handle.toLowerCase());
+      return name ? `${before}@${name}` : all;
+    }),
+  );
+}
+
+/** Applies `fn` to the text outside fenced blocks and inline code, and keeps the code as it is. */
+export function outsideCode(text: string, fn: (part: string) => string): string {
+  return text
+    .split(CODE_SPANS)
+    .map((part, i) => (i % 2 === 1 ? part : fn(part)))
+    .join("");
+}
+
 export function extractMentionHandles(body: string): string[] {
   const out = new Set<string>();
   for (const m of body.matchAll(MENTION_RE)) out.add(m[2]!.toLowerCase());

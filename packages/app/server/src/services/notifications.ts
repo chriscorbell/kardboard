@@ -1,6 +1,8 @@
 import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   COLUMN_LABELS,
+  extractMentionHandles,
+  mentionsAsNames,
   type Board,
   type Card,
   type Column,
@@ -16,7 +18,7 @@ import { env } from "../env.js";
 import { newId } from "../ids.js";
 import type { Actor } from "./events.js";
 import { canAccessBoard, getBoardById } from "./boards.js";
-import { getPreferences, getUser } from "./users.js";
+import { findUsersByHandles, getPreferences, getUser } from "./users.js";
 import { getAgentProfile } from "./settings.js";
 import { queueEmail } from "./email.js";
 
@@ -145,12 +147,22 @@ export async function notifySessionFailed(card: Card, notice: { title: string; r
   }
 }
 
+// A Comment's words for the bell and an email, with each @handle shown as the name it stands for, as
+// the card shows it.
+async function withNames(body: string): Promise<string> {
+  const names = new Map((await findUsersByHandles(extractMentionHandles(body))).map((u) => [u.handle, u.name]));
+  const agent = (await getAgentProfile()).name;
+  names.set(agent.toLowerCase(), agent);
+  return mentionsAsNames(body, (handle) => names.get(handle));
+}
+
 // Everyone newly named by an @handle in a comment hears about it once.
 export async function notifyMentions(card: Card, comment: Comment, userIds: string[], actor: Actor): Promise<void> {
   if (userIds.length === 0) return;
   const board = await getBoardById(card.boardId);
   if (!board) return;
   const who = await actorProfile(actor);
+  const body = await withNames(comment.body);
   for (const userId of userIds) {
     await notify({
       userId,
@@ -158,7 +170,7 @@ export async function notifyMentions(card: Card, comment: Comment, userIds: stri
       board,
       kind: "mention",
       title: `${who.name} mentioned you`,
-      body: comment.body,
+      body,
       actor: who,
       emailSubject: `${who.name} mentioned you on "${card.title}"`,
       emailHeading: `${who.name} mentioned you on ${card.title}`,
