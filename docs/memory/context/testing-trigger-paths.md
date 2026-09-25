@@ -4,7 +4,7 @@ Read when: writing a server test that calls `createCard`, `moveCard`, or anythin
 
 Status: verified
 Scope: `packages/app/server`
-Verified: 2026-09-24
+Verified: 2026-09-25
 Source: [children.test.ts](../../../packages/app/server/test/children.test.ts), [orchestrator.test.ts](../../../packages/app/server/test/orchestrator.test.ts), [orchestrator.ts](../../../packages/app/server/src/services/orchestrator.ts)
 Recheck when: `scheduleDispatch` or `armWallClock` stops unref-ing its timer, or `runner` stops being a plain object whose methods a test can replace.
 

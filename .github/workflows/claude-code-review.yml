@@ -39,7 +39,17 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          # Run the main agent and every subagent on Opus 5.5 at xhigh effort. The code-review plugin
+          # asks for haiku, sonnet, and opus subagents; forcing the subagent model overrides those, and
+          # subagents inherit the session's effort.
+          claude_args: '--model claude-opus-5-5 --effort xhigh --allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          settings: |
+            {
+              "env": {
+                "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5-5",
+                "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
+              }
+            }
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
