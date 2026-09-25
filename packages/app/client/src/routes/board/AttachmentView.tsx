@@ -4,14 +4,25 @@ import type { Attachment } from "@kardboard/shared";
 import { cx } from "../../components/ui";
 import { useAttachmentDownload, useAttachmentUrl, useNearViewport } from "../../lib/attachments";
 import { fileSize } from "../../lib/format";
+import { ImageViewer } from "./ImageViewer";
 
 const chip = "inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-bg px-2.5 text-[12px] text-ink-muted transition-colors hover:border-line-strong hover:text-ink";
 
-export function AttachmentView({ a }: { a: Attachment }) {
-  return a.mime.startsWith("image/") ? <AttachmentImage a={a} /> : <AttachmentFile a={a} />;
+// A Comment's attachments: images as thumbnails that open in the viewer, other files as chips.
+export function Attachments({ attachments }: { attachments: Attachment[] }) {
+  const images = attachments.filter((a) => a.mime.startsWith("image/"));
+  const [viewing, setViewing] = useState<number | null>(null);
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {attachments.map((a) =>
+        a.mime.startsWith("image/") ? <AttachmentImage key={a.id} a={a} onOpen={() => setViewing(images.indexOf(a))} /> : <AttachmentFile key={a.id} a={a} />,
+      )}
+      <ImageViewer images={images} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />
+    </div>
+  );
 }
 
-function AttachmentImage({ a }: { a: Attachment }) {
+function AttachmentImage({ a, onOpen }: { a: Attachment; onOpen: () => void }) {
   const placeholder = useRef<HTMLDivElement>(null);
   const near = useNearViewport(placeholder);
   const load = useAttachmentUrl(a.id, near);
@@ -30,14 +41,19 @@ function AttachmentImage({ a }: { a: Attachment }) {
     return <div ref={placeholder} role="img" aria-label={`${a.filename}, loading`} className="h-32 w-48 animate-pulse rounded-control border border-line bg-raised" />;
   }
   return (
-    <a href={load.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-control border border-line bg-raised">
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`View ${a.filename}`}
+      className="block cursor-zoom-in overflow-hidden rounded-control border border-line bg-raised transition-colors hover:border-line-strong focus-visible:border-accent focus-visible:outline-none"
+    >
       <img
         src={load.url}
         alt={a.filename}
         onLoad={() => setPainted(true)}
         className={cx("max-h-64 w-auto transition-opacity duration-200 ease-out-expo", painted ? "opacity-100" : "opacity-0")}
       />
-    </a>
+    </button>
   );
 }
 
