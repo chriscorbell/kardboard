@@ -9,6 +9,7 @@ import { partitionBySize, tooLargeMessage } from "../../lib/files";
 import { fileSize } from "../../lib/format";
 import { useCoarsePointer } from "../../lib/pointer";
 import { composerKeyAction } from "./composerKeys";
+import { mentionCandidates } from "./mentionCandidates";
 
 type Props = {
   /** Who the @ list offers: people who can open the Board now. */
@@ -51,12 +52,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const touch = useCoarsePointer();
   const reduce = useReducedMotion();
 
-  const candidates = useMemo(() => {
-    const all = [{ handle: agent.name.toLowerCase(), name: agent.name, avatarUrl: agent.avatarUrl, agent: true }, ...members.map((m) => ({ handle: m.handle, name: m.name, avatarUrl: m.avatarUrl, agent: false }))];
-    if (!mention) return [];
-    const q = mention.query.toLowerCase();
-    return all.filter((c) => c.handle.startsWith(q) || c.name.toLowerCase().includes(q)).slice(0, 6);
-  }, [members, mention, agent]);
+  const candidates = useMemo(() => (mention ? mentionCandidates(agent, members, mention.query) : []), [members, mention, agent]);
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
