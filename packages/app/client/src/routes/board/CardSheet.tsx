@@ -16,7 +16,7 @@ import { COLUMN_TONES } from "./columns";
 import { WorkingDot } from "./CardTile";
 import { SessionBanner } from "./SessionBanner";
 import { ApiError } from "../../lib/errors";
-import { AttachmentView } from "./AttachmentView";
+import { Attachments } from "./AttachmentView";
 import { PreviewLink } from "./PreviewLink";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
 import { isInnermostModal, useModalFocus } from "../../components/focus";
@@ -533,13 +533,7 @@ function CommentList({
                 ) : (
                   <div className="mt-1">
                     <Markdown body={c.body} handles={handles} />
-                    {c.attachments.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {c.attachments.map((a) => (
-                          <AttachmentView key={a.id} a={a} />
-                        ))}
-                      </div>
-                    ) : null}
+                    {c.attachments.length > 0 ? <Attachments attachments={c.attachments} /> : null}
                   </div>
                 )}
               </div>
