@@ -229,7 +229,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           </>
         ) : null}
         <span className="ml-auto flex items-center gap-2">
-          {touch ? null : <span className="hidden text-[11px] text-ink-faint sm:inline">Enter to {submitLabel.toLowerCase()}, Shift+Enter for a new line</span>}
           {onCancel ? (
             <Button size="sm" variant="ghost" onClick={onCancel}>
               Cancel
