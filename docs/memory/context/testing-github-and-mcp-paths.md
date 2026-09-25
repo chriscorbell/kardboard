@@ -4,7 +4,7 @@ Read when: a server test needs the approval and merge path, a pull request check
 
 Status: verified
 Scope: `packages/app/server`
-Verified: 2026-09-24
+Verified: 2026-09-25
 Source: [approvals.test.ts](../../../packages/app/server/test/approvals.test.ts), [fake-github.ts](../../../packages/app/server/test/fake-github.ts), [mcp-tools.test.ts](../../../packages/app/server/test/mcp-tools.test.ts), [api.test.ts](../../../packages/app/server/test/api.test.ts), [github.ts](../../../packages/app/server/src/services/github.ts), [mcp.ts](../../../packages/app/server/src/routes/mcp.ts)
 Recheck when: `github.ts` stops calling the global `fetch` or signing its App JWT itself, or `routes/mcp.ts` stops handing the raw Node request to the SDK transport.
 

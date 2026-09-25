@@ -5,7 +5,7 @@ naming a Docker bridge, connecting a compose service to a runner-made network, o
 Session failed with "could not create the session network" or a Preview with "no preview router".
 Status: verified
 Scope: component, `packages/runner`, `deploy/compose.yaml`, minicore host firewall
-Verified: 2026-09-24
+Verified: 2026-09-25
 Source: [network isolation runbook](../runbooks/network-isolation.md),
 [packages/runner/src/networks.ts](../../../packages/runner/src/networks.ts)
 Recheck when: the runner stops reading `kardboard_workload` membership to decide a Session's peers,
