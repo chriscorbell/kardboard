@@ -6,7 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
@@ -38,13 +38,31 @@ const EARLIER_SESSIONS_SHOWN = 10;
 async function boardSnapshot(boardId: string, includeAllDone: boolean) {
   const board = await getBoardById(boardId);
   const cards = await listCards(boardId);
+  const waiting = await repliesWaiting(cards.map((c) => c.id));
   const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
   const members = (await listMembers(boardId)).filter((u) => u.status !== "revoked").map((u) => ({ id: u.id, name: u.name, handle: u.handle, role: u.role }));
-  const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt });
+  const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, replyWaiting: waiting.has(c.id), updatedAt: c.updatedAt });
   const done = cards.filter((c) => c.column === "done").sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   const shownDone = includeAllDone ? done : done.slice(0, DONE_SHOWN);
   const grouped = Object.fromEntries(COLUMNS.map((col) => [col, (col === "done" ? shownDone : cards.filter((c) => c.column === col)).map(summary)]));
   return { board: { name: board?.name, repoUrl: board?.repoUrl, previewMode: board?.previewMode }, columns: COLUMN_LABELS, members, cards: grouped, doneOmitted: done.length - shownDone.length };
+}
+
+// The Cards where a person has commented since the Agent last did: an answer to its question, or more
+// to go on. People see the Agent's unanswered questions on the Board; this is the same fact turned
+// round, for an agent that works the Board only when asked and has to find what changed meanwhile.
+async function repliesWaiting(cardIds: string[]): Promise<Set<string>> {
+  if (cardIds.length === 0) return new Set();
+  const rows = await db
+    .select({
+      cardId: schema.comments.cardId,
+      lastAgent: sql<string | null>`max(case when ${schema.comments.authorKind} = 'agent' then ${schema.comments.createdAt} end)`,
+      lastPerson: sql<string | null>`max(case when ${schema.comments.authorKind} = 'user' then ${schema.comments.createdAt} end)`,
+    })
+    .from(schema.comments)
+    .where(inArray(schema.comments.cardId, cardIds))
+    .groupBy(schema.comments.cardId);
+  return new Set(rows.filter((r) => r.lastAgent && r.lastPerson && r.lastPerson > r.lastAgent).map((r) => r.cardId));
 }
 
 // What get_card sends. The asking Session, when there is one, is left out of the Card's earlier ones.
@@ -121,7 +139,7 @@ function buildServer(session: SessionRow): McpServer {
   server.registerTool(
     "get_board",
     {
-      description: `The board's settings, its members with their @handles and roles (the Admin included), and every card on it grouped by column, with creator names, parent cards, and each card's revision. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
+      description: `The board's settings, its members with their @handles and roles (the Admin included), and every card on it grouped by column, with creator names, parent cards, and each card's revision. replyWaiting marks a card where a person has commented since the agent last did. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
       inputSchema: { include_all_done: z.boolean().default(false) },
     },
     async ({ include_all_done }) => ({ content: [{ type: "text", text: JSON.stringify(await boardSnapshot(session.boardId, include_all_done), null, 2) }] }),
@@ -392,7 +410,7 @@ function buildServer(session: SessionRow): McpServer {
 // them itself and says so when it closes the Card.
 const TOKEN_INSTRUCTIONS = `This is a kardboard board: the shared record of work on one project, which you and the people on it read and change. You act on it as its agent. Nothing on this board starts on its own. You work it when the person running you asks, and people move cards by hand.
 
-Read get_board first. The columns: Inbox holds new requests not yet looked at. Blocked holds cards waiting on a person's answer. Ready holds understood cards nobody has started. In Progress holds cards being worked on. Review holds cards whose pull request is open for a look. Done holds merged, closed, or duplicate cards.
+Read get_board first, and read every card it marks replyWaiting: a person has commented there since you last did, often answering your question. The columns: Inbox holds new requests not yet looked at. Blocked holds cards waiting on a person's answer. Ready holds understood cards nobody has started. In Progress holds cards being worked on. Review holds cards whose pull request is open for a look. Done holds merged, closed, or duplicate cards.
 
 Keep the board true to the work. Move a card to In Progress when you start it. If you need a person's answer, ask in a comment that mentions them by @handle and move the card to Blocked. Once its pull request is open, record it with link_pull_request and move the card to Review. When you have merged the pull request, move the card to Done with merged set. Every edit and move takes the revision you last read: if the card changed since, read it again before deciding.`;
 
@@ -414,7 +432,7 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
   server.registerTool(
     "get_board",
     {
-      description: `The board's name and repository, its members with their @handles and roles, and every card on it grouped by column, with creator names and each card's revision. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
+      description: `The board's name and repository, its members with their @handles and roles, and every card on it grouped by column, with creator names and each card's revision. replyWaiting marks a card where a person has commented since you last did: read it with get_card. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
       inputSchema: { include_all_done: z.boolean().default(false) },
     },
     async ({ include_all_done }) => ({ content: [{ type: "text", text: JSON.stringify(await boardSnapshot(board.id, include_all_done), null, 2) }] }),
