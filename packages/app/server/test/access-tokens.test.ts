@@ -155,6 +155,23 @@ describe("an agent holding an access token", () => {
     assert.deepEqual(edited?.payload.previous, { description: "Make the logo bigger" });
   });
 
+  it("sees which cards have a person's comment since its own last one", async () => {
+    await card("answered");
+    await card("unanswered");
+    await card("untouched");
+    const comment = (id: string, cardId: string, authorKind: "user" | "agent" | "system", at: string) =>
+      db.insert(schema.comments).values({ id, cardId, authorKind, authorId: authorKind === "user" ? "admin" : null, body: id, createdAt: at });
+    await comment("q1", "answered", "agent", "2026-09-29T10:00:00.000Z");
+    await comment("a1", "answered", "user", "2026-09-29T10:05:00.000Z");
+    await comment("q2", "unanswered", "agent", "2026-09-29T10:00:00.000Z");
+    await comment("n2", "unanswered", "system", "2026-09-29T10:06:00.000Z");
+    await comment("note", "untouched", "user", "2026-09-29T10:00:00.000Z");
+    const client = await connect((await makeToken()).secret);
+    const board = json(await tool(client, "get_board"));
+    const ready = (board.cards as Record<string, { id: string; replyWaiting: boolean }[]>).ready!;
+    assert.deepEqual(Object.fromEntries(ready.map((c) => [c.id, c.replyWaiting])), { answered: true, unanswered: false, untouched: false });
+  });
+
   it("is refused a stale revision, and told the current one", async () => {
     await card("c1", { revision: 3 });
     const client = await connect((await makeToken()).secret);
