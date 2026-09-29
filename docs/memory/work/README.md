@@ -5,4 +5,4 @@ One note per task that needs continuation across sessions, and one per pending i
 List active or blocked notes here with relative links, short objectives, and their branch or worktree when applicable. Close and remove entries through the Finish steps in [the protocol](../protocol.md). Search this directory for notes a concurrent writer has not yet indexed.
 
 - [Remaining v1 gaps](2026-09-14-v1-gaps.md): what the design promised that is not built or not yet observed in production; branch `main`.
-- [Sessions opt-in and Access tokens](2026-09-28-sessions-opt-in-and-access-tokens.md): deployed; waiting on the first real token use and the Admin's call on the repository ruleset; branch `main`.
+- [Sessions opt-in and Access tokens](2026-09-28-sessions-opt-in-and-access-tokens.md): deployed; waiting on the first real token use against production; branch `main`.

@@ -12,7 +12,7 @@ Merged and deployed on 2026-09-29 UTC as `85ab336` (PR 46) and `a92e5b2` (PR 47)
 
 Still unobserved: an Access token used against production, and the copied `claude mcp add` command working from the Admin's own machine.
 
-Open decision for the Admin: to let the merges go ahead, the Admin set the `kardboard` ruleset on this repository to require no approving review on 2026-09-29. That also means nothing but the Session prompt keeps a Session on the kardboard Board from merging its own pull request, which ADR 0008 relies on the approval rule for. Either restore one required approval, or record the change against ADR 0008.
+The Admin set the `kardboard` ruleset on this repository to require no approving review on 2026-09-29, and settled what that means the same day: the kardboard Board will run without Sessions, worked by the Admin's local agent, which opens and merges the pull requests. Recorded in [the production operations note](../context/kardboard-production-operations.md) with what to restore before Sessions return to that Board.
 
-Next action: the Admin creates a Board with Sessions off, makes a token in its settings, and runs the copied command in the project folder on the Mac; then settle the ruleset question above.
-Close when: a token has been used against production and the ruleset question is settled.
+Next action: the Admin turns Sessions off in the kardboard Board's settings (production showed them on after the deploy), makes a token there, and runs the copied command in the project folder on the Mac.
+Close when: a token has been used against production.
