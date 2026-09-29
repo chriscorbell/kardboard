@@ -4,7 +4,7 @@ import { closestCenter, DndContext, DragOverlay, getFirstCollision, KeyboardSens
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ChevronDown, CircleHelp, Plus, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronsLeft, ChevronsRight, CircleHelp, Plus, RefreshCw } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, type AgentProfile, type Card, type Column, type Person } from "@kardboard/shared";
 import { ApiError, useBoard, useMe, useMoveCard, useUpdateMe } from "../lib/api";
 import { useBoardEvents } from "../lib/realtime";
@@ -17,6 +17,7 @@ import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
 import { columnHint } from "./board/columns";
 import { columnDropId, dropSpot, laneOf, moveAcross, placeBefore, settleWithin, type Lanes } from "./board/dragLanes";
+import { readDoneOpen, writeDoneOpen } from "./board/doneColumn";
 import { filterActive, foldDone, matchesFilter, readFilter, waitsOn, writeFilter, type BoardFilter, type Viewer } from "./board/boardFilter";
 import { BoardSearch, FilterChips } from "./board/BoardFilters";
 import { HowItWorks } from "./board/HowItWorks";
@@ -63,28 +64,49 @@ const DROP_MS = 200;
 // The lifted card is the card itself, the same size and square, with a shadow. It glides onto the gap
 // it fills and lays the shadow down on the way, so when it gives way to the card underneath nothing
 // moves or changes. That card stays hidden until then and appears at once, covered exactly as it was.
-const DROP_ANIMATION: DropAnimation = {
-  duration: DROP_MS,
-  easing: DROP_EASE,
-  sideEffects({ active, dragOverlay }) {
-    active.node.style.opacity = "0";
-    const lifted = dragOverlay.node.firstElementChild;
-    if (lifted instanceof HTMLElement) {
-      const from = getComputedStyle(lifted);
-      const to = getComputedStyle(active.node);
-      lifted.animate(
-        [
-          { boxShadow: from.boxShadow, borderColor: from.borderColor },
-          { boxShadow: to.boxShadow, borderColor: to.borderColor },
-        ],
-        { duration: DROP_MS, easing: DROP_EASE, fill: "forwards" },
-      );
-    }
-    return () => {
-      active.node.style.opacity = "";
-    };
-  },
-};
+// Dropped on a collapsed column, which has no gap to fill, it shrinks and fades into the strip instead.
+function dropAnimation(tuck: { current: boolean }): DropAnimation {
+  return {
+    duration: DROP_MS,
+    easing: DROP_EASE,
+    keyframes({ transform, active, dragOverlay }) {
+      if (!tuck.current) return [{ transform: CSS.Transform.toString(transform.initial) }, { transform: CSS.Transform.toString(transform.final) }];
+      const dx = active.rect.left + active.rect.width / 2 - (dragOverlay.rect.left + dragOverlay.rect.width / 2);
+      const dy = active.rect.top + active.rect.height / 2 - (dragOverlay.rect.top + dragOverlay.rect.height / 2);
+      return [
+        { transform: CSS.Transform.toString(transform.initial), opacity: 1 },
+        { transform: `translate3d(${transform.initial.x + dx}px, ${transform.initial.y + dy}px, 0) scale(0.4)`, opacity: 0 },
+      ];
+    },
+    sideEffects({ active, dragOverlay }) {
+      active.node.style.opacity = "0";
+      const lifted = dragOverlay.node.firstElementChild;
+      if (!tuck.current && lifted instanceof HTMLElement) {
+        const from = getComputedStyle(lifted);
+        const to = getComputedStyle(active.node);
+        lifted.animate(
+          [
+            { boxShadow: from.boxShadow, borderColor: from.borderColor },
+            { boxShadow: to.boxShadow, borderColor: to.borderColor },
+          ],
+          { duration: DROP_MS, easing: DROP_EASE, fill: "forwards" },
+        );
+      }
+      return () => {
+        active.node.style.opacity = "";
+      };
+    },
+  };
+}
+
+// Local storage, where the browser allows it: a private window can refuse even to hand it over.
+function browserStorage(): Storage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
 
 // Done folds away all but its most recent Cards; this is the control that unfolds it again.
 type Fold = { hidden: number; expanded: boolean; onToggle: () => void };
@@ -102,6 +124,7 @@ function ColumnLane({
   sessionsEnabled,
   dragging,
   targeted,
+  collapse,
   fold,
 }: {
   column: Column;
@@ -118,56 +141,109 @@ function ColumnLane({
   dragging: boolean;
   /** The column the dragged card would land in. */
   targeted: boolean;
+  /** A column that can fold down to a narrow strip: whether it is open, and the dragged card, which it holds hidden while the card is over it shut. */
+  collapse?: { open: boolean; onToggle: () => void; activeId: string | null; toggled: boolean };
   fold?: Fold;
 }) {
   const { setNodeRef } = useDroppable({ id: columnDropId(column), data: { column } });
   const reduce = useReducedMotion();
+  const shut = Boolean(collapse && !collapse.open);
+  const label = COLUMN_LABELS[column];
+  // Every card the column holds, the folded ones too: the strip stands for the whole column.
+  const count = cards.length + (fold?.hidden ?? 0);
+  // Opening or closing eases the column's width, and its neighbours give or take the space with it.
+  // What the column shows keeps its own width while that happens, so it is uncovered rather than squeezed.
+  const appear = collapse?.toggled && !reduce ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2, delay: 0.08 } } : { initial: false as const };
+  const held = shut && collapse?.activeId ? cards.find((c) => c.id === collapse.activeId) : undefined;
   return (
-    <section className="flex min-w-[84vw] flex-1 snap-start snap-always flex-col sm:min-w-[228px] lg:max-w-[320px]" aria-label={COLUMN_LABELS[column]}>
-      <header className="flex h-9 items-center gap-2 px-1">
-        <h2 className="text-[13px] font-semibold text-ink">{COLUMN_LABELS[column]}</h2>
-        <span className="font-mono text-[11.5px] text-ink-faint">{cards.length}</span>
-        {canAdd ? (
-          <IconButton label="New card" className="ml-auto size-7" onClick={onNew}>
-            <Plus className="size-4" strokeWidth={1.75} />
-          </IconButton>
-        ) : null}
-      </header>
-      <div
-        ref={setNodeRef}
-        className={cx("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-card border border-transparent p-1 transition-colors duration-150", targeted && "border-line-strong bg-raised/40")}
-      >
-        <SortableContext items={cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-          <AnimatePresence initial={false}>
-            {cards.map((card) => (
-              // A card arriving or leaving animates, and others close up after it, unless it is the dragged
-              // card changing columns: that move belongs to the drag library, and two animations of it jump.
-              <motion.div
-                key={card.id}
-                layout={!reduce && !dragging}
-                initial={reduce || dragging ? false : { opacity: 0, scale: 0.97 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={dragging ? undefined : { opacity: 0, scale: 0.97 }}
-                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <SortableCard card={card} creator={card.creatorId ? people.get(card.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(card, viewer)} onOpen={() => onOpen(card.id)} />
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </SortableContext>
-        {cards.length === 0 ? <p className="px-2 py-6 text-center text-[12px] leading-relaxed text-ink-faint">{filtering ? "No matching cards." : columnHint(column, agent.name, sessionsEnabled)}</p> : null}
-        {fold && (fold.hidden > 0 || fold.expanded) ? (
+    <section
+      className={cx(
+        "flex snap-start snap-always flex-col",
+        collapse && "relative overflow-hidden transition-[flex-grow,flex-basis,min-width,max-width] duration-300 ease-out-expo",
+        shut ? "min-w-11 max-w-11 shrink-0 grow-0 basis-11" : "min-w-[84vw] max-w-[100vw] grow basis-0 sm:min-w-[228px] lg:max-w-[320px]",
+      )}
+      aria-label={label}
+    >
+      {shut ? (
+        <motion.div key="strip" {...appear} className="flex min-h-0 flex-1 flex-col">
           <button
+            ref={setNodeRef}
             type="button"
-            onClick={fold.onToggle}
-            aria-expanded={fold.expanded}
-            className="mx-auto mt-1 inline-flex h-7 shrink-0 items-center gap-1 rounded-control px-2.5 text-[12px] text-ink-muted transition-colors hover:bg-raised hover:text-ink"
+            onClick={collapse?.onToggle}
+            aria-expanded={false}
+            aria-label={`Show ${label}, ${count} ${count === 1 ? "card" : "cards"}`}
+            title={`Show ${label}`}
+            className={cx(
+              "group flex min-h-0 flex-1 flex-col items-center gap-2.5 rounded-card border border-transparent pt-2.5 transition-colors duration-150 hover:bg-raised/60",
+              targeted && "border-line-strong bg-raised/40",
+            )}
           >
-            {fold.expanded ? "Show fewer" : `Show ${fold.hidden} older`}
-            <ChevronDown className={cx("size-3.5 transition-transform duration-200", fold.expanded && "rotate-180")} strokeWidth={1.75} />
+            <ChevronsLeft className="size-4 text-ink-faint transition-colors group-hover:text-ink" strokeWidth={1.75} aria-hidden="true" />
+            <span className="text-[13px] font-semibold text-ink [writing-mode:vertical-rl]">{label}</span>
+            <span className="font-mono text-[11.5px] text-ink-faint">{count}</span>
           </button>
-        ) : null}
-      </div>
+          {/* The dragged card, over the strip, still needs a place in it for the drop to land on. */}
+          {held ? (
+            <div inert className="pointer-events-none absolute inset-x-1 top-12 opacity-0">
+              <SortableContext items={[held.id]} strategy={verticalListSortingStrategy}>
+                <SortableCard card={held} creator={held.creatorId ? people.get(held.creatorId) : undefined} agent={agent} questionIsMine={false} onOpen={() => undefined} />
+              </SortableContext>
+            </div>
+          ) : null}
+        </motion.div>
+      ) : (
+        <motion.div key="lane" {...appear} className={cx("flex min-h-0 flex-1 flex-col", collapse && "min-w-[220px]")}>
+          <header className="flex h-9 items-center gap-2 px-1">
+            <h2 className="text-[13px] font-semibold text-ink">{label}</h2>
+            <span className="font-mono text-[11.5px] text-ink-faint">{cards.length}</span>
+            {canAdd ? (
+              <IconButton label="New card" className="ml-auto size-7" onClick={onNew}>
+                <Plus className="size-4" strokeWidth={1.75} />
+              </IconButton>
+            ) : null}
+            {collapse ? (
+              <IconButton type="button" label={`Collapse ${label}`} aria-expanded className="ml-auto size-7" onClick={collapse.onToggle}>
+                <ChevronsRight className="size-4" strokeWidth={1.75} />
+              </IconButton>
+            ) : null}
+          </header>
+          <div
+            ref={setNodeRef}
+            className={cx("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-card border border-transparent p-1 transition-colors duration-150", targeted && "border-line-strong bg-raised/40")}
+          >
+            <SortableContext items={cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+              <AnimatePresence initial={false}>
+                {cards.map((card) => (
+                  // A card arriving or leaving animates, and others close up after it, unless it is the dragged
+                  // card changing columns: that move belongs to the drag library, and two animations of it jump.
+                  <motion.div
+                    key={card.id}
+                    layout={!reduce && !dragging}
+                    initial={reduce || dragging ? false : { opacity: 0, scale: 0.97 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={dragging ? undefined : { opacity: 0, scale: 0.97 }}
+                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  >
+                    <SortableCard card={card} creator={card.creatorId ? people.get(card.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(card, viewer)} onOpen={() => onOpen(card.id)} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </SortableContext>
+            {cards.length === 0 ? <p className="px-2 py-6 text-center text-[12px] leading-relaxed text-ink-faint">{filtering ? "No matching cards." : columnHint(column, agent.name, sessionsEnabled)}</p> : null}
+            {fold && (fold.hidden > 0 || fold.expanded) ? (
+              <button
+                type="button"
+                onClick={fold.onToggle}
+                aria-expanded={fold.expanded}
+                className="mx-auto mt-1 inline-flex h-7 shrink-0 items-center gap-1 rounded-control px-2.5 text-[12px] text-ink-muted transition-colors hover:bg-raised hover:text-ink"
+              >
+                {fold.expanded ? "Show fewer" : `Show ${fold.hidden} older`}
+                <ChevronDown className={cx("size-3.5 transition-transform duration-200", fold.expanded && "rotate-180")} strokeWidth={1.75} />
+              </button>
+            ) : null}
+          </div>
+        </motion.div>
+      )}
     </section>
   );
 }
@@ -197,6 +273,24 @@ export function BoardPage() {
   // The board data a drop was made against; the lanes hold until the data is something newer.
   const droppedOn = useRef<Card[] | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
+  // Done starts as a narrow strip on every Board until opened there. `doneToggled` lets the switch
+  // animate when a person makes it, and not when the page loads.
+  const [doneOpen, setDoneOpen] = useState(() => readDoneOpen(browserStorage(), slug));
+  const [doneToggled, setDoneToggled] = useState(false);
+  useEffect(() => {
+    setDoneOpen(readDoneOpen(browserStorage(), slug));
+    setDoneToggled(false);
+  }, [slug]);
+  const toggleDone = useCallback(() => {
+    writeDoneOpen(browserStorage(), slug, !doneOpen);
+    setDoneOpen(!doneOpen);
+    setDoneToggled(true);
+  }, [doneOpen, slug]);
+  // Set as a card is dropped: whether it went onto a collapsed Done, which it disappears into, and the
+  // card, whose hidden place in the strip the drop animation lands on until the move is saved.
+  const tuck = useRef(false);
+  const dropped = useRef<string | null>(null);
+  const cardDrop = useMemo(() => dropAnimation(tuck), []);
   // Null until the User opens or closes the explainer: until then it shows only on a first visit.
   const [helpOpen, setHelpOpen] = useState<boolean | null>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -347,6 +441,8 @@ export function BoardPage() {
   }, []);
   const onDragCancel = useCallback(() => {
     droppedOn.current = null;
+    tuck.current = false;
+    dropped.current = null;
     setActiveId(null);
     setLanes(null);
   }, []);
@@ -368,12 +464,14 @@ export function BoardPage() {
       const position = placeBefore(whole, id, spot.beforeId);
       // The lanes hold the dropped order until the board data shows it, so the card stays put.
       droppedOn.current = board.data.cards;
+      tuck.current = spot.column === "done" && !doneOpen;
+      dropped.current = id;
       setLanes(settled);
       setActiveId(null);
       // The card springs back on a refusal, which says nothing about why without this.
       move.mutate({ id, column: spot.column, position, revision: card.revision }, { onError: (err) => toast(`“${card.title}” was not moved. ${err.message}`) });
     },
-    [board.data, move, onDragCancel],
+    [board.data, move, onDragCancel, doneOpen],
   );
 
   if (board.isPending) {
@@ -483,11 +581,12 @@ export function BoardPage() {
               sessionsEnabled={board.data.board.sessionsEnabled}
               dragging={lanes !== null}
               targeted={targetColumn === column}
+              collapse={column === "done" ? { open: doneOpen, onToggle: toggleDone, activeId: activeId ?? (lanes ? dropped.current : null), toggled: doneToggled } : undefined}
               fold={column === "done" ? { hidden: doneHidden, expanded: doneExpanded, onToggle: () => setDoneExpanded((x) => !x) } : undefined}
             />
           ))}
         </div>
-        <DragOverlay dropAnimation={reduce ? null : DROP_ANIMATION}>
+        <DragOverlay dropAnimation={reduce ? null : cardDrop}>
           {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay /> : null}
         </DragOverlay>
       </DndContext>
