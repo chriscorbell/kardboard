@@ -43,6 +43,8 @@ export function useBoardEvents(slug: string | undefined) {
           break;
         case "card.removed":
           qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, cards: v.cards.filter((c) => c.id !== event.cardId) } : v));
+          // Someone with the Card open reads it again and finds it gone, rather than keep a copy.
+          void qc.invalidateQueries({ queryKey: keys.card(event.cardId) });
           break;
         case "comment.upserted": {
           void qc.invalidateQueries({ queryKey: keys.card(event.comment.cardId) });

@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useStat
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, GitBranch, GitPullRequest, History, Link2, Pencil, Reply, Trash2, Upload, X } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Person, type Priority, type Provider, type User } from "@kardboard/shared";
-import { useCard, useCreateComment, useDeleteComment, useMarkCardRead, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
+import { useCard, useCreateComment, useDeleteCard, useDeleteComment, useMarkCardRead, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
@@ -18,6 +18,7 @@ import { SessionBanner } from "./SessionBanner";
 import { ApiError } from "../../lib/errors";
 import { Attachments } from "./AttachmentView";
 import { PreviewLink } from "./PreviewLink";
+import { canDeleteCard } from "./cardDeletion";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
 import { isInnermostModal, useModalFocus } from "../../components/focus";
 import { ReviewBlock } from "./ReviewBlock";
@@ -170,6 +171,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
             onSelect: () => p !== card.priority && update.mutate({ id: card.id, priority: p, revision: card.revision }, { onError: (err) => toast(`The priority was not changed. ${err.message}`) }),
           }))}
         />
+        {canDeleteCard(card, { id: me.data?.user.id ?? null, isAdmin }) ? <DeleteCard slug={slug} card={card} onDeleted={onClose} /> : null}
         <IconButton label="Close" onClick={onClose}>
           <X className="size-4" strokeWidth={1.75} />
         </IconButton>
@@ -584,6 +586,43 @@ const NewComment = forwardRef<ComposerHandle, { cardId: string; members: User[];
     </div>
   );
 });
+
+// Deleting takes the Card and everything on it, for everyone, so it asks first. The pull request and
+// branch on GitHub are not kardboard's to remove, and the dialog says so when there are any.
+function DeleteCard({ slug, card, onDeleted }: { slug: string; card: Card; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const remove = useDeleteCard(slug);
+  const close = () => {
+    setOpen(false);
+    remove.reset();
+  };
+  return (
+    <>
+      <IconButton label="Delete card" className="size-7" onClick={() => setOpen(true)}>
+        <Trash2 className="size-4" strokeWidth={1.75} />
+      </IconButton>
+      <Dialog open={open} onClose={close} title="Delete this card?" width={440}>
+        <p className="text-[13px] leading-relaxed text-ink-muted">
+          <span className="text-ink">{card.title}</span> is removed for everyone, with its comments and attachments. This cannot be undone.
+          {card.prUrl || card.branch ? " Its pull request and branch on GitHub stay as they are." : null}
+        </p>
+        {remove.isError ? (
+          <p role="alert" className="mt-3 text-[13px] text-danger">
+            The card was not deleted. {remove.error.message}
+          </p>
+        ) : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={close}>
+            Cancel
+          </Button>
+          <Button variant="danger" loading={remove.isPending} icon={<Trash2 className="size-4" strokeWidth={1.75} />} onClick={() => remove.mutate(card.id, { onSuccess: onDeleted })}>
+            Delete card
+          </Button>
+        </div>
+      </Dialog>
+    </>
+  );
+}
 
 // A Card's address, for pasting into a chat or an email. Opening it lands on the Card over its Board.
 function CopyLink({ slug, cardId }: { slug: string; cardId: string }) {

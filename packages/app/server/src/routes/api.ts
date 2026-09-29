@@ -53,6 +53,7 @@ import { reconcileOnDemand } from "../services/reconcile.js";
 import { bumpEveryPreviewEpoch, bumpPreviewEpoch, issuePreviewCode, PreviewError } from "../services/previews.js";
 import { BoardDeletionRefused, boardDeletionImpact, deleteBoard } from "../services/board-deletion.js";
 import { AccessTokenRefused, createAccessToken, listAccessTokens, revokeAccessToken } from "../services/access-tokens.js";
+import { CardDeletionRefused, deleteCard, mayDeleteCard } from "../services/card-deletion.js";
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
@@ -303,6 +304,23 @@ api.patch("/comments/:id", json(updateCommentSchema), async (c) => {
 
 // A Comment's author may delete it, and so may the Admin, who alone can remove the Agent's. As with
 // an edit, the author must still be able to open the Board.
+// For good, with everything on the Card: see deleteCard. The Admin may delete any Card, a Member one
+// they created.
+api.delete("/cards/:id", async (c) => {
+  const card = await getCard(c.req.param("id"));
+  if (!card) return c.json({ error: "not_found" }, 404);
+  const access = await boardForUser(c as never, card.boardId);
+  if ("error" in access) return access.error;
+  if (!mayDeleteCard(c.get("user"), card)) return c.json({ error: "Only the Admin, or the person who created this card, can delete it." }, 403);
+  try {
+    await deleteCard(card.id, actorOf(c));
+  } catch (err) {
+    if (err instanceof CardDeletionRefused) return c.json({ error: err.message }, err.status);
+    throw err;
+  }
+  return c.body(null, 204);
+});
+
 api.delete("/comments/:id", async (c) => {
   const comment = await getComment(c.req.param("id"));
   if (!comment) return c.json({ error: "not_found" }, 404);
