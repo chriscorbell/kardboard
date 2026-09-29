@@ -178,6 +178,19 @@ async function nextPosition(boardId: string, column: Column): Promise<number> {
   return (last?.position ?? 0) + 1000;
 }
 
+/** A position before every Card in the Column, or after every one. The Board reads a Column top down. */
+export async function edgePosition(boardId: string, column: Column, edge: "top" | "bottom"): Promise<number> {
+  if (edge === "bottom") return nextPosition(boardId, column);
+  const first = await db
+    .select({ position: schema.cards.position })
+    .from(schema.cards)
+    .where(and(eq(schema.cards.boardId, boardId), eq(schema.cards.column, column)))
+    .orderBy(asc(schema.cards.position))
+    .limit(1)
+    .get();
+  return (first?.position ?? 1000) - 1000;
+}
+
 export class ConflictError extends Error {
   status = 409;
 }
@@ -191,6 +204,8 @@ export async function createCard(input: {
   actor: Actor;
   parentCardId?: string | null;
   silent?: boolean;
+  // Where in its Column the Card goes. A new Card joins the bottom unless its creator puts it first.
+  at?: "top" | "bottom";
 }): Promise<Card> {
   const id = newId();
   await db.insert(schema.cards).values({
@@ -200,7 +215,7 @@ export async function createCard(input: {
     description: input.description,
     priority: input.priority,
     column: input.column,
-    position: await nextPosition(input.boardId, input.column),
+    position: await edgePosition(input.boardId, input.column, input.at ?? "bottom"),
     creatorKind: input.actor.kind,
     creatorId: input.actor.id,
     parentCardId: input.parentCardId ?? null,

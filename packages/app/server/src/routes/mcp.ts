@@ -12,7 +12,7 @@ import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { findSessionByToken, endSession, listBoardSessions } from "../services/orchestrator.js";
 import { getBoardById, listMembers } from "../services/boards.js";
-import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, setCardWorkState, toSessionSummary, updateCard } from "../services/cards.js";
+import { ConflictError, createCard, edgePosition, getCard, listCards, listChildren, moveCard, setCardWorkState, toSessionSummary, updateCard } from "../services/cards.js";
 import { createComment, getAttachment, listComments } from "../services/comments.js";
 import { getUsersByIds } from "../services/users.js";
 import { recordEvent } from "../services/events.js";
@@ -459,11 +459,11 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
   server.registerTool(
     "create_card",
     {
-      description: "Create a card. A new request goes in Inbox; one already understood well enough to start goes in Ready. Give it a title that says what it asks for, and a description with what someone picking it up needs.",
-      inputSchema: { title: z.string().trim().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS).default("inbox"), priority: z.enum(PRIORITIES).default("none") },
+      description: "Create a card. A new request goes in Inbox; one already understood well enough to start goes in Ready. Give it a title that says what it asks for, and a description with what someone picking it up needs. A column reads top down, so position top puts the card first, as what to take next; it goes to the bottom otherwise.",
+      inputSchema: { title: z.string().trim().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS).default("inbox"), priority: z.enum(PRIORITIES).default("none"), position: z.enum(["top", "bottom"]).default("bottom") },
     },
-    async ({ title, description, column, priority }) => {
-      const card = await createCard({ boardId: board.id, title, description, priority, column, actor });
+    async ({ title, description, column, priority, position }) => {
+      const card = await createCard({ boardId: board.id, title, description, priority, column, actor, at: position });
       return { content: [{ type: "text", text: JSON.stringify({ cardId: card.id, revision: card.revision }) }] };
     },
   );
@@ -499,15 +499,16 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
     "move_card",
     {
       description:
-        "Move a card to a column: In Progress when you start it, Blocked with a comment when you need a person's answer, Review once its pull request is open and recorded with link_pull_request, Done when it is finished. Set merged when you merged the card's pull request yourself and are moving it to Done: the card records the merge and closes as implemented, not merely closed. Pass the revision from your latest get_card or get_board: if the card has changed since, the move is refused and you should read it again.",
-      inputSchema: { card_id: z.string(), column: z.enum(COLUMNS), revision: z.number().int().nonnegative(), merged: z.boolean().default(false) },
+        "Move a card to a column: In Progress when you start it, Blocked with a comment when you need a person's answer, Review once its pull request is open and recorded with link_pull_request, Done when it is finished. Set merged when you merged the card's pull request yourself and are moving it to Done: the card records the merge and closes as implemented, not merely closed. A column reads top down: a card moved to another column goes to its bottom unless position is top, and position with the card's own column reorders it there. Pass the revision from your latest get_card or get_board: if the card has changed since, the move is refused and you should read it again.",
+      inputSchema: { card_id: z.string(), column: z.enum(COLUMNS), revision: z.number().int().nonnegative(), merged: z.boolean().default(false), position: z.enum(["top", "bottom"]).optional() },
     },
-    async ({ card_id, column, revision, merged }) => {
+    async ({ card_id, column, revision, merged, position }) => {
       const card = await assertBoardCard(card_id);
       if (merged && column !== "done") throw new Error("merged goes with a move to Done: it says you merged the card's pull request and are closing the card.");
+      if (column === card.column && !position) throw new Error(`card ${card_id} is already in ${COLUMN_LABELS[column]}: pass position top or bottom to reorder it there.`);
       let moved;
       try {
-        moved = await moveCard(card_id, { column, position: card.position, revision, actor, merged });
+        moved = await moveCard(card_id, { column, position: await edgePosition(board.id, column, position ?? "bottom"), revision, actor, merged });
       } catch (err) {
         if (err instanceof ConflictError) throw await conflict(card_id, revision);
         throw err;
