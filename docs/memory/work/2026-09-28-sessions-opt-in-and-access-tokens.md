@@ -8,7 +8,11 @@ Objective: let the Admin work a Board from their own local coding agent, with ka
 
 Checked before opening: typecheck, 609 app tests, the app build, and a real `claude -p` run using a token made in the UI against a dev server, which read the Board, created a Card, and moved one. Two runner tests fail on agent-pc only; see [the lesson](../lessons/runner-cli-tests-fail-on-agent-pc.md).
 
-Unverified until deployed: migration `0017` setting every production Board's Sessions on, `/mcp` accepting a token through the Cloudflare tunnel, and the copied `claude mcp add` command working from the Admin's own machine.
+Merged and deployed on 2026-09-29 UTC as `85ab336` (PR 46) and `a92e5b2` (PR 47). Observed on minicore: each migration ran after its own pre-migration snapshot, copied to the NAS; the kardboard, kino, and ptsblite Boards all read `sessions_enabled = 1` with no pending Trigger; `access_tokens` exists and is empty; the public `https://kardboard.cc/mcp` answers 401 to an unknown `kbat_` token and to an unknown Session token.
 
-Next action: the Admin merges 46. PRs are squash-merged, so 47 then needs `main` merged into it before it merges cleanly. After each deploy, confirm the production Boards still show Sessions on, then make a token on a Board with Sessions off and connect Claude Code with it.
-Close when: both PRs are merged and a token has been used against production.
+Still unobserved: an Access token used against production, and the copied `claude mcp add` command working from the Admin's own machine.
+
+Open decision for the Admin: to let the merges go ahead, the Admin set the `kardboard` ruleset on this repository to require no approving review on 2026-09-29. That also means nothing but the Session prompt keeps a Session on the kardboard Board from merging its own pull request, which ADR 0008 relies on the approval rule for. Either restore one required approval, or record the change against ADR 0008.
+
+Next action: the Admin creates a Board with Sessions off, makes a token in its settings, and runs the copied command in the project folder on the Mac; then settle the ruleset question above.
+Close when: a token has been used against production and the ruleset question is settled.
