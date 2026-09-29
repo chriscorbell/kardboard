@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   boardMembersSchema,
+  createAccessTokenSchema,
   createCardSchema,
   createCommentSchema,
   deleteBoardSchema,
@@ -51,6 +52,7 @@ import { installationStatus, parseRepoUrl } from "../services/github.js";
 import { reconcileOnDemand } from "../services/reconcile.js";
 import { bumpEveryPreviewEpoch, bumpPreviewEpoch, issuePreviewCode, PreviewError } from "../services/previews.js";
 import { BoardDeletionRefused, boardDeletionImpact, deleteBoard } from "../services/board-deletion.js";
+import { AccessTokenRefused, createAccessToken, listAccessTokens, revokeAccessToken } from "../services/access-tokens.js";
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
@@ -498,6 +500,27 @@ admin.delete("/boards/:id", json(deleteBoardSchema), async (c) => {
     if (err instanceof BoardDeletionRefused) return c.json({ error: err.message }, err.status);
     throw err;
   }
+});
+// Access tokens for the Admin's own agent, one Board each. The secret is in the creation response
+// and nowhere else.
+admin.get("/boards/:id/tokens", async (c) => {
+  const board = await getBoardById(c.req.param("id"));
+  if (!board) return c.json({ error: "not_found" }, 404);
+  return c.json(await listAccessTokens(board.id));
+});
+admin.post("/boards/:id/tokens", json(createAccessTokenSchema), async (c) => {
+  const board = await getBoardById(c.req.param("id"));
+  if (!board) return c.json({ error: "not_found" }, 404);
+  try {
+    return c.json(await createAccessToken(board.id, c.req.valid("json").name, actorOf(c)), 201);
+  } catch (err) {
+    if (err instanceof AccessTokenRefused) return c.json({ error: err.message }, err.status);
+    throw err;
+  }
+});
+admin.delete("/boards/:id/tokens/:tokenId", async (c) => {
+  const revoked = await revokeAccessToken(c.req.param("id"), c.req.param("tokenId"), actorOf(c));
+  return revoked ? c.json({ ok: true }) : c.json({ error: "not_found" }, 404);
 });
 admin.put("/boards/:id/members", json(boardMembersSchema), async (c) => {
   await setMembers(c.req.param("id"), c.req.valid("json").userIds);

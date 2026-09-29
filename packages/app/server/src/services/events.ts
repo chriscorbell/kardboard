@@ -8,6 +8,9 @@ export interface Actor {
   // The Session acting as the Agent. Every Session shares the Agent's identity, so this is what
   // tells them apart on the record: which Session created a Card, say, and may therefore edit it.
   sessionId?: string;
+  // The Access token an agent outside kardboard acted through as the Agent. Which token is on the
+  // record, so what one did can be told apart after it is revoked.
+  accessTokenId?: string;
 }
 
 export const SYSTEM_ACTOR: Actor = { kind: "system", id: null };
@@ -27,6 +30,6 @@ export async function recordEvent(input: {
     actorId: input.actor.id,
     type: input.type,
     // A payload that names a Session of its own keeps it.
-    payload: { ...(input.actor.sessionId ? { sessionId: input.actor.sessionId } : {}), ...(input.payload ?? {}) },
+    payload: { ...(input.actor.sessionId ? { sessionId: input.actor.sessionId } : {}), ...(input.actor.accessTokenId ? { accessTokenId: input.actor.accessTokenId } : {}), ...(input.payload ?? {}) },
   });
 }

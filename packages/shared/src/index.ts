@@ -447,6 +447,23 @@ export const upsertBoardSchema = z.object({
 
 export const boardMembersSchema = z.object({ userIds: z.array(z.string()) });
 
+/** An Access token as the Admin sees it: never the token itself, which is shown once, at creation. */
+export interface AccessToken {
+  id: string;
+  boardId: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+/** A token just made: the only time its secret leaves the server. */
+export interface CreatedAccessToken {
+  accessToken: AccessToken;
+  secret: string;
+}
+
+export const createAccessTokenSchema = z.object({ name: z.string().trim().min(1).max(80) });
+
 // Deleting a Board names it again, so a request meant for another Board, or sent by mistake, fails.
 export const deleteBoardSchema = z.object({ slug: z.string() });
 

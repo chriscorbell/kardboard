@@ -7,6 +7,7 @@ import { keys, request, useAdminBoards, useAdminUsers, useMe, type AdminBoard } 
 import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Reveal, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
+import { AccessTokensPanel } from "./AccessTokensPanel";
 import { slugDraft, slugify } from "./slug";
 import { canDelete, deletionContents } from "./boardDeletion";
 import { toast } from "../../lib/toast";
@@ -172,7 +173,7 @@ export function BoardsTab() {
               <input type="checkbox" checked={draft.sessionsEnabled} onChange={(e) => setDraft({ ...draft, sessionsEnabled: e.target.checked })} className="mt-[3px] accent-accent" />
               <span>
                 <span className="font-medium text-ink">Sessions.</span> Every change people make starts a session, where {agentName} does the work or asks about it, and members approve what it
-                merges. Off, changes start nothing.
+                merges. Off, changes start nothing, and you work the board from your own agent.
               </span>
             </label>
             {/* What only a board with sessions uses, tucked under the switch that gives it meaning. */}
@@ -223,6 +224,19 @@ export function BoardsTab() {
                     resume it.
                   </span>
                 </label>
+              </div>
+            </Reveal>
+            {/* The other way to work a board: the Admin's own agent, with a token. Only for a board
+                saved without sessions, since a token is refused on one that runs them. */}
+            <Reveal open={!draft.sessionsEnabled}>
+              <div className="mt-4">
+                {editing && editing !== "new" && !editing.sessionsEnabled ? (
+                  <AccessTokensPanel boardId={editing.id} agentName={agentName} />
+                ) : (
+                  <p className="text-[12.5px] text-ink-faint">
+                    {editing === "new" ? "Once the board exists, its settings can make an access token for your own agent." : "Save with sessions off to make an access token for your own agent."}
+                  </p>
+                )}
               </div>
             </Reveal>
           </div>

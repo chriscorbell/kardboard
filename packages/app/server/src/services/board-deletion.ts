@@ -99,6 +99,7 @@ export async function deleteBoard(
       db.delete(schema.events).where(eq(schema.events.boardId, boardId)),
       db.delete(schema.cards).where(eq(schema.cards.boardId, boardId)),
       db.delete(schema.boardMembers).where(eq(schema.boardMembers.boardId, boardId)),
+      db.delete(schema.accessTokens).where(eq(schema.accessTokens.boardId, boardId)),
       db.delete(schema.boards).where(eq(schema.boards.id, boardId)),
     ]);
     return { previews, hashes, cards };

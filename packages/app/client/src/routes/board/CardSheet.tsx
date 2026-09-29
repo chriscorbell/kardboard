@@ -734,6 +734,7 @@ const ACTIVITY_LABEL: Record<string, (p: Record<string, unknown>) => string> = {
   "session.provider_fallback": (p) => `moved the work from ${PROVIDER_LABELS[p.from as Provider] ?? p.from} to ${PROVIDER_LABELS[p.to as Provider] ?? p.to}, which had usage left`,
   "preview.requested": () => "started building a preview",
   "card.merged": (p) => `merged pull request${p.prNumber ? ` #${p.prNumber as number}` : ""}`,
+  "card.pr_linked": (p) => `linked pull request #${p.prNumber as number}`,
   "card.children_done": (p) => `noted that ${pieces(p)}`,
   "comment.deleted": () => "deleted a comment",
 };
