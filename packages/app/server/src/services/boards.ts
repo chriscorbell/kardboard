@@ -19,6 +19,7 @@ export function toBoard(row: typeof schema.boards.$inferSelect): Board {
     maxConcurrentSessions: row.maxConcurrentSessions,
     promptAppend: row.promptAppend,
     paused: row.paused,
+    sessionsEnabled: row.sessionsEnabled,
     createdAt: row.createdAt,
   };
 }
@@ -121,6 +122,9 @@ export type BoardInput = {
   maxConcurrentSessions: number;
   promptAppend: string;
   paused?: boolean;
+  // Written only when a Board is created. Switching it later goes through `setBoardSessions`, which
+  // settles what the Board owed.
+  sessionsEnabled?: boolean;
 };
 
 export async function createBoard(input: BoardInput): Promise<Board> {
@@ -138,6 +142,7 @@ export async function createBoard(input: BoardInput): Promise<Board> {
     maxConcurrentSessions: input.maxConcurrentSessions,
     promptAppend: input.promptAppend,
     paused: input.paused ?? false,
+    sessionsEnabled: input.sessionsEnabled ?? false,
   });
   return (await getBoardById(id))!;
 }

@@ -120,6 +120,13 @@
       "when": 1790293535299,
       "tag": "0016_user-removed-at",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1790644052176,
+      "tag": "0017_board-sessions-enabled",
+      "breakpoints": true
     }
   ]
 }

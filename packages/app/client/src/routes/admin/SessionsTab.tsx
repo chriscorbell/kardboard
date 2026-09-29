@@ -150,7 +150,7 @@ export function SessionsTab() {
             }
           />
         ) : (
-          <EmptyState title="No sessions yet" body="A session starts about a minute after a member changes a card." />
+          <EmptyState title="No sessions yet" body="On a board with sessions on, one starts about a minute after a member changes a card." />
         )
       ) : (
         <>

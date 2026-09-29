@@ -389,6 +389,8 @@ export async function retryCard(id: string, actor: Actor): Promise<Card> {
   const card = await getCard(id);
   if (!card) throw new Error("card not found");
   const agent = await getAgentProfile();
+  const board = await db.select({ sessionsEnabled: schema.boards.sessionsEnabled }).from(schema.boards).where(eq(schema.boards.id, card.boardId)).get();
+  if (!board?.sessionsEnabled) throw new RetryRefused("This board has sessions turned off, so there is nothing to try again.");
   if (card.activeSession) throw new RetryRefused(`${agent.name} is already working on this card.`);
   if (card.column === "done") throw new RetryRefused("This card is done. Add a comment to reopen it.");
   const last = card.lastSession;

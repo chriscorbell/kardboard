@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pause, Plus, Trash2 } from "lucide-react";
 import { REASONING_LEVELS, type Board, type BoardDeletionImpact, type Reasoning } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminUsers, useMe, type AdminBoard } from "../../lib/api";
-import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Select, Skeleton, Textarea } from "../../components/ui";
+import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Reveal, Select, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
 import { slugDraft, slugify } from "./slug";
@@ -23,15 +23,16 @@ type Draft = {
   maxConcurrentSessions: number;
   promptAppend: string;
   paused: boolean;
+  sessionsEnabled: boolean;
   memberIds: string[];
 };
 
 const REASONING_LABELS: Record<Reasoning, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 
-const empty: Draft = { name: "", slug: "", repoUrl: "", provider: "claude", model: "", reasoning: "", previewMode: "external", agentImage: "", maxConcurrentSessions: 3, promptAppend: "", paused: false, memberIds: [] };
+const empty: Draft = { name: "", slug: "", repoUrl: "", provider: "claude", model: "", reasoning: "", previewMode: "external", agentImage: "", maxConcurrentSessions: 3, promptAppend: "", paused: false, sessionsEnabled: false, memberIds: [] };
 
 function fromBoard(b: AdminBoard): Draft {
-  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "", provider: b.provider, model: b.model ?? "", reasoning: b.reasoning ?? "", previewMode: b.previewMode, agentImage: b.agentImage ?? "", maxConcurrentSessions: b.maxConcurrentSessions, promptAppend: b.promptAppend, paused: b.paused, memberIds: b.memberIds };
+  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "", provider: b.provider, model: b.model ?? "", reasoning: b.reasoning ?? "", previewMode: b.previewMode, agentImage: b.agentImage ?? "", maxConcurrentSessions: b.maxConcurrentSessions, promptAppend: b.promptAppend, paused: b.paused, sessionsEnabled: b.sessionsEnabled, memberIds: b.memberIds };
 }
 
 export function BoardsTab() {
@@ -66,6 +67,8 @@ export function BoardsTab() {
         // Sent only when the box changed here, so saving an unrelated edit never undoes a pause made
         // from the Board page since this dialog opened.
         ...(editing === "new" || draft.paused !== (editing as AdminBoard).paused ? { paused: draft.paused } : {}),
+        // Likewise, and switching it is refused while a session runs, which should not block a rename.
+        ...(editing === "new" || draft.sessionsEnabled !== (editing as AdminBoard).sessionsEnabled ? { sessionsEnabled: draft.sessionsEnabled } : {}),
       };
       const board = editing === "new" ? await request<Board>("/admin/boards", { method: "POST", body: JSON.stringify(body) }) : await request<Board>(`/admin/boards/${(editing as AdminBoard).id}`, { method: "PATCH", body: JSON.stringify(body) });
       await request(`/admin/boards/${board.id}/members`, { method: "PUT", body: JSON.stringify({ userIds: draft.memberIds }) });
@@ -114,8 +117,14 @@ export function BoardsTab() {
                 ) : null}
                 {/* Settings detail; the dialog shows all of it, so a phone keeps the row to name and repository. */}
                 <span className="hidden shrink-0 items-center gap-4 sm:flex">
-                  <Chip>{b.provider === "claude" ? "Claude Code" : "Codex"}</Chip>
-                  <Chip>{b.previewMode} preview</Chip>
+                  {b.sessionsEnabled ? (
+                    <>
+                      <Chip>{b.provider === "claude" ? "Claude Code" : "Codex"}</Chip>
+                      <Chip>{b.previewMode} preview</Chip>
+                    </>
+                  ) : (
+                    <Chip>Sessions off</Chip>
+                  )}
                   <span className="flex -space-x-1.5">
                     {b.memberIds.slice(0, 4).map((id) => {
                       const u = users.data?.find((x) => x.id === id);
@@ -154,55 +163,69 @@ export function BoardsTab() {
               />
             </Field>
           </div>
-          <Field label="Repository URL" hint="GitHub only. Both kardboard GitHub Apps must be installed on it.">
+          <Field label="Repository URL" hint={draft.sessionsEnabled ? "GitHub only. Both kardboard GitHub Apps must be installed on it." : "GitHub only. Optional while sessions are off."}>
             <Input type="url" value={draft.repoUrl} onChange={(e) => setDraft({ ...draft, repoUrl: e.target.value })} placeholder="https://github.com/org/repo" />
           </Field>
-          {editing !== "new" && editing ? <GitHubStatus boardId={editing.id} /> : null}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Provider">
-              <Select value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Draft["provider"] })}>
-                <option value="claude">Claude Code</option>
-                <option value="codex">Codex</option>
-              </Select>
-            </Field>
-            <Field label="Preview mode">
-              <Select value={draft.previewMode} onChange={(e) => setDraft({ ...draft, previewMode: e.target.value as Draft["previewMode"] })}>
-                <option value="external">External (project CI)</option>
-                <option value="runner">Runner (Dockerfile)</option>
-              </Select>
-            </Field>
-            <Field label="Max sessions">
-              <Input type="number" min={1} max={10} value={draft.maxConcurrentSessions} onChange={(e) => setDraft({ ...draft, maxConcurrentSessions: Number(e.target.value) })} />
-            </Field>
+          {editing !== "new" && editing && draft.sessionsEnabled ? <GitHubStatus boardId={editing.id} /> : null}
+          <div>
+            <label className="flex items-start gap-2 text-[13px] text-ink-muted">
+              <input type="checkbox" checked={draft.sessionsEnabled} onChange={(e) => setDraft({ ...draft, sessionsEnabled: e.target.checked })} className="mt-[3px] accent-accent" />
+              <span>
+                <span className="font-medium text-ink">Sessions.</span> Every change people make starts a session, where {agentName} does the work or asks about it, and members approve what it
+                merges. Off, changes start nothing.
+              </span>
+            </label>
+            {/* What only a board with sessions uses, tucked under the switch that gives it meaning. */}
+            <Reveal open={draft.sessionsEnabled}>
+              <div className="ml-[6px] mt-4 flex flex-col gap-4 border-l border-line pl-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Field label="Provider">
+                    <Select value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Draft["provider"] })}>
+                      <option value="claude">Claude Code</option>
+                      <option value="codex">Codex</option>
+                    </Select>
+                  </Field>
+                  <Field label="Preview mode">
+                    <Select value={draft.previewMode} onChange={(e) => setDraft({ ...draft, previewMode: e.target.value as Draft["previewMode"] })}>
+                      <option value="external">External (project CI)</option>
+                      <option value="runner">Runner (Dockerfile)</option>
+                    </Select>
+                  </Field>
+                  <Field label="Max sessions">
+                    <Input type="number" min={1} max={10} value={draft.maxConcurrentSessions} onChange={(e) => setDraft({ ...draft, maxConcurrentSessions: Number(e.target.value) })} />
+                  </Field>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Model" hint={draft.provider === "claude" ? "Claude Code --model. Empty uses its default. Examples: opus, sonnet." : "Codex -m. Empty uses its default. Example: gpt-5.5."}>
+                    <Input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} placeholder="provider default" className="font-mono text-[13px]" />
+                  </Field>
+                  <Field label="Reasoning" hint={draft.provider === "claude" ? "Claude Code effort level. A model without Extra high or Max runs the highest level it has." : "Codex reasoning effort. Max runs as Extra high."}>
+                    <Select value={draft.reasoning} onChange={(e) => setDraft({ ...draft, reasoning: e.target.value as Draft["reasoning"] })}>
+                      <option value="">Provider default</option>
+                      {REASONING_LEVELS.map((level) => (
+                        <option key={level} value={level}>
+                          {REASONING_LABELS[level]}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </div>
+                <Field label="Agent image override" hint="Leave empty for the default image.">
+                  <Input value={draft.agentImage} onChange={(e) => setDraft({ ...draft, agentImage: e.target.value })} placeholder="ghcr.io/org/image:tag" className="font-mono text-[13px]" />
+                </Field>
+                <Field label="Extra instructions for the agent" hint="Appended to the global workflow prompt for this board only.">
+                  <Textarea rows={3} value={draft.promptAppend} onChange={(e) => setDraft({ ...draft, promptAppend: e.target.value })} />
+                </Field>
+                <label className="flex items-start gap-2 text-[13px] text-ink-muted">
+                  <input type="checkbox" checked={draft.paused} onChange={(e) => setDraft({ ...draft, paused: e.target.checked })} className="mt-[3px] accent-accent" />
+                  <span>
+                    <span className="font-medium text-ink">Paused.</span> {agentName} starts no new sessions on this board and skips its nightly sweep. Sessions already running finish, and changes wait until you
+                    resume it.
+                  </span>
+                </label>
+              </div>
+            </Reveal>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Model" hint={draft.provider === "claude" ? "Claude Code --model. Empty uses its default. Examples: opus, sonnet." : "Codex -m. Empty uses its default. Example: gpt-5.5."}>
-              <Input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} placeholder="provider default" className="font-mono text-[13px]" />
-            </Field>
-            <Field label="Reasoning" hint={draft.provider === "claude" ? "Claude Code effort level. A model without Extra high or Max runs the highest level it has." : "Codex reasoning effort. Max runs as Extra high."}>
-              <Select value={draft.reasoning} onChange={(e) => setDraft({ ...draft, reasoning: e.target.value as Draft["reasoning"] })}>
-                <option value="">Provider default</option>
-                {REASONING_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {REASONING_LABELS[level]}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-          <Field label="Agent image override" hint="Leave empty for the default image.">
-            <Input value={draft.agentImage} onChange={(e) => setDraft({ ...draft, agentImage: e.target.value })} placeholder="ghcr.io/org/image:tag" className="font-mono text-[13px]" />
-          </Field>
-          <Field label="Extra instructions for the agent" hint="Appended to the global workflow prompt for this board only.">
-            <Textarea rows={3} value={draft.promptAppend} onChange={(e) => setDraft({ ...draft, promptAppend: e.target.value })} />
-          </Field>
-          <label className="flex items-start gap-2 text-[13px] text-ink-muted">
-            <input type="checkbox" checked={draft.paused} onChange={(e) => setDraft({ ...draft, paused: e.target.checked })} className="mt-[3px] accent-accent" />
-            <span>
-              <span className="font-medium text-ink">Paused.</span> {agentName} starts no new sessions on this board and skips its nightly sweep. Sessions already running finish, and changes wait until you
-              resume it.
-            </span>
-          </label>
           <div>
             <p className="mb-1.5 text-[13px] font-medium text-ink-muted">Members</p>
             {members.length === 0 ? (

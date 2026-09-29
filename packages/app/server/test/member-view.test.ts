@@ -30,7 +30,7 @@ const AGENT = { kind: "agent" as const, id: null };
 
 beforeEach(async () => {
   for (const t of [schema.notifications, schema.triggers, schema.events, schema.approvals, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" },

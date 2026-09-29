@@ -38,7 +38,7 @@ import { getAgentProfile, getSettings, updateSettings } from "../services/settin
 import { getPreferences, getUser, inviteUser, isRemoved, listUsers, removeUser, RemoveRefused, setUserStatus, updatePreferences } from "../services/users.js";
 import { sendInvitation } from "../services/email.js";
 import { subscribe } from "../services/realtime.js";
-import { boardPauseChanged, cancelSession, getSession, listBoardSessions } from "../services/orchestrator.js";
+import { boardPauseChanged, cancelSession, getSession, listBoardSessions, SessionsSwitchRefused, setBoardSessions } from "../services/orchestrator.js";
 import { getAdminSession, listAdminSessions, sessionFilters } from "../services/admin-sessions.js";
 import { usageTotals } from "../services/usage.js";
 import { readEgressStatus } from "../services/provider-limits.js";
@@ -452,6 +452,16 @@ admin.patch("/boards/:id", json(upsertBoardSchema), async (c) => {
   if (existing && existing.id !== c.req.param("id")) return c.json({ error: "slug already in use" }, 409);
   const before = await getBoardById(c.req.param("id"));
   if (!before) return c.json({ error: "not_found" }, 404);
+  // The Sessions switch goes first: it can be refused, and then nothing else is saved either.
+  const { sessionsEnabled } = c.req.valid("json");
+  if (sessionsEnabled !== undefined && sessionsEnabled !== before.sessionsEnabled) {
+    try {
+      await setBoardSessions(before.id, sessionsEnabled, actorOf(c));
+    } catch (err) {
+      if (err instanceof SessionsSwitchRefused) return c.json({ error: err.message }, err.status);
+      throw err;
+    }
+  }
   const board = await updateBoard(before.id, c.req.valid("json"));
   if (board.paused !== before.paused) await boardPauseChanged(board.id, board.paused, actorOf(c));
   return c.json(board);

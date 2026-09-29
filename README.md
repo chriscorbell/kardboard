@@ -15,9 +15,11 @@
 
 ## What it does
 
-**kardboard** is a kanban board for one project per board. Your clients, teammates, or you write cards. About a minute after a card is created, edited, commented on, or moved, kardboard starts a **Session**: a disposable container running Claude Code (or Codex) that clones the project, reads the board over MCP, and either does the work or asks a clarifying question on the card.
+**kardboard** is a kanban board for one project per board. Your clients, teammates, or you write cards. On a board with **Sessions** turned on, about a minute after a card is created, edited, commented on, or moved, kardboard starts a Session: a disposable container running Claude Code (or Codex) that clones the project, reads the board over MCP, and either does the work or asks a clarifying question on the card.
 
 When the work is done, the Session opens a pull request and moves the card to Review. A member presses **Approve**, and kardboard merges the pull request, moves the card to Done, and lets everyone know. Sessions can push branches but can never merge; that authority stays with kardboard.
+
+Sessions are off for a new board, and the admin turns them on per board. A board without them is a plain kanban board: changes start nothing, and whoever works it opens and merges its pull requests.
 
 ![A card in Review with a pull request, a preview link, and the Approve control](docs/brand/screenshot-card.png)
 
@@ -27,7 +29,7 @@ When the work is done, the Session opens a pull request and moves the card to Re
 - **Cards** with Markdown descriptions, priority, comments, `@mentions`, and file attachments you can pick, paste, or drop, including on a new card. Search and filters, and a Done column that folds its older cards.
 - **Clear waiting states**: a card says when the agent will pick it up, pins the agent's question when it is blocked on you, and tells you in plain words when a run failed, with **Try again**.
 - **One agent identity** across all boards, with a configurable name and avatar (the default is Milo).
-- **Per-board settings** for the repository, provider, model, reasoning level, preview mode, member access, and extra instructions.
+- **Per-board settings** for whether the board runs Sessions, the repository, provider, model, reasoning level, preview mode, member access, and extra instructions.
 - **Sessions that see the whole board**: an MCP server exposes the ledger of active Sessions, every card, comments, and attachments, plus tools to comment, move, and create cards.
 - **Safe by construction**: Sessions run with resource limits, a wall clock, a one-hour repository token, and no access to your provider credentials, which stay in a proxy.
 - **Approvals bound to code**: an Approval records the pull request commit the reviewer saw. A later push voids it, failing CI blocks it, and kardboard notices pull requests merged, closed, or pushed to on GitHub.

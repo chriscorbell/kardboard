@@ -1,6 +1,6 @@
 # kardboard design
 
-kardboard is a self-hosted kanban platform where every human change to a Board summons a disposable coding agent that either does the work or asks for what it needs. This document records the agreed design as of 2026-09-13, revised 2026-09-14 after the first production deployment. Vocabulary is defined in [CONTEXT.md](../CONTEXT.md) and is used here with its glossary meaning. Decisions with real trade-offs have their own record under [docs/adr](adr/).
+kardboard is a self-hosted kanban platform for work done by coding agents. On a Board that runs Sessions, every human change summons a disposable coding agent that either does the work or asks for what it needs. This document records the agreed design as of 2026-09-13, revised 2026-09-14 after the first production deployment and 2026-09-28 when Sessions became a per-Board choice. Vocabulary is defined in [CONTEXT.md](../CONTEXT.md) and is used here with its glossary meaning. Decisions with real trade-offs have their own record under [docs/adr](adr/).
 
 ## Actors
 
@@ -14,16 +14,16 @@ One Board per project and repository. Six fixed Columns:
 
 | Column | Meaning |
 | --- | --- |
-| Inbox | Human-created Cards awaiting intake by a Session. Reserved for human creation. |
+| Inbox | New Cards not yet triaged. On a Board that runs Sessions, reserved for human creation and awaiting intake by a Session. |
 | Blocked | Waiting on a human answer. |
 | Ready | Triaged and actionable, not being worked on. |
-| In Progress | A Session is implementing. |
-| Review | A pull request and Preview exist; awaiting Approval or feedback. |
+| In Progress | Being implemented, by a Session where the Board runs them. |
+| Review | A pull request, and a Preview where there is one, exist; awaiting Approval or feedback. |
 | Done | Merged, closed by a human, or a duplicate. |
 
 A Card has a title, Markdown description, Priority (none, low, medium, high), Column, position within the Column, creator, and Comments. Attachments belong to Comments only. An image attachment opens in a viewer over the card, fitted to the screen, with a click to see it at full size and arrows between the Comment's images; any other file downloads. Files chosen, pasted, or dropped while creating a Card are posted as one Comment by its creator right after the Card, so both Triggers reach the same Session; an image pasted into an existing description is not handled. Authors may edit their own Comments, which shows an "edited" marker; earlier bodies stay in the event log with no history UI. An author, or the Admin, may delete a Comment, and only the Admin may delete the Agent's: its revisions, Mentions, and Attachments go with it, the stored file too once nothing else refers to it, and the event log records who deleted it but not what it said. Deleting is not a Trigger, and cannot recall an email already sent. A Mention in a Comment notifies the mentioned User. A Comment stores a Mention as the person's @handle, which is what the Agent reads and writes, but people see names everywhere: the comment box completes and edits Mentions as names and posts them as handles, and the card, the bell, and emails show names. A name two people share stays a handle in the comment box, so it cannot reach the wrong one. Each Card shows an activity trail of moves, Approvals, and Session starts and ends alongside its Comments. There is no Board-wide feed. People keep their names on what they wrote after they leave a Board.
 
-A Card in Blocked whose last word is the Agent's shows that question at the top of the Card and "Needs your answer" on its tile. The Board can be searched by title, description, and id, and filtered to Cards a User created, Cards waiting on them, or a Priority; the filter lives in the URL. Done shows its ten most recently updated Cards and folds the rest. A User opening a Board for the first time sees a short explanation of the Columns, the Agent, and Approve, which stays dismissed on every device.
+A Card in Blocked whose last word is the Agent's shows that question at the top of the Card and "Needs your answer" on its tile. The Board can be searched by title, description, and id, and filtered to Cards a User created, Cards waiting on them, or a Priority; the filter lives in the URL. Done shows its ten most recently updated Cards and folds the rest. A User opening a Board for the first time sees a short explanation of the Columns, the Agent, and Approve, which stays dismissed on every device; on a Board without Sessions it explains the Columns alone and says that nothing starts on its own.
 
 Members may drag Cards anywhere. Inbox to Ready means "do this next". A human move into In Progress or Review is corrected by the next Session or Hygiene sweep, with a one-line Comment explaining the move back.
 
@@ -31,7 +31,9 @@ A human move to Done is an immediate server-side closure: the Card's Done reason
 
 ## Sessions
 
-A Trigger is any human change to a Board: Card created, description edited, Comment posted or edited, Card moved, or Try again pressed. Triggers by the Admin count too, with a silent option the API accepts on each action and the New card dialog offers. Agent actions are never Triggers.
+Sessions are a per-Board choice. A new Board has none until the Admin turns them on in its settings; every Board made before 2026-09-28 had them turned on when the choice arrived. Everything in this section, in Previews, and in Approval describes a Board that runs Sessions. On a Board without them nothing is a Trigger, and nothing starts a Session, a Hygiene sweep included. kardboard does not merge its pull requests either, since whoever works the Board merges them: its Cards offer neither Approve nor Try again, and the pull-request poll leaves them alone. See [ADR 0009](adr/0009-sessions-are-opt-in-per-board.md). Turning Sessions on or off is refused while a Session is active on the Board, and drops every Trigger still waiting, so turning them on again answers only changes made after it.
+
+A Trigger is any human change to a Board that runs Sessions: Card created, description edited, Comment posted or edited, Card moved, or Try again pressed. Triggers by the Admin count too, with a silent option the API accepts on each action and the New card dialog offers. Agent actions are never Triggers.
 
 Triggers coalesce per Card over roughly 60 seconds, a window that restarts with each Trigger but closes no later than three minutes after the oldest one still waiting (`KARDBOARD_TRIGGER_COALESCE_MAX_MS`), so steady activity cannot hold a Session off. Try again skips the window. When the window closes, kardboard takes a Claim on the Card and asks the runner to start a card Session. If a Claim already exists, the Card becomes Pending re-run and a new Session starts with the full unhandled batch as soon as the current one ends. Cancelling a Session from the Card clears its pending re-run unless the Admin chooses "cancel and re-run". While a Card has Triggers waiting and no Session it says what it waits for: its batch, a free slot, a retry after a failed start, or a paused Board.
 
@@ -107,7 +109,7 @@ In the app a bell beside the avatar carries a badge with the unread count and op
 ## Admin panel, v1 scope
 
 - Users: invite, revoke, remove, grant and remove Board membership. Only a revoked User can be removed. Removing one deletes their email address, sign-in, avatar, Board memberships, notifications, and any email still waiting for them, and takes them off the Users list; the row stays, revoked, with their name and handle, so what they wrote keeps their name and an old Mention still means them. Their address can then be invited again as a new User with a handle of its own. Nothing brings a removed User back.
-- Boards: create, repository URL, GitHub App installation status for both apps, preview mode, Provider, model, reasoning level, image override, concurrency caps, prompt append text, pause, delete. The Admin can also pause and resume a Board from its page. Deleting a Board removes its Cards and everything on them, its Sessions and event log, its Previews, and its memberships, after the Admin types its slug. It is refused while a Session is active on the Board, and refused when the snapshot taken first fails, so a deleted Board can be restored from Backups; for the same reason its attachments stay in the off-disk copy. The repository on GitHub is not touched. Anyone viewing the Board is sent back to their Boards.
+- Boards: create, delete, repository URL, whether the Board runs Sessions, and for one that does: GitHub App installation status for both apps, preview mode, Provider, model, reasoning level, image override, concurrency caps, prompt append text, and pause. The Admin can also pause and resume a Board from its page. Deleting a Board removes its Cards and everything on them, its Sessions and event log, its Previews, and its memberships, after the Admin types its slug. It is refused while a Session is active on the Board, and refused when the snapshot taken first fails, so a deleted Board can be restored from Backups; for the same reason its attachments stay in the off-disk copy. The repository on GitHub is not touched. Anyone viewing the Board is sent back to their Boards.
 - Agent: name, avatar, global caps, and each Provider's state as the egress proxy last saw it: a usage window still shut, a rejected credential, a refused call.
 - Sessions: every run with its Card, duration, and usage, filtered by Board, status, and kind, fifty at a time, with thirty-day totals per Board; cancel, cancel and re-run.
 - Backups: snapshots, the last attempt, and the last off-disk copy.

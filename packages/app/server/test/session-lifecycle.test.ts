@@ -70,7 +70,7 @@ beforeEach(async () => {
   for (const t of [schema.notifications, schema.outboundEmails, schema.comments, schema.triggers, schema.events, schema.sessions, schema.cards, schema.boardMembers, schema.users, schema.settings, schema.boards]) {
     await db.delete(t);
   }
-  await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "former-admin", email: "old@example.com", handle: "old", name: "Old", role: "admin", status: "revoked" },

@@ -4,9 +4,11 @@ Read when: writing a server test that calls `createCard`, `moveCard`, or anythin
 
 Status: verified
 Scope: `packages/app/server`
-Verified: 2026-09-25
+Verified: 2026-09-28
 Source: [children.test.ts](../../../packages/app/server/test/children.test.ts), [orchestrator.test.ts](../../../packages/app/server/test/orchestrator.test.ts), [orchestrator.ts](../../../packages/app/server/src/services/orchestrator.ts)
-Recheck when: `scheduleDispatch` or `armWallClock` stops unref-ing its timer, or `runner` stops being a plain object whose methods a test can replace.
+Recheck when: `scheduleDispatch` or `armWallClock` stops unref-ing its timer, `runner` stops being a plain object whose methods a test can replace, or `enqueueTrigger` stops reading `boards.sessions_enabled`.
+
+A Board inserted straight into the database has Sessions off, since `boards.sessions_enabled` defaults to false, and `enqueueTrigger` writes nothing for such a Board. A test that expects a Trigger, a Session, an Approval, the pull-request poll, or the nightly sweep inserts its Board with `sessionsEnabled: true`, as every such test file has since 2026-09-28; one about a Board without Sessions leaves it out.
 
 Every Trigger schedules a dispatch timer, so a test that writes one is a test that can start a Session. Two things keep that out of the way, and a test needs both:
 

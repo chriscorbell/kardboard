@@ -1,6 +1,6 @@
 # kardboard
 
-A self-hosted kanban platform where every human change to a board summons a disposable coding agent that either does the work or asks for what it needs.
+A self-hosted kanban platform for work done by coding agents. On a board that runs Sessions, every human change summons a disposable coding agent that either does the work or asks for what it needs.
 
 ## Language
 
@@ -29,11 +29,11 @@ _Avoid_: Signup, registration
 ### Boards
 
 **Board**:
-The kanban board for exactly one project and its repository. Owns its Members, Cards, and project settings.
+The kanban board for exactly one project and its repository. Owns its Members, Cards, and project settings, among them whether it runs Sessions, which a new Board does not until the Admin turns them on.
 _Avoid_: Project, workspace
 
 **Column**:
-One of the six fixed stages of a Board. Inbox holds human-created Cards awaiting intake by a Session. Blocked holds Cards waiting on a human answer. Ready holds triaged Cards not being worked on. In Progress holds Cards a Session is implementing. Review holds Cards with a pull request and Preview awaiting Approval. Done holds merged, closed, or duplicate Cards.
+One of the six fixed stages of a Board. Inbox holds new Cards not yet triaged. Blocked holds Cards waiting on a human answer. Ready holds triaged Cards not being worked on. In Progress holds Cards being implemented. Review holds Cards with a pull request awaiting a look, and on a Board that runs Sessions, Approval. Done holds merged, closed, or duplicate Cards.
 _Avoid_: List, lane, stage, status
 
 **Card**:
@@ -67,7 +67,7 @@ The coding-agent product a Session runs on: Claude Code or Codex.
 _Avoid_: Model, backend, harness
 
 **Trigger**:
-A human change to a Board that starts or queues a Session on the affected Card: creating a Card, editing its description, posting a Comment, moving it between Columns, or pressing Try again after its last Session failed. kardboard itself writes three kinds and no more: `provider_fallback`, when a Session's Provider ran out of usage and the Card should be picked up again on the other one; `child_card_created`, on a Card a Session created as a child of another and left in Ready; and `children_done`, on a parent whose last child has reached Done.
+A human change to a Board that runs Sessions, which starts or queues a Session on the affected Card: creating a Card, editing its description, posting a Comment, moving it between Columns, or pressing Try again after its last Session failed. kardboard itself writes three kinds and no more: `provider_fallback`, when a Session's Provider ran out of usage and the Card should be picked up again on the other one; `child_card_created`, on a Card a Session created as a child of another and left in Ready; and `children_done`, on a parent whose last child has reached Done.
 _Avoid_: Event, webhook, action
 
 **Claim**:
@@ -87,7 +87,7 @@ A temporary deployment of a Card's branch that Members use to review and test th
 _Avoid_: Staging, demo, environment
 
 **Approval**:
-A Member's recorded sign-off, given through the Approve control on a Card in Review, bound to the pull request revision the Member saw. kardboard, not a Session, performs the merge it authorizes. A later change to the pull request voids it. A Comment is never an Approval.
+A Member's recorded sign-off, given through the Approve control on a Card in Review of a Board that runs Sessions, bound to the pull request revision the Member saw. kardboard, not a Session, performs the merge it authorizes. A later change to the pull request voids it. A Comment is never an Approval.
 _Avoid_: Sign-off, LGTM, acceptance
 
 **Pending re-run**:
@@ -95,7 +95,7 @@ The state of a Card that received a Trigger while a Session held its Claim; a ne
 _Avoid_: Queued, dirty, stale
 
 **Pause**:
-The Admin's switch on a Board that stops new Sessions starting there. Its Triggers wait, Sessions already running finish, and resuming dispatches what waited.
+The Admin's switch on a Board that runs Sessions that stops new Sessions starting there. Its Triggers wait, Sessions already running finish, and resuming dispatches what waited.
 _Avoid_: Freeze, disable, hold
 
 **Hygiene sweep**:

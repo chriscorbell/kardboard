@@ -76,7 +76,7 @@ async function fill(id: string, name: string, hashes: string[]) {
   const card = `${id}-card`;
   const comment = `${id}-comment`;
   const preview = `${id}-preview`;
-  await db.insert(schema.boards).values({ id, slug: `${id}-board`, name });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id, slug: `${id}-board`, name });
   await db.insert(schema.boardMembers).values({ boardId: id, userId: "ada" });
   await db.insert(schema.cards).values({ id: card, boardId: id, title: "A card" });
   await db.insert(schema.comments).values({ id: comment, cardId: card, authorKind: "user", authorId: "ada", body: "hello @root" });

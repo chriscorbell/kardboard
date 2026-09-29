@@ -53,7 +53,10 @@ async function reconcileUnderLock(cardId: string): Promise<ReconcileResult> {
   const asked = await getCard(cardId);
   if (!asked || asked.column === "done" || !asked.prNumber) return "skipped";
   const board = await getBoardById(asked.boardId);
-  const repo = parseRepoUrl(board?.repoUrl ?? null);
+  // Without Sessions the Admin's own agent merges and closes its Cards; kardboard only watches the
+  // pull requests it merges on Approval. See ADR 0009.
+  if (!board?.sessionsEnabled) return "skipped";
+  const repo = parseRepoUrl(board.repoUrl);
   if (!repo || !githubConfigured("merge")) return "skipped";
   const pr = await getPullRequest(repo.owner, repo.repo, asked.prNumber);
   // Decided from the Card as it stands now: a Session may have started, or reported, meanwhile.

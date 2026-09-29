@@ -185,7 +185,9 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
         </div>
         <BlockedQuestion card={card} comments={detail.data?.comments} agent={view.agent} handles={handles} onReply={() => composer.current?.focus()} />
 
-        <SessionBanner slug={slug} card={card} agentName={view.agent.name} isAdmin={isAdmin} />
+        {/* Sessions and Approval belong to a Board that runs Sessions. Without them, what an earlier
+            Session left behind has nothing to offer: Try again and Approve would both be refused. */}
+        {view.board.sessionsEnabled ? <SessionBanner slug={slug} card={card} agentName={view.agent.name} isAdmin={isAdmin} /> : null}
 
         <div className="px-6 pt-5">
           <DescriptionEditor card={card} handles={handles} onSave={(description, base) => saveField("description", description, base)} />
@@ -210,7 +212,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           </div>
         ) : null}
 
-        {card.column === "review" ? (
+        {card.column === "review" && view.board.sessionsEnabled ? (
           <ReviewBlock
             slug={slug}
             card={card}
@@ -222,7 +224,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           />
         ) : null}
 
-        {detail.data?.children.length ? <ChildCards slug={slug} cards={detail.data.children} agentName={view.agent.name} /> : null}
+        {detail.data?.children.length ? <ChildCards slug={slug} cards={detail.data.children} agentName={view.agent.name} sessionsEnabled={view.board.sessionsEnabled} /> : null}
 
         <div className="px-6 pb-2 pt-6">
           <h3 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-ink-faint">Comments</h3>
@@ -246,7 +248,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
 
 // The pieces a session split this request into. They run on their own, so this is where a person
 // sees how far the whole request has got without opening each child in turn.
-function ChildCards({ slug, cards, agentName }: { slug: string; cards: Card[]; agentName: string }) {
+function ChildCards({ slug, cards, agentName, sessionsEnabled }: { slug: string; cards: Card[]; agentName: string; sessionsEnabled: boolean }) {
   const navigate = useNavigate();
   const open = cards.filter((c) => c.column !== "done").length;
   return (
@@ -270,7 +272,7 @@ function ChildCards({ slug, cards, agentName }: { slug: string; cards: Card[]; a
         ))}
       </ul>
       <p className="mt-2 text-[12px] text-ink-faint">
-        {open === 0 ? `Every piece is finished, so ${agentName} picks this card up again.` : `${open} of ${cards.length} still open. This card waits until the last one is done.`}
+        {open === 0 ? (sessionsEnabled ? `Every piece is finished, so ${agentName} picks this card up again.` : "Every piece is finished.") : `${open} of ${cards.length} still open. This card waits until the last one is done.`}
       </p>
     </div>
   );

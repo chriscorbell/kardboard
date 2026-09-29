@@ -17,6 +17,7 @@ import { removePreviewForCard } from "./previews.js";
 import { byDispatchOrder } from "./children.js";
 import { batchClosesAt, coalesceDelay, couldNotStart, inStartBackoff } from "./waiting.js";
 import { recordSessionUsage } from "./usage.js";
+import { getBoardById } from "./boards.js";
 
 const ACTIVE = ["queued", "starting", "running"] as const;
 const ENDED = ["succeeded", "failed", "cancelled", "timed_out"] as const;
@@ -118,6 +119,10 @@ export async function enqueueTrigger(input: {
   payload: Record<string, unknown>;
   promptly?: boolean;
 }): Promise<void> {
+  // A Board without Sessions owes nobody a Session: what happens on it is between its people and
+  // the Admin's own agent, so a change there is not a Trigger at all.
+  const board = await db.select({ sessionsEnabled: schema.boards.sessionsEnabled }).from(schema.boards).where(eq(schema.boards.id, input.card.boardId)).get();
+  if (!board?.sessionsEnabled) return;
   await db.insert(schema.triggers).values({
     id: newId(),
     boardId: input.card.boardId,
@@ -310,6 +315,48 @@ export async function boardPauseChanged(boardId: string, paused: boolean, actor:
   for (const card of waiting) await publishCard(card.id);
 }
 
+export class SessionsSwitchRefused extends Error {
+  status = 409 as const;
+}
+
+/**
+ * The Admin turned a Board's Sessions on or off. Refused while a Session is active there, so the
+ * Board never has a Session and the Admin's own agent acting as the Agent at once: the Admin waits
+ * for it or cancels it first. Either way every Trigger still waiting is dropped. Off, nothing is owed
+ * any more; on, only changes made from now on are requests, never whatever piled up before.
+ */
+export async function setBoardSessions(boardId: string, enabled: boolean, actor: Actor): Promise<void> {
+  const changed = await underClaimLock(async () => {
+    const board = await db.select({ sessionsEnabled: schema.boards.sessionsEnabled }).from(schema.boards).where(eq(schema.boards.id, boardId)).get();
+    if (!board || board.sessionsEnabled === enabled) return false;
+    const active = await db
+      .select({ id: schema.sessions.id })
+      .from(schema.sessions)
+      .where(and(eq(schema.sessions.boardId, boardId), inArray(schema.sessions.status, [...ACTIVE])))
+      .get();
+    if (active) throw new SessionsSwitchRefused("A session is still running on this board. Let it finish, or cancel it, then try again.");
+    // The switch first, so a Trigger that arrives now finds it and is not written.
+    await db.update(schema.boards).set({ sessionsEnabled: enabled }).where(eq(schema.boards.id, boardId));
+    await db.delete(schema.triggers).where(and(eq(schema.triggers.boardId, boardId), eq(schema.triggers.status, "pending")));
+    await db.update(schema.cards).set({ pendingRerun: false }).where(and(eq(schema.cards.boardId, boardId), eq(schema.cards.pendingRerun, true)));
+    return true;
+  });
+  if (!changed) return;
+  const cards = await db.select({ id: schema.cards.id }).from(schema.cards).where(eq(schema.cards.boardId, boardId));
+  for (const card of cards) {
+    const timer = coalesceTimers.get(card.id);
+    if (timer) {
+      clearTimeout(timer);
+      coalesceTimers.delete(card.id);
+    }
+  }
+  await recordEvent({ boardId, actor, type: enabled ? "board.sessions_enabled" : "board.sessions_disabled" });
+  const board = await getBoardById(boardId);
+  if (board) publish(boardId, { type: "board.updated", board });
+  // What each Card was waiting for is gone.
+  for (const card of cards) await publishCard(card.id);
+}
+
 async function dispatch(cardId: string): Promise<void> {
   // Read before the claim lock: the egress proxy can take seconds to answer, and nothing it says
   // decides whether this Card may start, only which Provider it starts on.
@@ -394,6 +441,9 @@ async function claimCard(cardId: string, limits: LimitSnapshot) {
     return null;
   }
   const board = (await db.select().from(schema.boards).where(eq(schema.boards.id, card.boardId)).get())!;
+  // Turning Sessions off drops what was waiting, but a Trigger written as the switch flipped may
+  // still be here. It starts nothing, and turning Sessions on again drops it.
+  if (!board.sessionsEnabled) return null;
   // The Triggers stay pending, and resuming the Board dispatches them.
   if (board.paused) return null;
   const settings = await getSettings();

@@ -19,7 +19,7 @@ const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "L
 // dispatch and the Session sees the request and its files together.
 type Upload = { card: Card; progress: PostProgress<File> | null; fractions: ReadonlyMap<File, number>; error: string | null };
 
-export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slug: string; open: boolean; onClose: () => void; isAdmin: boolean; onCreated: (id: string) => void }) {
+export function NewCardDialog({ slug, open, onClose, isAdmin, sessionsEnabled, onCreated }: { slug: string; open: boolean; onClose: () => void; isAdmin: boolean; sessionsEnabled: boolean; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>("none");
@@ -200,7 +200,8 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slu
             </Field>
           ) : null}
         </div>
-        {isAdmin ? (
+        {/* Without sessions every card is silent already. */}
+        {isAdmin && sessionsEnabled ? (
           <label className="flex items-center gap-2 text-[13px] text-ink-muted">
             <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} className="accent-accent" disabled={locked} />
             Silent: don't start a session for this card yet

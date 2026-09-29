@@ -353,6 +353,9 @@ async function agentHold(cardId: string, then: string): Promise<string | null> {
 // the Card displayed, and nothing merges unless that is still GitHub's head. The app then merges
 // with that SHA as GitHub's precondition. See ADR 0006 and ADR 0008. `overrideChecks` is the
 // Admin's alone; the route drops it for anyone else.
+// See ADR 0009: on a Board without Sessions the Admin's own agent merges, so nothing is approved here.
+const NO_APPROVAL_WITHOUT_SESSIONS = "This board has sessions turned off, so kardboard does not merge its pull requests: the agent working the board merges them.";
+
 export function approveCard(cardId: string, actor: Actor, reviewedSha: string | null, options: { overrideChecks?: boolean } = {}): Promise<Approval> {
   return underCardLock(cardId, () => approveUnderLock(cardId, actor, reviewedSha, options.overrideChecks === true));
 }
@@ -365,6 +368,7 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
   const hold = await agentHold(cardId, "Approve");
   if (hold) throw new ApprovalError(hold, 409);
   const board = (await getBoardById(card.boardId))!;
+  if (!board.sessionsEnabled) throw new ApprovalError(NO_APPROVAL_WITHOUT_SESSIONS);
   const repo = parseRepoUrl(board.repoUrl);
   const mention = await mentionFor(actor.id);
 
@@ -431,6 +435,7 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
   if (card.column !== "review") throw new ApprovalError("Only cards in Review can be merged.");
   const hold = await agentHold(cardId, "Try the merge again");
   if (hold) throw new ApprovalError(hold, 409);
+  if (!(await getBoardById(card.boardId))?.sessionsEnabled) throw new ApprovalError(NO_APPROVAL_WITHOUT_SESSIONS);
 
   const approval = approvalAwaitingRetry(await listApprovals(cardId));
   if (!approval) throw new ApprovalError("No approval on this card is waiting on a refused merge.");
