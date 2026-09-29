@@ -1,12 +1,13 @@
 # Operating kardboard on minicore
 
-Read when: deploying a change to production, rotating a secret, reading a Session's log, or inspecting the production database.
+Read when: deploying a change to production, merging a pull request on this repository, rotating a secret, reading a Session's log, or inspecting the production database.
 Status: verified
 Scope: environment, minicore
 Verified: 2026-09-24 (the image, health, and log lines describe the feature-gap stack, not yet deployed)
 Source: the deployment and Session runs of 2026-09-14; the internal-rename cutover of 2026-09-24; `deploy/compose.yaml`; `~/Code/stacks/kardboard/compose.yaml`
 Recheck when: the compose file moves, the runner's log directory changes, the agent entrypoint's output format changes, or the app image stops bundling `@libsql/client`
 
+- The kardboard Board is worked by the Admin's own local agent, not by Sessions: on 2026-09-29 the Admin decided to turn its Sessions off and have their agent open, and merge, every pull request on this repository with `gh pr merge --squash`. For that the repository's `kardboard` ruleset requires a pull request but no approving review. The approval rule is what ADR 0008 relies on to keep a Session from merging its own pull request, so before Sessions are turned back on for the kardboard Board, restore one required approval.
 - Code deploys itself: push to `main`, CI publishes the images whose inputs changed since the last successful run on `main`, and Watchtower restarts those services within a minute. A docs-only push publishes nothing; a change to `pnpm-lock.yaml`, `packages/shared/`, `tsconfig.base.json`, or the workflow publishes all five, and so does a manual run on `main`. Pull requests build all five without pushing.
 - Secrets never leave `deploy/.env` on mbp except by `scp deploy/.env minicore:/home/chris/docker/stacks/kardboard/.env` followed by `docker compose up -d` in that directory. The compose file itself is committed in `chriscorbell/stacks` under `kardboard/`; `git pull` there before `up -d`.
 - Session logs: `~/docker/data/kardboard/runner/logs/<session id>.log` on minicore, kept 14 days. Since 2026-09-14 the agent entrypoint runs Claude Code with `--output-format stream-json --verbose`, so the log fills line by line during the run; before that it held only the clone and start lines until exit. The admin panel reads the same file through the runner's `GET /sessions/:id/log`, so SSH is no longer the only way in.
