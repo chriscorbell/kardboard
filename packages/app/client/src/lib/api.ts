@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AccessToken,
   AdminSessionSummary,
   AdminSessionsPage,
   BackupsView,
@@ -9,6 +10,7 @@ import type {
   CardDetail,
   Comment,
   CreateCardInput,
+  CreatedAccessToken,
   Me,
   MoveCardInput,
   NotificationsView,
@@ -111,6 +113,7 @@ export const keys = {
   adminUsage: ["admin", "usage"] as const,
   adminLimits: ["admin", "limits"] as const,
   adminBackups: ["admin", "backups"] as const,
+  accessTokens: (boardId: string) => ["admin", "access-tokens", boardId] as const,
 };
 
 export function useMe() {
@@ -353,6 +356,23 @@ export function useAdminUsers() {
 }
 export function useAdminBoards() {
   return useQuery({ queryKey: keys.adminBoards, queryFn: () => request<AdminBoard[]>("/admin/boards") });
+}
+export function useAccessTokens(boardId: string) {
+  return useQuery({ queryKey: keys.accessTokens(boardId), queryFn: () => request<AccessToken[]>(`/admin/boards/${boardId}/tokens`) });
+}
+export function useCreateAccessToken(boardId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => request<CreatedAccessToken>(`/admin/boards/${boardId}/tokens`, { method: "POST", body: JSON.stringify({ name }) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.accessTokens(boardId) }),
+  });
+}
+export function useRevokeAccessToken(boardId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tokenId: string) => request(`/admin/boards/${boardId}/tokens/${tokenId}`, { method: "DELETE" }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.accessTokens(boardId) }),
+  });
 }
 export function useAdminSettings() {
   return useQuery({ queryKey: keys.adminSettings, queryFn: () => request<Settings>("/admin/settings") });

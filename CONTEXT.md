@@ -19,7 +19,7 @@ A User granted access to a specific Board. Membership is per Board.
 _Avoid_: Client, collaborator, guest
 
 **Agent**:
-The single non-human identity, with its own name and avatar, under which every Session acts on every Board. Named "Milo" by default.
+The single non-human identity, with its own name and avatar, under which every Session, and every agent holding an Access token, acts on every Board. Named "Milo" by default.
 _Avoid_: Bot, assistant, worker
 
 **Invitation**:
@@ -93,6 +93,10 @@ _Avoid_: Sign-off, LGTM, acceptance
 **Pending re-run**:
 The state of a Card that received a Trigger while a Session held its Claim; a new Session starts when the current one ends.
 _Avoid_: Queued, dirty, stale
+
+**Access token**:
+The Admin's credential that lets a coding agent running outside kardboard act as the Agent on one Board that does not run Sessions.
+_Avoid_: API key, personal access token, PAT
 
 **Pause**:
 The Admin's switch on a Board that runs Sessions that stops new Sessions starting there. Its Triggers wait, Sessions already running finish, and resuming dispatches what waited.

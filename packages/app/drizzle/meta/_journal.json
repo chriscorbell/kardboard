@@ -127,6 +127,13 @@
       "when": 1790644052176,
       "tag": "0017_board-sessions-enabled",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1790644725796,
+      "tag": "0018_access-tokens",
+      "breakpoints": true
     }
   ]
 }

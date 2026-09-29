@@ -289,6 +289,21 @@ export const previewCodes = sqliteTable("preview_codes", {
   createdAt: text("created_at").notNull().$defaultFn(now),
 });
 
+// The Admin's credentials for an agent running outside kardboard, each good for one Board without
+// Sessions, where whoever holds it acts as the Agent. Only the hash is kept; the token is shown once.
+export const accessTokens = sqliteTable(
+  "access_tokens",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id").notNull().references(() => boards.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    lastUsedAt: text("last_used_at"),
+    createdAt: text("created_at").notNull().$defaultFn(now),
+  },
+  (t) => [index("access_tokens_board_idx").on(t.boardId)],
+);
+
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),

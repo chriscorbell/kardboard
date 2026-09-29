@@ -103,6 +103,9 @@ export async function notifyCardMoved(card: Card, from: Card["column"], actor: A
   if (!MOVES_WORTH_NOTICE.has(card.column)) return;
   if (card.creatorKind !== "user" || !card.creatorId) return;
   if (actor.kind === "user" && actor.id === card.creatorId) return;
+  // An Access token is the Admin's, so what their own agent does is theirs: moving the Admin's Card
+  // is not news to them. A Member's Card still tells its creator.
+  if (actor.accessTokenId && (await getUser(card.creatorId))?.role === "admin") return;
   const board = await getBoardById(card.boardId);
   if (!board) return;
   const who = await actorProfile(actor);

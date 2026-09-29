@@ -4,7 +4,7 @@ kardboard is a self-hosted kanban platform for work done by coding agents. On a 
 
 ## Actors
 
-The Admin is the single operator: Chris. Members are invited humans, mostly clients, each granted access to specific Boards. The Agent is one global non-human identity, named "Milo" by default and configurable by the Admin, under which every Session acts on every Board. Members see the Agent as a colleague on the Board: it comments, moves Cards, asks questions, and reports when work is ready.
+The Admin is the single operator: Chris. Members are invited humans, mostly clients, each granted access to specific Boards. The Agent is one global non-human identity, named "Milo" by default and configurable by the Admin, under which every Session acts on every Board, and so does any agent the Admin runs with an Access token. Members see the Agent as a colleague on the Board: it comments, moves Cards, asks questions, and reports when work is ready.
 
 Access is invite-only. The Admin adds an email address as an Invitation; Clerk authenticates the identity; kardboard's own User table decides whether that identity is a User and which Boards it may open. An authenticated identity with no Invitation sees a "not invited" page. See [ADR 0001](adr/0001-clerk-for-identity-with-local-allowlist.md).
 
@@ -71,6 +71,12 @@ A sweep Session holds no Claim, may move Cards and Comment, and never opens pull
 Members see the status indicator and Comments. The Admin can also cancel a Session from the Card, and open its transcript from there. kardboard stores per Session its status, timings, Provider, outcome summary, the Comments it posted, and, for Claude Code, the tokens, turns, and cost its final result reported; Codex prints nothing structured to read them from. Raw logs are written as files on the runner's bind mount and kept 14 days; the database never holds a transcript.
 
 The Admin, and only the Admin, can read a Session's transcript: expanding a run in the admin panel tails that log file through the runner and renders it as the agent's messages, tool calls, and results. A running Session is followed live. The provider CLI is therefore run in a streaming output mode, so the log fills as the work happens rather than at exit. Nothing is shown to Members, and nothing is redacted: a transcript carries whatever the agent printed, so it is admin-only for the same reason the log file is.
+
+## Working a Board from your own agent
+
+On a Board without Sessions, the Admin's own coding agent, running on the Admin's machine and under the Admin's direction, can read and change the Board through an Access token. The Admin makes one from the Board's settings, named for where it runs. The secret is shown once, with the `claude mcp add` command that gives Claude Code the Board, and only its hash is kept. A token reaches its one Board, is refused while that Board runs Sessions and works again once they are off, records when it was last used, and ends when the Admin revokes it or deletes the Board. Only the Admin makes tokens. See [ADR 0010](adr/0010-access-tokens-act-as-the-agent.md).
+
+The token reaches the same `/mcp` endpoint as a Session, and acts as the Agent: its Cards, Comments, and moves carry the Agent's name, and the event log records which token acted. Its tools read the Board, a Card, and an attachment; create a Card in any Column; edit any Card's title, description, or Priority; move a Card; comment; and record a Card's pull request and branch. It has no ledger, Claim, Preview, or `finish`, since nothing about it is a Session. Every edit and move names the revision it was based on, as a Session's does. kardboard does not read the pull request, check that it exists, or merge it; it checks only that the pull request is in the Board's repository. The agent merges the pull request itself and then moves the Card to Done saying so, which records the merge as kardboard records its own, so the Card closes as `implemented`. Nothing it does is a Trigger. Moving a Card notifies its creator as any move by the Agent does, except that the Admin is not told about their own Cards, since their own agent moved them. A Mention still notifies the Admin.
 
 ## Review, Approval, and merge
 

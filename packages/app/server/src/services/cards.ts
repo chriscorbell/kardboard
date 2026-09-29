@@ -310,9 +310,14 @@ export async function forgetMergedPullRequest(cardId: string, prNumber: number):
   publish(card.boardId, { type: "card.upserted", card });
 }
 
+/**
+ * `merged` is for a move to Done by whoever merged the Card's pull request outside kardboard: the
+ * Admin's own agent on a Board without Sessions. It records the merge, as kardboard records its own,
+ * so the Card closes as implemented and a reopened Card lets go of the merged pull request.
+ */
 export async function moveCard(
   id: string,
-  input: { column: Column; position: number; revision: number; actor: Actor; silent?: boolean },
+  input: { column: Column; position: number; revision: number; actor: Actor; silent?: boolean; merged?: boolean },
 ): Promise<Card> {
   const current = await getCard(id);
   if (!current) throw new Error("card not found");
@@ -333,7 +338,7 @@ export async function moveCard(
       revision: current.revision + 1,
       updatedAt: new Date().toISOString(),
       // What the Card came to is recorded as it closes, and forgotten when it is reopened.
-      ...(enteringDone ? { outcome: await outcomeOnDone(id) } : leavingDone ? { outcome: null } : {}),
+      ...(enteringDone ? { outcome: input.merged ? "implemented" : await outcomeOnDone(id) } : leavingDone ? { outcome: null } : {}),
     })
     .where(and(eq(schema.cards.id, id), eq(schema.cards.revision, input.revision)))
     .returning({ id: schema.cards.id });
@@ -343,6 +348,9 @@ export async function moveCard(
   if (forgetPullRequest && current.prNumber) await forgetMergedPullRequest(id, current.prNumber);
   let card = (await getCard(id))!;
   if (columnChanged) {
+    if (enteringDone && input.merged) {
+      await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "card.merged", payload: { prNumber: current.prNumber, prUrl: current.prUrl } });
+    }
     await recordEvent({
       boardId: card.boardId,
       cardId: card.id,

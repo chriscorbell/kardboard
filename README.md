@@ -19,7 +19,7 @@
 
 When the work is done, the Session opens a pull request and moves the card to Review. A member presses **Approve**, and kardboard merges the pull request, moves the card to Done, and lets everyone know. Sessions can push branches but can never merge; that authority stays with kardboard.
 
-Sessions are off for a new board, and the admin turns them on per board. A board without them is a plain kanban board: changes start nothing, and whoever works it opens and merges its pull requests.
+Sessions are off for a new board, and the admin turns them on per board. A board without them is a plain kanban board: changes start nothing, and whoever works it opens and merges its pull requests. The admin can work such a board from their own coding agent, through an access token: see [Working a board from your own agent](#working-a-board-from-your-own-agent).
 
 ![A card in Review with a pull request, a preview link, and the Approve control](docs/brand/screenshot-card.png)
 
@@ -109,6 +109,21 @@ External services you need to set up once:
 - A **Clerk** application for sign-in.
 - A **Resend** domain for email.
 - Two **GitHub Apps**, one for Sessions and one for merges, installed on each project repository, plus a branch ruleset that requires an approved pull request. [deploy/github-apps.md](deploy/github-apps.md) walks through it.
+
+## Working a board from your own agent
+
+On a board with Sessions off, your own coding agent can read the board and create, edit, move, and comment on cards, as the board's agent.
+
+1. In the admin panel, open the board's settings. Under **Access tokens**, name a token after where it will run and create it.
+2. Copy the command shown with the token and run it in the project's folder. It adds the board to Claude Code as an MCP server for that project:
+
+   ```bash
+   claude mcp add --transport http kardboard https://your-kardboard-host/mcp --header "Authorization: Bearer kbat_..."
+   ```
+
+3. Ask your agent to read the board. It is told how the columns are meant to be used: In Progress when it starts a card, Blocked with a question when it needs you, Review once the pull request is open, and Done once it has merged it.
+
+The token is shown once. Revoke it from the same place. It stops working while the board runs Sessions. kardboard never merges for such a board, so the repository needs no GitHub App or kardboard ruleset, and your agent merges with your own credentials.
 
 ## Onboarding a repository
 

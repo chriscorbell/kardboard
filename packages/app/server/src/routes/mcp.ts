@@ -23,12 +23,66 @@ import { githubConfigured, parseRepoUrl } from "../services/github.js";
 import { refreshCardChecks } from "../services/checks.js";
 import { childRefusal, countChildren, MAX_CHILDREN } from "../services/children.js";
 import { attachmentContent } from "../services/attachment-content.js";
+import { ACCESS_TOKEN_PREFIX, findAccessToken } from "../services/access-tokens.js";
+import type { AccessToken, Board } from "@kardboard/shared";
 
 type SessionRow = typeof schema.sessions.$inferSelect;
 
 // How much of a Card's past get_board and get_card send by default.
 const DONE_SHOWN = 15;
 const EARLIER_SESSIONS_SHOWN = 10;
+
+// What get_board sends, to a Session and to an agent holding an Access token alike. Done only grows,
+// and every agent reads the Board, so by default it sends the newest few. The members are who an
+// agent may Mention: never their email, which it has no use for.
+async function boardSnapshot(boardId: string, includeAllDone: boolean) {
+  const board = await getBoardById(boardId);
+  const cards = await listCards(boardId);
+  const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
+  const members = (await listMembers(boardId)).filter((u) => u.status !== "revoked").map((u) => ({ id: u.id, name: u.name, handle: u.handle, role: u.role }));
+  const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt });
+  const done = cards.filter((c) => c.column === "done").sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+  const shownDone = includeAllDone ? done : done.slice(0, DONE_SHOWN);
+  const grouped = Object.fromEntries(COLUMNS.map((col) => [col, (col === "done" ? shownDone : cards.filter((c) => c.column === col)).map(summary)]));
+  return { board: { name: board?.name, repoUrl: board?.repoUrl, previewMode: board?.previewMode }, columns: COLUMN_LABELS, members, cards: grouped, doneOmitted: done.length - shownDone.length };
+}
+
+// What get_card sends. The asking Session, when there is one, is left out of the Card's earlier ones.
+async function cardSnapshot(id: string, askingSessionId: string | null) {
+  const card = (await getCard(id))!;
+  const comments = await listComments(id);
+  const approvals = await db.select().from(schema.approvals).where(and(eq(schema.approvals.cardId, id), isNull(schema.approvals.invalidatedAt)));
+  const users = await getUsersByIds([card.creatorId, ...comments.map((c) => c.authorId), ...approvals.map((a) => a.userId)].filter((x): x is string => Boolean(x)));
+  // A name and handle to address someone by. The rest of a User record, email included, stays out.
+  const person = (userId: string | null) => {
+    const u = userId ? users.get(userId) : undefined;
+    return u ? { name: u.name, handle: u.handle } : null;
+  };
+  const earlier = await db
+    .select()
+    .from(schema.sessions)
+    .where(askingSessionId ? and(eq(schema.sessions.cardId, id), ne(schema.sessions.id, askingSessionId)) : eq(schema.sessions.cardId, id))
+    .orderBy(desc(schema.sessions.createdAt))
+    .limit(EARLIER_SESSIONS_SHOWN);
+  const children = await listChildren(id);
+  return {
+    ...card,
+    creator: person(card.creatorId),
+    comments: comments.map((c) => ({ id: c.id, author: c.authorKind === "agent" ? "you" : c.authorKind === "system" ? "kardboard" : (users.get(c.authorId ?? "")?.name ?? "unknown"), authorHandle: users.get(c.authorId ?? "")?.handle ?? null, body: c.body, createdAt: c.createdAt, editedAt: c.editedAt, attachments: c.attachments })),
+    approvals: approvals.map((a) => ({ approver: person(a.userId), prNumber: a.prNumber, headSha: a.headSha, createdAt: a.createdAt })),
+    children: children.map((c) => ({ id: c.id, title: c.title, column: c.column, outcome: c.outcome })),
+    earlierSessions: earlier.map((s) => ({ id: s.id, status: s.status, provider: s.provider, startedAt: s.startedAt, endedAt: s.endedAt, outcomeSummary: s.outcomeSummary })),
+  };
+}
+
+async function attachmentOnBoard(boardId: string, attachmentId: string) {
+  const att = await getAttachment(attachmentId);
+  if (!att) throw new Error("attachment not found");
+  const card = await getCard(att.cardId);
+  if (!card || card.boardId !== boardId) throw new Error("attachment not on this board");
+  const file = path.join(env.dataDir, "uploads", att.sha256.slice(0, 2), att.sha256);
+  return attachmentContent(att, fs.readFileSync(file));
+}
 
 // The agent-native interface. Every tool runs under a Session's identity; authorization is the
 // Session's Board plus, for pull-request state, its own Card, and for card edits, the Cards that are
@@ -64,26 +118,13 @@ function buildServer(session: SessionRow): McpServer {
     },
   );
 
-  // Done only grows, and every Session reads the Board, so by default it sends the newest few. The
-  // members are who a Session may Mention: never their email, which a container has no use for.
   server.registerTool(
     "get_board",
     {
       description: `The board's settings, its members with their @handles and roles (the Admin included), and every card on it grouped by column, with creator names, parent cards, and each card's revision. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
       inputSchema: { include_all_done: z.boolean().default(false) },
     },
-    async ({ include_all_done }) => {
-      const board = await getBoardById(session.boardId);
-      const cards = await listCards(session.boardId);
-      const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
-      const members = (await listMembers(session.boardId)).filter((u) => u.status !== "revoked").map((u) => ({ id: u.id, name: u.name, handle: u.handle, role: u.role }));
-      const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, activeSession: c.activeSession?.id ?? null, updatedAt: c.updatedAt });
-      const done = cards.filter((c) => c.column === "done").sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
-      const shownDone = include_all_done ? done : done.slice(0, DONE_SHOWN);
-      const grouped = Object.fromEntries(COLUMNS.map((col) => [col, (col === "done" ? shownDone : cards.filter((c) => c.column === col)).map(summary)]));
-      const out = { board: { name: board?.name, repoUrl: board?.repoUrl, previewMode: board?.previewMode }, columns: COLUMN_LABELS, members, cards: grouped, doneOmitted: done.length - shownDone.length };
-      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
-    },
+    async ({ include_all_done }) => ({ content: [{ type: "text", text: JSON.stringify(await boardSnapshot(session.boardId, include_all_done), null, 2) }] }),
   );
 
   server.registerTool(
@@ -95,44 +136,15 @@ function buildServer(session: SessionRow): McpServer {
     async ({ card_id }) => {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
-      const card = await assertBoardCard(id);
-      const comments = await listComments(id);
-      const approvals = await db.select().from(schema.approvals).where(and(eq(schema.approvals.cardId, id), isNull(schema.approvals.invalidatedAt)));
-      const users = await getUsersByIds([card.creatorId, ...comments.map((c) => c.authorId), ...approvals.map((a) => a.userId)].filter((x): x is string => Boolean(x)));
-      // A name and handle to address someone by. The rest of a User record, email included, stays out.
-      const person = (userId: string | null) => {
-        const u = userId ? users.get(userId) : undefined;
-        return u ? { name: u.name, handle: u.handle } : null;
-      };
-      const earlier = await db
-        .select()
-        .from(schema.sessions)
-        .where(and(eq(schema.sessions.cardId, id), ne(schema.sessions.id, session.id)))
-        .orderBy(desc(schema.sessions.createdAt))
-        .limit(EARLIER_SESSIONS_SHOWN);
-      const children = await listChildren(id);
-      const out = {
-        ...card,
-        creator: person(card.creatorId),
-        comments: comments.map((c) => ({ id: c.id, author: c.authorKind === "agent" ? "you" : c.authorKind === "system" ? "kardboard" : (users.get(c.authorId ?? "")?.name ?? "unknown"), authorHandle: users.get(c.authorId ?? "")?.handle ?? null, body: c.body, createdAt: c.createdAt, editedAt: c.editedAt, attachments: c.attachments })),
-        approvals: approvals.map((a) => ({ approver: person(a.userId), prNumber: a.prNumber, headSha: a.headSha, createdAt: a.createdAt })),
-        children: children.map((c) => ({ id: c.id, title: c.title, column: c.column, outcome: c.outcome })),
-        earlierSessions: earlier.map((s) => ({ id: s.id, status: s.status, provider: s.provider, startedAt: s.startedAt, endedAt: s.endedAt, outcomeSummary: s.outcomeSummary })),
-      };
-      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+      await assertBoardCard(id);
+      return { content: [{ type: "text", text: JSON.stringify(await cardSnapshot(id, session.id), null, 2) }] };
     },
   );
 
   server.registerTool(
     "read_attachment",
     { description: "Fetch an attachment by id. PNG, JPEG, GIF, and WebP images up to 3.75 MB come back as images and text files as text; any other file, such as a PDF or a larger image, comes back as a one-line note of its name, type, and size.", inputSchema: { attachment_id: z.string() } },
-    async ({ attachment_id }) => {
-      const att = await getAttachment(attachment_id);
-      if (!att) throw new Error("attachment not found");
-      await assertBoardCard(att.cardId);
-      const file = path.join(env.dataDir, "uploads", att.sha256.slice(0, 2), att.sha256);
-      return { content: [attachmentContent(att, fs.readFileSync(file))] };
-    },
+    async ({ attachment_id }) => ({ content: [await attachmentOnBoard(session.boardId, attachment_id)] }),
   );
 
   server.registerTool(
@@ -373,15 +385,178 @@ function buildServer(session: SessionRow): McpServer {
   return server;
 }
 
+// The same Board as the Agent, for an agent running outside kardboard with an Access token: the
+// Admin's own, on a Board without Sessions (ADR 0010). There is no Claim, no ledger, and no
+// `finish`, since nothing here is a Session. Whoever holds the token answers to the Admin, so it may
+// edit and move any Card on its Board. kardboard reads none of its pull requests; the agent merges
+// them itself and says so when it closes the Card.
+const TOKEN_INSTRUCTIONS = `This is a kardboard board: the shared record of work on one project, which you and the people on it read and change. You act on it as its agent. Nothing on this board starts on its own. You work it when the person running you asks, and people move cards by hand.
+
+Read get_board first. The columns: Inbox holds new requests not yet looked at. Blocked holds cards waiting on a person's answer. Ready holds understood cards nobody has started. In Progress holds cards being worked on. Review holds cards whose pull request is open for a look. Done holds merged, closed, or duplicate cards.
+
+Keep the board true to the work. Move a card to In Progress when you start it. If you need a person's answer, ask in a comment that mentions them by @handle and move the card to Blocked. Once its pull request is open, record it with link_pull_request and move the card to Review. When you have merged the pull request, move the card to Done with merged set. Every edit and move takes the revision you last read: if the card changed since, read it again before deciding.`;
+
+function buildTokenServer(board: Board, token: AccessToken): McpServer {
+  const server = new McpServer({ name: "kardboard", version: "0.1.0" }, { instructions: TOKEN_INSTRUCTIONS });
+  const actor = { kind: "agent" as const, id: null, accessTokenId: token.id };
+
+  async function assertBoardCard(cardId: string) {
+    const card = await getCard(cardId);
+    if (!card || card.boardId !== board.id) throw new Error(`card ${cardId} is not on this board`);
+    return card;
+  }
+
+  async function conflict(id: string, revision: number): Promise<Error> {
+    const now = (await getCard(id))!;
+    return new Error(`card ${id} changed after revision ${revision}: it is now at revision ${now.revision} in ${COLUMN_LABELS[now.column]}. Read it again with get_card before deciding whether the change still makes sense.`);
+  }
+
+  server.registerTool(
+    "get_board",
+    {
+      description: `The board's name and repository, its members with their @handles and roles, and every card on it grouped by column, with creator names and each card's revision. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
+      inputSchema: { include_all_done: z.boolean().default(false) },
+    },
+    async ({ include_all_done }) => ({ content: [{ type: "text", text: JSON.stringify(await boardSnapshot(board.id, include_all_done), null, 2) }] }),
+  );
+
+  server.registerTool(
+    "get_card",
+    {
+      description: "Full detail for one card: description, comments with author handles (yours are marked you), attachments, its branch and pull request, its parent and child cards, and the revision to pass to update_card and move_card.",
+      inputSchema: { card_id: z.string() },
+    },
+    async ({ card_id }) => {
+      await assertBoardCard(card_id);
+      return { content: [{ type: "text", text: JSON.stringify(await cardSnapshot(card_id, null), null, 2) }] };
+    },
+  );
+
+  server.registerTool(
+    "read_attachment",
+    { description: "Fetch an attachment by id. PNG, JPEG, GIF, and WebP images up to 3.75 MB come back as images and text files as text; any other file, such as a PDF or a larger image, comes back as a one-line note of its name, type, and size.", inputSchema: { attachment_id: z.string() } },
+    async ({ attachment_id }) => ({ content: [await attachmentOnBoard(board.id, attachment_id)] }),
+  );
+
+  server.registerTool(
+    "create_card",
+    {
+      description: "Create a card. A new request goes in Inbox; one already understood well enough to start goes in Ready. Give it a title that says what it asks for, and a description with what someone picking it up needs.",
+      inputSchema: { title: z.string().trim().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS).default("inbox"), priority: z.enum(PRIORITIES).default("none") },
+    },
+    async ({ title, description, column, priority }) => {
+      const card = await createCard({ boardId: board.id, title, description, priority, column, actor });
+      return { content: [{ type: "text", text: JSON.stringify({ cardId: card.id, revision: card.revision }) }] };
+    },
+  );
+
+  // Every edit keeps the words it replaced in the Card's history, so rewriting a Card loses nothing.
+  server.registerTool(
+    "update_card",
+    {
+      description: "Change a card's title, description, or priority. When you rewrite a card someone else wrote, keep everything they asked for, and say what you changed in a comment. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again.",
+      inputSchema: {
+        card_id: z.string(),
+        title: z.string().trim().min(1).max(200).optional(),
+        description: z.string().max(20_000).optional(),
+        priority: z.enum(PRIORITIES).optional(),
+        revision: z.number().int().nonnegative(),
+      },
+    },
+    async ({ card_id, title, description, priority, revision }) => {
+      await assertBoardCard(card_id);
+      if (title === undefined && description === undefined && priority === undefined) throw new Error("nothing to change: pass a title, a description, or a priority");
+      let card;
+      try {
+        card = await updateCard(card_id, { title, description, priority, revision, actor });
+      } catch (err) {
+        if (err instanceof ConflictError) throw await conflict(card_id, revision);
+        throw err;
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ cardId: card.id, revision: card.revision, title: card.title, priority: card.priority }) }] };
+    },
+  );
+
+  server.registerTool(
+    "move_card",
+    {
+      description:
+        "Move a card to a column: In Progress when you start it, Blocked with a comment when you need a person's answer, Review once its pull request is open and recorded with link_pull_request, Done when it is finished. Set merged when you merged the card's pull request yourself and are moving it to Done: the card records the merge and closes as implemented, not merely closed. Pass the revision from your latest get_card or get_board: if the card has changed since, the move is refused and you should read it again.",
+      inputSchema: { card_id: z.string(), column: z.enum(COLUMNS), revision: z.number().int().nonnegative(), merged: z.boolean().default(false) },
+    },
+    async ({ card_id, column, revision, merged }) => {
+      const card = await assertBoardCard(card_id);
+      if (merged && column !== "done") throw new Error("merged goes with a move to Done: it says you merged the card's pull request and are closing the card.");
+      let moved;
+      try {
+        moved = await moveCard(card_id, { column, position: card.position, revision, actor, merged });
+      } catch (err) {
+        if (err instanceof ConflictError) throw await conflict(card_id, revision);
+        throw err;
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ column: moved.column, revision: moved.revision, ...(moved.outcome ? { outcome: moved.outcome } : {}) }) }] };
+    },
+  );
+
+  server.registerTool(
+    "post_comment",
+    { description: "Post a comment on a card as the agent. Mention people with @handle, which notifies them. Keep it to what the reader needs.", inputSchema: { card_id: z.string(), body: z.string().min(1).max(20_000) } },
+    async ({ card_id, body }) => {
+      await assertBoardCard(card_id);
+      const comment = await createComment({ cardId: card_id, body, actor });
+      return { content: [{ type: "text", text: JSON.stringify({ commentId: comment.id }) }] };
+    },
+  );
+
+  // Recorded as given: kardboard asks GitHub nothing about a Board without Sessions, which may have
+  // no GitHub App at all. It only checks the pull request is in the Board's repository.
+  server.registerTool(
+    "link_pull_request",
+    {
+      description: "Record a card's pull request, and the branch it comes from, so the card links to both. Call it once the pull request is open. kardboard does not read or merge it; you do.",
+      inputSchema: { card_id: z.string(), pr_url: z.string().url(), branch: z.string().trim().min(1).max(200).optional() },
+    },
+    async ({ card_id, pr_url, branch }) => {
+      await assertBoardCard(card_id);
+      const pr = parsePullRequestUrl(pr_url);
+      if (!pr) throw new Error(`${pr_url} is not a GitHub pull request URL, such as https://github.com/owner/repo/pull/12`);
+      const repo = parseRepoUrl(board.repoUrl);
+      if (repo && (repo.owner.toLowerCase() !== pr.owner.toLowerCase() || repo.repo.toLowerCase() !== pr.repo.toLowerCase())) {
+        throw new Error(`that pull request is in ${pr.owner}/${pr.repo}, but this board's repository is ${repo.owner}/${repo.repo}`);
+      }
+      const card = await setCardWorkState(card_id, { prUrl: pr_url, prNumber: pr.number, ...(branch ? { branch } : {}) });
+      await recordEvent({ boardId: board.id, cardId: card_id, actor, type: "card.pr_linked", payload: { prNumber: pr.number, prUrl: pr_url } });
+      return { content: [{ type: "text", text: JSON.stringify({ cardId: card.id, prUrl: card.prUrl, prNumber: card.prNumber, branch: card.branch }) }] };
+    },
+  );
+
+  return server;
+}
+
+function parsePullRequestUrl(url: string): { owner: string; repo: string; number: number } | null {
+  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/.exec(url);
+  return m ? { owner: m[1]!, repo: m[2]!, number: Number(m[3]) } : null;
+}
+
 export const mcp = new Hono<{ Bindings: { incoming: IncomingMessage; outgoing: ServerResponse } }>();
 
 mcp.all("/", async (c) => {
   const header = c.req.header("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const session = token ? await findSessionByToken(token) : null;
-  if (!session) return c.json({ error: "unauthorized" }, 401);
-  // Stateless transport: one server per request keeps the session identity bound to the token.
-  const server = buildServer(session);
+  let server: McpServer;
+  if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
+    const access = await findAccessToken(token);
+    const board = access ? await getBoardById(access.boardId) : null;
+    if (!access || !board) return c.json({ error: "unauthorized" }, 401);
+    // Kept, not revoked, while the Board runs Sessions: turning them off again brings the token back.
+    if (board.sessionsEnabled) return c.json({ error: "sessions_on", message: "This board runs sessions, so an access token cannot act on it. The Admin can turn sessions off in the board's settings." }, 403);
+    server = buildTokenServer(board, access);
+  } else {
+    const session = token ? await findSessionByToken(token) : null;
+    if (!session) return c.json({ error: "unauthorized" }, 401);
+    server = buildServer(session);
+  }
+  // Stateless transport: one server per request keeps the identity bound to the token.
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   const body = c.req.method === "POST" ? await c.req.json().catch(() => undefined) : undefined;
