@@ -121,7 +121,13 @@ On a board with Sessions off, your own coding agent can read the board and creat
    claude mcp add --transport http kardboard https://your-kardboard-host/mcp --header "Authorization: Bearer kbat_..."
    ```
 
-3. Ask your agent to read the board. It is told how the columns are meant to be used: In Progress when it starts a card, Blocked with a question when it needs you, Review once the pull request is open, and Done once it has merged it.
+3. So Claude Code doesn't ask before every board action, allow the server's tools in the project's `.claude/settings.json`:
+
+   ```json
+   { "permissions": { "allow": ["mcp__kardboard"] } }
+   ```
+
+4. Ask your agent to read the board. It is told how the columns are meant to be used: In Progress when it starts a card, Blocked with a question when it needs you, Review once the pull request is open, and Done once it has merged it.
 
 The token is shown once. Revoke it from the same place. It stops working while the board runs Sessions. kardboard never merges for such a board, so the repository needs no GitHub App or kardboard ruleset, and your agent merges with your own credentials.
 
