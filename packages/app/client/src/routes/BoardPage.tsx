@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { closestCorners, DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
+import { closestCenter, DndContext, DragOverlay, getFirstCollision, KeyboardSensor, MeasuringStrategy, MouseSensor, pointerWithin, rectIntersection, TouchSensor, useDroppable, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter, type DragOverEvent, type DragStartEvent, type DropAnimation, type UniqueIdentifier } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -16,7 +16,7 @@ import { AgentPill } from "./board/AgentPill";
 import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
 import { columnHint } from "./board/columns";
-import { dropPlacement } from "./board/dropPlacement";
+import { columnDropId, dropSpot, laneOf, moveAcross, placeBefore, settleWithin, type Lanes } from "./board/dragLanes";
 import { filterActive, foldDone, matchesFilter, readFilter, waitsOn, writeFilter, type BoardFilter, type Viewer } from "./board/boardFilter";
 import { BoardSearch, FilterChips } from "./board/BoardFilters";
 import { HowItWorks } from "./board/HowItWorks";
@@ -52,6 +52,27 @@ function SortableCard({ card, creator, agent, questionIsMine, onOpen }: { card: 
   );
 }
 
+// Columns change size as the dragged card leaves one and opens a gap in another, so they are measured
+// throughout a drag rather than once at its start.
+const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
+
+const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+// The lifted card lands on the gap it fills and straightens as it does; the gap's own card stays hidden
+// under it until it has landed, so the two never show at once.
+const DROP_ANIMATION: DropAnimation = {
+  duration: 220,
+  easing: EASE,
+  sideEffects({ active, dragOverlay }) {
+    active.node.style.opacity = "0";
+    const lifted = dragOverlay.node.firstElementChild;
+    const straighten = lifted instanceof HTMLElement ? lifted.animate([{ transform: "rotate(1.5deg) scale(1.02)" }, { transform: "none" }], { duration: 220, easing: EASE, fill: "forwards" }) : null;
+    return () => {
+      active.node.style.opacity = "";
+      straighten?.cancel();
+    };
+  },
+};
+
 // Done folds away all but its most recent Cards; this is the control that unfolds it again.
 type Fold = { hidden: number; expanded: boolean; onToggle: () => void };
 
@@ -66,6 +87,8 @@ function ColumnLane({
   canAdd,
   filtering,
   sessionsEnabled,
+  dragging,
+  targeted,
   fold,
 }: {
   column: Column;
@@ -78,9 +101,13 @@ function ColumnLane({
   canAdd: boolean;
   filtering: boolean;
   sessionsEnabled: boolean;
+  /** A card is being dragged, or its drop is settling: the drag library moves cards, not their own animations. */
+  dragging: boolean;
+  /** The column the dragged card would land in. */
+  targeted: boolean;
   fold?: Fold;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `col:${column}`, data: { column } });
+  const { setNodeRef } = useDroppable({ id: columnDropId(column), data: { column } });
   const reduce = useReducedMotion();
   return (
     <section className="flex min-w-[84vw] flex-1 snap-start snap-always flex-col sm:min-w-[228px] lg:max-w-[320px]" aria-label={COLUMN_LABELS[column]}>
@@ -95,12 +122,21 @@ function ColumnLane({
       </header>
       <div
         ref={setNodeRef}
-        className={cx("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-card border border-transparent p-1 transition-colors duration-150", isOver && "border-line-strong bg-raised/40")}
+        className={cx("flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-card border border-transparent p-1 transition-colors duration-150", targeted && "border-line-strong bg-raised/40")}
       >
         <SortableContext items={cards.map((c) => c.id)} strategy={verticalListSortingStrategy}>
           <AnimatePresence initial={false}>
             {cards.map((card) => (
-              <motion.div key={card.id} layout={!reduce} initial={reduce ? false : { opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}>
+              // A card arriving or leaving animates, and others close up after it, unless it is the dragged
+              // card changing columns: that move belongs to the drag library, and two animations of it jump.
+              <motion.div
+                key={card.id}
+                layout={!reduce && !dragging}
+                initial={reduce || dragging ? false : { opacity: 0, scale: 0.97 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={dragging ? undefined : { opacity: 0, scale: 0.97 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              >
                 <SortableCard card={card} creator={card.creatorId ? people.get(card.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(card, viewer)} onOpen={() => onOpen(card.id)} />
               </motion.div>
             ))}
@@ -135,6 +171,18 @@ export function BoardPage() {
   const updateMe = useUpdateMe();
   const [creating, setCreating] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // The order each column shows from the moment a card is picked up until the board data shows where
+  // it was dropped. The dragged card moves between lanes as it crosses columns, and holding the lanes
+  // past the drop keeps the card from flicking back while the move is on its way to the server.
+  const reduce = useReducedMotion();
+  const [lanes, setLanes] = useState<Lanes | null>(null);
+  const lanesRef = useRef<Lanes | null>(null);
+  lanesRef.current = lanes;
+  const origin = useRef<{ column: Column; index: number } | null>(null);
+  const lastOver = useRef<UniqueIdentifier | null>(null);
+  const crossedColumn = useRef(false);
+  // The board data a drop was made against; the lanes hold until the data is something newer.
+  const droppedOn = useRef<Card[] | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
   // Null until the User opens or closes the explainer: until then it shows only on a first visit.
   const [helpOpen, setHelpOpen] = useState<boolean | null>(null);
@@ -168,11 +216,24 @@ export function BoardPage() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [cardId, creating]);
+  // Left and Right carry a card picked up with the keyboard to the next column along. Left to the
+  // sortable defaults, they find the card's own column nearest, since it sits a few pixels further
+  // out than the card, and the card never leaves it.
+  const keyboardCoordinates: KeyboardCoordinateGetter = useCallback((event, args) => {
+    const step = event.code === "ArrowLeft" ? -1 : event.code === "ArrowRight" ? 1 : 0;
+    const current = lanesRef.current;
+    const column = step && current ? laneOf(current, String(args.active)) : null;
+    if (!column) return sortableKeyboardCoordinates(event, args);
+    event.preventDefault();
+    const next = COLUMNS[COLUMNS.indexOf(column) + step];
+    const rect = next ? args.context.droppableRects.get(columnDropId(next)) : undefined;
+    return rect ? { x: rect.left + 8, y: args.currentCoordinates.y } : args.currentCoordinates;
+  }, []);
   // A touch has to rest on a card before it drags, so a swipe still scrolls the board.
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: KEYBOARD_CODES }),
+    useSensor(KeyboardSensor, { coordinateGetter: keyboardCoordinates, keyboardCodes: KEYBOARD_CODES }),
   );
 
   const people = useMemo(() => new Map((board.data?.people ?? []).map((p) => [p.id, p])), [board.data?.people]);
@@ -196,27 +257,110 @@ export function BoardPage() {
   }, [board.data?.cards, filter, filtering, viewer, doneExpanded]);
   const activeCard = activeId ? board.data?.cards.find((c) => c.id === activeId) : undefined;
   const activeSessions = (board.data?.sessions ?? []).filter((s) => s.status === "running" || s.status === "starting");
+  // What the columns show: the lanes while a drag holds them, the board data otherwise.
+  const shown = useMemo(() => {
+    if (!lanes) return byColumn;
+    const byId = new Map((board.data?.cards ?? []).map((c) => [c.id, c]));
+    const out = {} as Record<Column, Card[]>;
+    for (const col of COLUMNS) out[col] = lanes[col].map((id) => byId.get(id)).filter((c): c is Card => Boolean(c));
+    return out;
+  }, [lanes, byColumn, board.data?.cards]);
+  const targetColumn = activeId && lanes ? laneOf(lanes, activeId) : null;
 
-  const onDragStart = useCallback((e: DragStartEvent) => setActiveId(String(e.active.id)), []);
+  // The board data has caught up with a drop, or a failed move has put the card back: the lanes let go.
+  const cards = board.data?.cards;
+  useEffect(() => {
+    if (droppedOn.current && cards !== droppedOn.current) {
+      droppedOn.current = null;
+      setLanes(null);
+    }
+  }, [cards]);
+  // Crossing a column shifts the layout under the pointer for a frame; the collision check waits it out.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      crossedColumn.current = false;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [lanes]);
+
+  // The pointer decides where a card goes, since it is what a person aims with; the card's rectangle
+  // stands in for a keyboard drag. Over a column that holds cards, the nearest card inside it is the
+  // target, so the gap opens where the pointer is rather than at the column's end.
+  const collisionDetection: CollisionDetection = useCallback(
+    (args) => {
+      const pointer = pointerWithin(args);
+      let overId = getFirstCollision(pointer.length > 0 ? pointer : rectIntersection(args), "id");
+      if (overId != null) {
+        const current = lanesRef.current;
+        const column = current && String(overId).startsWith("col:") ? laneOf(current, String(overId)) : null;
+        if (current && column && current[column].length > 0) {
+          const inside = new Set(current[column]);
+          overId = closestCenter({ ...args, droppableContainers: args.droppableContainers.filter((c) => inside.has(String(c.id))) })[0]?.id ?? overId;
+        }
+        lastOver.current = overId;
+        return [{ id: overId }];
+      }
+      if (crossedColumn.current) lastOver.current = args.active.id;
+      return lastOver.current != null ? [{ id: lastOver.current }] : [];
+    },
+    [],
+  );
+
+  const onDragStart = useCallback(
+    (e: DragStartEvent) => {
+      const id = String(e.active.id);
+      const snapshot = {} as Lanes;
+      for (const col of COLUMNS) snapshot[col] = byColumn[col].map((c) => c.id);
+      const column = laneOf(snapshot, id);
+      origin.current = column ? { column, index: snapshot[column].indexOf(id) } : null;
+      lastOver.current = null;
+      droppedOn.current = null;
+      setLanes(snapshot);
+      setActiveId(id);
+    },
+    [byColumn],
+  );
+  const onDragOver = useCallback((e: DragOverEvent) => {
+    const { active, over } = e;
+    if (!over || over.id === active.id) return;
+    const translated = active.rect.current.translated;
+    const pastMiddle = Boolean(translated && translated.top + translated.height / 2 > over.rect.top + over.rect.height / 2);
+    setLanes((current) => {
+      const next = current && moveAcross(current, String(active.id), String(over.id), pastMiddle);
+      if (!next) return current;
+      crossedColumn.current = true;
+      return next;
+    });
+  }, []);
+  const onDragCancel = useCallback(() => {
+    droppedOn.current = null;
+    setActiveId(null);
+    setLanes(null);
+  }, []);
   const onDragEnd = useCallback(
     (e: DragEndEvent) => {
-      setActiveId(null);
       const { active, over } = e;
-      if (!over || !board.data) return;
-      const card = board.data.cards.find((c) => c.id === active.id);
-      if (!card) return;
-      const overId = String(over.id);
-      const onColumn = overId.startsWith("col:");
-      const targetColumn = onColumn ? (overId.slice(4) as Column) : (board.data.cards.find((c) => c.id === overId)?.column ?? card.column);
+      const id = String(active.id);
+      const card = board.data?.cards.find((c) => c.id === id);
+      const current = lanesRef.current;
+      if (!over || !card || !current || !board.data) return onDragCancel();
+      const settled = settleWithin(current, id, String(over.id));
+      const spot = dropSpot(settled, id);
+      const from = origin.current;
+      // Put down where it was picked up: nothing to send.
+      if (!spot || (from && spot.column === from.column && settled[spot.column].indexOf(id) === from.index)) return onDragCancel();
       // Placed among every Card in the column, not only those the filter or the folded Done shows:
       // a position worked out from the visible ones alone can land on a hidden Card's.
-      const whole = board.data.cards.filter((c) => c.column === targetColumn).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
-      const placed = dropPlacement(whole, card.id, onColumn ? null : overId);
-      if (!placed) return;
+      const whole = board.data.cards.filter((c) => c.column === spot.column).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
+      const position = placeBefore(whole, id, spot.beforeId);
+      // The lanes hold the dropped order until the board data shows it, so the card stays put.
+      droppedOn.current = board.data.cards;
+      setLanes(settled);
+      setActiveId(null);
       // The card springs back on a refusal, which says nothing about why without this.
-      move.mutate({ id: card.id, column: targetColumn, position: placed.position, revision: card.revision }, { onError: (err) => toast(`“${card.title}” was not moved. ${err.message}`) });
+      move.mutate({ id, column: spot.column, position, revision: card.revision }, { onError: (err) => toast(`“${card.title}” was not moved. ${err.message}`) });
     },
-    [board.data, move],
+    [board.data, move, onDragCancel],
   );
 
   if (board.isPending) {
@@ -300,11 +444,13 @@ export function BoardPage() {
       <HowItWorks open={showHelp} agent={agent} sessionsEnabled={board.data.board.sessionsEnabled} onClose={closeHelp} />
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={collisionDetection}
+        measuring={MEASURING}
         accessibility={{ screenReaderInstructions: SCREEN_READER_INSTRUCTIONS }}
         onDragStart={onDragStart}
+        onDragOver={onDragOver}
         onDragEnd={onDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={onDragCancel}
       >
         {/* On a phone each swipe lands one column against the gutter. Snapping pauses while a card is
             dragged, so the auto-scroll toward the next column is not pulled back. */}
@@ -313,7 +459,7 @@ export function BoardPage() {
             <ColumnLane
               key={column}
               column={column}
-              cards={byColumn[column]}
+              cards={shown[column]}
               people={people}
               agent={agent}
               viewer={viewer}
@@ -322,12 +468,19 @@ export function BoardPage() {
               canAdd={column === "inbox"}
               filtering={filtering}
               sessionsEnabled={board.data.board.sessionsEnabled}
+              dragging={lanes !== null}
+              targeted={targetColumn === column}
               fold={column === "done" ? { hidden: doneHidden, expanded: doneExpanded, onToggle: () => setDoneExpanded((x) => !x) } : undefined}
             />
           ))}
         </div>
-        <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}>
-          {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay className="w-[284px]" /> : null}
+        <DragOverlay dropAnimation={reduce ? null : DROP_ANIMATION}>
+          {activeCard ? (
+            // Lifted as it is picked up; the drop animation lays it back down on the gap it fills.
+            <motion.div initial={reduce ? false : { rotate: 0, scale: 1 }} animate={{ rotate: 1.5, scale: 1.02 }} transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}>
+              <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay className="w-[284px]" />
+            </motion.div>
+          ) : null}
         </DragOverlay>
       </DndContext>
       <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} sessionsEnabled={board.data.board.sessionsEnabled} onCreated={openCard} />
