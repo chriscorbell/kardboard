@@ -85,8 +85,8 @@ const OTHER = "board-2";
 beforeEach(async () => {
   for (const t of [schema.sessions, schema.cards, schema.boards, schema.users]) await db.delete(t);
   await db.insert(schema.boards).values([
-    { id: BOARD, slug: "board-one", name: "Board one" },
-    { id: OTHER, slug: "board-two", name: "Board two" },
+    { sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" },
+    { sessionsEnabled: true, id: OTHER, slug: "board-two", name: "Board two" },
   ]);
   await db.insert(schema.users).values([
     { id: "admin", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active" },

@@ -2,9 +2,10 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { X } from "lucide-react";
 import { COLUMNS, COLUMN_LABELS, type AgentProfile, type Column } from "@kardboard/shared";
 import { Avatar, Button, Chip, IconButton } from "../../components/ui";
-import { COLUMN_TONES } from "./columns";
+import { COLUMN_TONES, columnHint } from "./columns";
 
-function columnLine(column: Column, agent: string): string {
+function columnLine(column: Column, agent: string, sessionsEnabled: boolean): string {
+  if (!sessionsEnabled) return columnHint(column, agent, false);
   switch (column) {
     case "inbox":
       return "New requests. Add one with New card.";
@@ -22,9 +23,10 @@ function columnLine(column: Column, agent: string): string {
 }
 
 // The board explained in the few lines a new client needs: what each column means, that the Agent
-// answers every change about a minute later, and that Approve is what merges. Shown once, until
-// dismissed, and again from the toolbar's help button.
-export function HowItWorks({ open, agent, onClose }: { open: boolean; agent: AgentProfile; onClose: () => void }) {
+// answers every change about a minute later, and that Approve is what merges. A Board without
+// sessions does neither, so it is explained as the plain board it is. Shown once, until dismissed,
+// and again from the toolbar's help button.
+export function HowItWorks({ open, agent, sessionsEnabled, onClose }: { open: boolean; agent: AgentProfile; sessionsEnabled: boolean; onClose: () => void }) {
   const reduce = useReducedMotion();
   return (
     <AnimatePresence initial={false}>
@@ -51,7 +53,9 @@ export function HowItWorks({ open, agent, onClose }: { open: boolean; agent: Age
                   </IconButton>
                 </div>
                 <p className="mt-1 max-w-[70ch] text-[13px] leading-relaxed text-ink-muted">
-                  Every change you make (a new card, an edit, a comment, or a move) reaches {agent.name} about a minute later. {agent.name} then does the work, or asks you a question on the card.
+                  {sessionsEnabled
+                    ? `Every change you make (a new card, an edit, a comment, or a move) reaches ${agent.name} about a minute later. ${agent.name} then does the work, or asks you a question on the card.`
+                    : `Cards move as the work goes, by a person or by ${agent.name}. Nothing here starts on its own.`}
                 </p>
                 <ul className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2 xl:grid-cols-3">
                   {COLUMNS.map((c) => (
@@ -59,13 +63,15 @@ export function HowItWorks({ open, agent, onClose }: { open: boolean; agent: Age
                       <Chip tone={COLUMN_TONES[c]} className="w-[5.75rem] shrink-0 justify-center sm:w-[6.5rem]">
                         {COLUMN_LABELS[c]}
                       </Chip>
-                      <span className="min-w-0">{columnLine(c, agent.name)}</span>
+                      <span className="min-w-0">{columnLine(c, agent.name, sessionsEnabled)}</span>
                     </li>
                   ))}
                 </ul>
-                <p className="mt-3 max-w-[70ch] text-[13px] leading-relaxed text-ink-muted">
-                  <span className="text-ink">Approve merges the change.</span> If something is not right, say so in a comment instead.
-                </p>
+                {sessionsEnabled ? (
+                  <p className="mt-3 max-w-[70ch] text-[13px] leading-relaxed text-ink-muted">
+                    <span className="text-ink">Approve merges the change.</span> If something is not right, say so in a comment instead.
+                  </p>
+                ) : null}
                 <Button size="sm" variant="primary" className="mt-3" onClick={onClose}>
                   Got it
                 </Button>

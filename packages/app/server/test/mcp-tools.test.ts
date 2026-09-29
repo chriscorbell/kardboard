@@ -71,7 +71,7 @@ const row = async (id: string) => (await db.select().from(schema.cards).where(eq
 
 beforeEach(async () => {
   for (const t of [schema.attachments, schema.approvals, schema.previews, schema.sessions, schema.triggers, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets", previewMode: "runner" });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets", previewMode: "runner" });
   await db.insert(schema.users).values([
     { id: "chris", email: "chris@example.com", handle: "chris", name: "Chris", role: "admin", status: "active" },
     { id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "active" },

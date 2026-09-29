@@ -65,6 +65,7 @@ function ColumnLane({
   onNew,
   canAdd,
   filtering,
+  sessionsEnabled,
   fold,
 }: {
   column: Column;
@@ -76,6 +77,7 @@ function ColumnLane({
   onNew: () => void;
   canAdd: boolean;
   filtering: boolean;
+  sessionsEnabled: boolean;
   fold?: Fold;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `col:${column}`, data: { column } });
@@ -104,7 +106,7 @@ function ColumnLane({
             ))}
           </AnimatePresence>
         </SortableContext>
-        {cards.length === 0 ? <p className="px-2 py-6 text-center text-[12px] leading-relaxed text-ink-faint">{filtering ? "No matching cards." : columnHint(column, agent.name)}</p> : null}
+        {cards.length === 0 ? <p className="px-2 py-6 text-center text-[12px] leading-relaxed text-ink-faint">{filtering ? "No matching cards." : columnHint(column, agent.name, sessionsEnabled)}</p> : null}
         {fold && (fold.hidden > 0 || fold.expanded) ? (
           <button
             type="button"
@@ -289,12 +291,13 @@ export function BoardPage() {
                 </motion.button>
               ) : null}
             </AnimatePresence>
-            <AgentPill slug={slug} board={board.data.board} agent={agent} working={activeSessions.length} isAdmin={Boolean(isAdmin)} />
+            {/* The pill is the word on Sessions, and a Board without them has none to report. */}
+            {board.data.board.sessionsEnabled ? <AgentPill slug={slug} board={board.data.board} agent={agent} working={activeSessions.length} isAdmin={Boolean(isAdmin)} /> : null}
           </div>
           {helpButton("max-sm:hidden")}
         </div>
       </div>
-      <HowItWorks open={showHelp} agent={agent} onClose={closeHelp} />
+      <HowItWorks open={showHelp} agent={agent} sessionsEnabled={board.data.board.sessionsEnabled} onClose={closeHelp} />
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -318,6 +321,7 @@ export function BoardPage() {
               onNew={() => setCreating(true)}
               canAdd={column === "inbox"}
               filtering={filtering}
+              sessionsEnabled={board.data.board.sessionsEnabled}
               fold={column === "done" ? { hidden: doneHidden, expanded: doneExpanded, onToggle: () => setDoneExpanded((x) => !x) } : undefined}
             />
           ))}
@@ -326,7 +330,7 @@ export function BoardPage() {
           {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay className="w-[284px]" /> : null}
         </DragOverlay>
       </DndContext>
-      <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} onCreated={openCard} />
+      <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} sessionsEnabled={board.data.board.sessionsEnabled} onCreated={openCard} />
       <CardSheet slug={slug} cardId={cardId ?? null} view={board.data} onClose={closeCard} />
     </div>
   );

@@ -42,6 +42,9 @@ export const boards = sqliteTable("boards", {
   // The Admin's pause switch. A paused Board starts no Session and skips the nightly sweep; its
   // Triggers stay pending and are dispatched when it is resumed.
   paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+  // Whether human changes to this Board summon Sessions. Off by default: a Board without Sessions is
+  // worked by the Admin's own agent through an Access token, and its changes are never Triggers.
+  sessionsEnabled: integer("sessions_enabled", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(now),
 });
 

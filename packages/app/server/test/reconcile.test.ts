@@ -39,7 +39,7 @@ after(() => {
 beforeEach(async () => {
   for (const t of [schema.previews, schema.approvals, schema.sessions, schema.triggers, schema.events, schema.notifications, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   github.reset();
-  await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one", repoUrl: `https://github.com/${REPO}` });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: "board-1", slug: "board-one", name: "Board one", repoUrl: `https://github.com/${REPO}` });
   await db.insert(schema.users).values({ id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "active" });
   await db.insert(schema.users).values({ id: "bea", email: "bea@example.com", handle: "bea", name: "Bea", role: "member", status: "active" });
   await db.insert(schema.boardMembers).values([
@@ -68,6 +68,16 @@ function mergedOnGitHub(number = 7): void {
   p.merged = true;
   p.closedAt = "2026-09-24T10:00:00.000Z";
 }
+
+describe("a Board without Sessions", () => {
+  it("is left to its own agent: a merge on GitHub neither closes the card nor says so", async () => {
+    await db.update(schema.boards).set({ sessionsEnabled: false }).where(eq(schema.boards.id, "board-1"));
+    mergedOnGitHub();
+    assert.equal(await reconcileCard(CARD), "skipped");
+    assert.equal((await getCard(CARD))!.column, "review");
+    assert.deepEqual(await comments(), []);
+  });
+});
 
 describe("a pull request merged on GitHub", () => {
   it("completes the card as kardboard's own merge would", async () => {
@@ -368,7 +378,7 @@ describe("the poll", () => {
   it("leaves Done cards, cards with no pull request, and cards on boards without GitHub alone", async () => {
     await db.update(schema.cards).set({ column: "done" }).where(eq(schema.cards.id, CARD));
     await db.insert(schema.cards).values({ id: "card-2", boardId: "board-1", title: "No pull request yet", column: "in_progress", creatorKind: "user", creatorId: "ada" });
-    await db.insert(schema.boards).values({ id: "board-2", slug: "board-two", name: "Board two", repoUrl: null });
+    await db.insert(schema.boards).values({ sessionsEnabled: true, id: "board-2", slug: "board-two", name: "Board two", repoUrl: null });
     await db.insert(schema.cards).values({ id: "card-3", boardId: "board-2", title: "Elsewhere", column: "review", creatorKind: "user", creatorId: "ada", prNumber: 7 });
     mergedOnGitHub();
 

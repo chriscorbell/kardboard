@@ -30,7 +30,7 @@ const BOARD = "board-1";
 
 beforeEach(async () => {
   for (const t of [schema.triggers, schema.events, schema.sessions, schema.cards, schema.settings, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ id: BOARD, slug: "board-1", name: "Board one", maxConcurrentSessions: 1 });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-1", name: "Board one", maxConcurrentSessions: 1 });
 });
 
 /** A time on the local clock, `daysAgo` days back. Past nights keep every row this test writes, stamped now, after the window opened. */
@@ -68,6 +68,12 @@ describe("the nightly sweep", () => {
 
   it("skips a paused Board", async () => {
     await db.update(schema.boards).set({ paused: true }).where(eq(schema.boards.id, BOARD));
+    await sweepTick(night(1, 3, 5));
+    assert.deepEqual(await sweeps(), []);
+  });
+
+  it("never sweeps a Board without Sessions", async () => {
+    await db.update(schema.boards).set({ sessionsEnabled: false }).where(eq(schema.boards.id, BOARD));
     await sweepTick(night(1, 3, 5));
     assert.deepEqual(await sweeps(), []);
   });

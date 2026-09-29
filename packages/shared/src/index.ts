@@ -123,6 +123,11 @@ export interface Board {
   promptAppend: string;
   /** Set by the Admin: no new Session starts on this Board, and its Triggers wait until it is resumed. */
   paused: boolean;
+  /**
+   * Whether human changes to this Board summon Sessions. Off by default; a Board without them is
+   * worked by the Admin's own agent through an Access token, and nothing on it is a Trigger.
+   */
+  sessionsEnabled: boolean;
   createdAt: string;
 }
 
@@ -436,6 +441,8 @@ export const upsertBoardSchema = z.object({
   promptAppend: z.string().max(10_000).default(""),
   // Left out, a new Board starts unpaused and an update leaves the switch where it was.
   paused: z.boolean().optional(),
+  // Left out, a new Board starts without Sessions and an update leaves the switch where it was.
+  sessionsEnabled: z.boolean().optional(),
 });
 
 export const boardMembersSchema = z.object({ userIds: z.array(z.string()) });

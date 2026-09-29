@@ -34,8 +34,8 @@ async function seedDemo(): Promise<void> {
   await db.insert(schema.users).values(members);
   const [priya, tomasz, ines] = members;
 
-  const lumen = { id: newId(), slug: "lumen", name: "Lumen Studio site", repoUrl: "https://github.com/chriscorbell/lumen-site", provider: "claude" as const, previewMode: "external" as const, maxConcurrentSessions: 3, promptAppend: "" };
-  const harbor = { id: newId(), slug: "harbor", name: "Harbor booking app", repoUrl: "https://github.com/chriscorbell/harbor-booking", provider: "codex" as const, previewMode: "runner" as const, maxConcurrentSessions: 2, promptAppend: "Run the Playwright suite before opening a PR." };
+  const lumen = { id: newId(), slug: "lumen", name: "Lumen Studio site", repoUrl: "https://github.com/chriscorbell/lumen-site", provider: "claude" as const, previewMode: "external" as const, maxConcurrentSessions: 3, promptAppend: "", sessionsEnabled: true };
+  const harbor = { id: newId(), slug: "harbor", name: "Harbor booking app", repoUrl: "https://github.com/chriscorbell/harbor-booking", provider: "codex" as const, previewMode: "runner" as const, maxConcurrentSessions: 2, promptAppend: "Run the Playwright suite before opening a PR.", sessionsEnabled: true };
   await db.insert(schema.boards).values([lumen, harbor]);
   await db.insert(schema.boardMembers).values([
     { boardId: lumen.id, userId: priya!.id },

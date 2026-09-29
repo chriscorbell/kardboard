@@ -27,7 +27,7 @@ const PERSON = { kind: "user" as const, id: null };
 
 beforeEach(async () => {
   for (const t of [schema.triggers, schema.events, schema.cards, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ id: BOARD, slug: "board-1", name: "Board one", repoUrl: "https://github.com/chriscorbell/kardboard" });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-1", name: "Board one", repoUrl: "https://github.com/chriscorbell/kardboard" });
 });
 
 /** The human request a Session is about to split. */

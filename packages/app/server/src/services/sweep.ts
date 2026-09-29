@@ -15,7 +15,7 @@ const ACTIVE = ["queued", "starting", "running"] as const;
 
 // Nightly hygiene sweep: one sweep Session per Board at SWEEP_HOUR local time. It waits up to an
 // hour for card Sessions on that Board to finish, then runs regardless. Counts against the global
-// cap only. Nothing runs in noop mode, or on a paused Board.
+// cap only. Nothing runs in noop mode, on a paused Board, or on a Board without Sessions.
 export function startSweepScheduler(): void {
   if (runner.mode === "noop") return;
   setInterval(() => void sweepTick().catch((err) => console.error("[sweep] tick failed", err)), 60_000);
@@ -40,8 +40,9 @@ export async function sweepTick(now = new Date()): Promise<void> {
   const boards = await db.select().from(schema.boards);
   for (const board of boards) {
     // A paused Board starts no Session of any kind. Its sweep is skipped, not owed: resuming the
-    // Board mid-window sweeps it that night, and otherwise the next night's window does.
-    if (board.paused) continue;
+    // Board mid-window sweeps it that night, and otherwise the next night's window does. A Board
+    // without Sessions is never swept.
+    if (board.paused || !board.sessionsEnabled) continue;
     if (await sweptSince(board.id, opened)) continue;
     const busy = await db
       .select({ n: sql<number>`count(*)` })
@@ -62,8 +63,8 @@ async function startSweep(board: typeof schema.boards.$inferSelect, windowOpened
   const claimed = await underClaimLock(async () => {
     if (await sweptSince(board.id, windowOpened)) return null;
     // Read again under the lock: the Admin may have paused the Board while the proxy answered.
-    const current = await db.select({ paused: schema.boards.paused }).from(schema.boards).where(eq(schema.boards.id, board.id)).get();
-    if (!current || current.paused) return null;
+    const current = await db.select({ paused: schema.boards.paused, sessionsEnabled: schema.boards.sessionsEnabled }).from(schema.boards).where(eq(schema.boards.id, board.id)).get();
+    if (!current || current.paused || !current.sessionsEnabled) return null;
     const settings = await getSettings();
     if ((await activeCount()) >= settings.globalMaxConcurrentSessions) return null;
     // A sweep has no Card to pick up again, so it gets the half of the fallback that helps it: don't

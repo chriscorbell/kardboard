@@ -25,7 +25,7 @@ const MEMBER = "ada@example.com";
 
 beforeEach(async () => {
   for (const t of [schema.triggers, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" },

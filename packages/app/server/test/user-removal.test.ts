@@ -23,7 +23,7 @@ const ADMIN = "root@example.com";
 
 beforeEach(async () => {
   for (const t of [schema.previewCodes, schema.previews, schema.notifications, schema.outboundEmails, schema.mentions, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one" });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: "board-1", slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "ada", email: "ada@example.com", handle: "ada", name: "Ada Lovelace", role: "member", status: "revoked", clerkUserId: "clerk_ada", avatarUrl: "https://img.example/ada.png" },

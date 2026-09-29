@@ -68,8 +68,8 @@ async function makePreview(boardId = BOARD): Promise<{ id: string; host: string;
 beforeEach(async () => {
   for (const t of [schema.previewCodes, schema.previews, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values([
-    { id: BOARD, slug: "board-1", name: "Board one", previewMode: "runner", repoUrl: "https://github.com/chriscorbell/kardboard" },
-    { id: OTHER_BOARD, slug: "board-2", name: "Board two" },
+    { sessionsEnabled: true, id: BOARD, slug: "board-1", name: "Board one", previewMode: "runner", repoUrl: "https://github.com/chriscorbell/kardboard" },
+    { sessionsEnabled: true, id: OTHER_BOARD, slug: "board-2", name: "Board two" },
   ]);
 });
 

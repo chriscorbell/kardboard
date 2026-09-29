@@ -85,7 +85,7 @@ const ADMIN = { kind: "user" as const, id: null };
 
 beforeEach(async () => {
   for (const t of [schema.triggers, schema.events, schema.sessions, schema.cards, schema.settings, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ id: BOARD, slug: "board-1", name: "Board one" });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-1", name: "Board one" });
   Object.assign(fake, { starts: [], stops: [], failStarts: 0, stopDelayMs: 0, inventoryFailures: 0, inventoryCalls: 0, containers: [] });
   limitsDelayMs = 0;
 });

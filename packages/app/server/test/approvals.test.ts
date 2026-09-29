@@ -73,7 +73,7 @@ const MEMBER = { kind: "user" as const, id: "ada" };
 beforeEach(async () => {
   for (const t of [schema.approvals, schema.sessions, schema.triggers, schema.events, schema.notifications, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   github.reset();
-  await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one", repoUrl: `https://github.com/${REPO}` });
+  await db.insert(schema.boards).values({ sessionsEnabled: true, id: "board-1", slug: "board-one", name: "Board one", repoUrl: `https://github.com/${REPO}` });
   await db.insert(schema.users).values({ id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "active" });
   await db.insert(schema.users).values({ id: "root", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active" });
   await db.insert(schema.boardMembers).values({ boardId: "board-1", userId: "ada" });

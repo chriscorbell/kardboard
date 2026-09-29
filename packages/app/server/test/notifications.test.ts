@@ -59,8 +59,8 @@ beforeEach(async () => {
   await db.delete(schema.users);
   await db.delete(schema.boards);
   await db.insert(schema.boards).values([
-    { id: BOARD, slug: "board-one", name: "Board one" },
-    { id: OTHER_BOARD, slug: "board-two", name: "Board two" },
+    { sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" },
+    { sessionsEnabled: true, id: OTHER_BOARD, slug: "board-two", name: "Board two" },
   ]);
 });
 

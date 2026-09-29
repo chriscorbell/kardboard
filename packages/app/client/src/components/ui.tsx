@@ -84,6 +84,16 @@ export function Chip({ children, tone = "neutral", className }: { children: Reac
   return <span className={cx("inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] font-medium leading-none", tones, className)}>{children}</span>;
 }
 
+// A block that opens and closes with its height and a fade. While closed its contents leave the tab
+// order and the accessibility tree, so what cannot be seen cannot be reached.
+export function Reveal({ open, children, className }: { open: boolean; children: ReactNode; className?: string }) {
+  return (
+    <div inert={!open} className={cx("grid transition-[grid-template-rows,opacity] duration-200 ease-out", open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0", className)}>
+      <div className="min-h-0 overflow-hidden">{children}</div>
+    </div>
+  );
+}
+
 export function Field({ label, hint, error, children, className }: { label: ReactNode; hint?: string; error?: string | null; children: ReactNode; className?: string }) {
   return (
     <label className={cx("flex flex-col gap-1.5", className)}>
