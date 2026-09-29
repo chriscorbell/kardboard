@@ -172,6 +172,27 @@ describe("an agent holding an access token", () => {
     assert.deepEqual(Object.fromEntries(ready.map((c) => [c.id, c.replyWaiting])), { answered: true, unanswered: false, untouched: false });
   });
 
+  it("puts cards at the top or bottom of a column, which reads top down", async () => {
+    await card("first", { column: "ready", position: 1000 });
+    await card("second", { column: "ready", position: 2000 });
+    await card("working", { column: "in_progress", position: 500 });
+    const client = await connect((await makeToken()).secret);
+    const order = async (column: string) => ((json(await tool(client, "get_board")).cards as Record<string, { id: string }[]>)[column] ?? []).map((c) => c.id);
+
+    const next = json(await tool(client, "create_card", { title: "Do this next", column: "ready", position: "top" })).cardId as string;
+    const later = json(await tool(client, "create_card", { title: "Some day", column: "ready" })).cardId as string;
+    assert.deepEqual(await order("ready"), [next, "first", "second", later]);
+
+    await tool(client, "move_card", { card_id: "working", column: "ready", revision: 0 });
+    assert.deepEqual(await order("ready"), [next, "first", "second", later, "working"], "a move to another column lands at the bottom");
+    await tool(client, "move_card", { card_id: "second", column: "ready", revision: 0, position: "top" });
+    assert.deepEqual(await order("ready"), ["second", next, "first", later, "working"], "and position reorders within the column");
+
+    const nowhere = await tool(client, "move_card", { card_id: "first", column: "ready", revision: 0 });
+    assert.equal(nowhere.isError, true);
+    assert.match(text(nowhere), /already in Ready/);
+  });
+
   it("is refused a stale revision, and told the current one", async () => {
     await card("c1", { revision: 3 });
     const client = await connect((await makeToken()).secret);
