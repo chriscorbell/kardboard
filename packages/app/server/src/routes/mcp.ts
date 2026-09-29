@@ -24,6 +24,7 @@ import { refreshCardChecks } from "../services/checks.js";
 import { childRefusal, countChildren, MAX_CHILDREN } from "../services/children.js";
 import { attachmentContent } from "../services/attachment-content.js";
 import { ACCESS_TOKEN_PREFIX, findAccessToken } from "../services/access-tokens.js";
+import { CardDeletionRefused, deleteCard } from "../services/card-deletion.js";
 import type { AccessToken, Board } from "@kardboard/shared";
 
 type SessionRow = typeof schema.sessions.$inferSelect;
@@ -514,6 +515,28 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
         throw err;
       }
       return { content: [{ type: "text", text: JSON.stringify({ column: moved.column, revision: moved.revision, ...(moved.outcome ? { outcome: moved.outcome } : {}) }) }] };
+    },
+  );
+
+  // Only the Agent's own Cards: a person's words are theirs to withdraw, and Done is how the Agent
+  // closes one of theirs.
+  server.registerTool(
+    "delete_card",
+    {
+      description: "Delete a card the agent created, with its comments and attachments, for good: a duplicate, or a card made by mistake. A card a person created is refused; move it to Done instead. Pass the revision from your latest get_card or get_board: if the card has changed since, the delete is refused and you should read it again.",
+      inputSchema: { card_id: z.string(), revision: z.number().int().nonnegative() },
+    },
+    async ({ card_id, revision }) => {
+      const card = await assertBoardCard(card_id);
+      if (card.creatorKind !== "agent") throw new Error(`card ${card_id} was created by a person, and only a card the agent created can be deleted here. Move it to Done instead.`);
+      if (card.revision !== revision) throw await conflict(card_id, revision);
+      try {
+        await deleteCard(card_id, actor);
+      } catch (err) {
+        if (err instanceof CardDeletionRefused) throw new Error(err.message);
+        throw err;
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ deleted: card_id }) }] };
     },
   );
 

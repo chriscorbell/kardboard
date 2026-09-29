@@ -315,6 +315,19 @@ export function useDeleteComment(cardId: string) {
   });
 }
 
+// For good, with its Comments and Attachments. The Board drops it at once; the event stream tells
+// everyone else, and closes it for anyone who has it open.
+export function useDeleteCard(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<void>(`/cards/${id}`, { method: "DELETE" }),
+    onSuccess: (_r, id) => {
+      qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, cards: v.cards.filter((c) => c.id !== id) } : v));
+      qc.removeQueries({ queryKey: keys.card(id) });
+    },
+  });
+}
+
 // Opening a Card reads whatever the bell held about it.
 export function useMarkCardRead() {
   const qc = useQueryClient();

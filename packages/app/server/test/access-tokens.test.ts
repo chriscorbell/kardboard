@@ -193,6 +193,24 @@ describe("an agent holding an access token", () => {
     assert.match(text(nowhere), /already in Ready/);
   });
 
+  it("deletes a card the agent created, and only such a card", async () => {
+    await card("persons", { creatorId: "ada" });
+    const client = await connect((await makeToken()).secret);
+    const made = json(await tool(client, "create_card", { title: "Made by mistake" })).cardId as string;
+
+    const theirs = await tool(client, "delete_card", { card_id: "persons", revision: 0 });
+    assert.equal(theirs.isError, true);
+    assert.match(text(theirs), /created by a person/);
+    const stale = await tool(client, "delete_card", { card_id: made, revision: 5 });
+    assert.equal(stale.isError, true);
+
+    assert.deepEqual(json(await tool(client, "delete_card", { card_id: made, revision: 0 })), { deleted: made });
+    assert.equal(await db.select().from(schema.cards).where(eq(schema.cards.id, made)).get(), undefined);
+    assert.ok(await db.select().from(schema.cards).where(eq(schema.cards.id, "persons")).get());
+    const [deleted] = await db.select().from(schema.events).where(eq(schema.events.type, "card.deleted"));
+    assert.equal(deleted?.actorKind, "agent");
+  });
+
   it("is refused a stale revision, and told the current one", async () => {
     await card("c1", { revision: 3 });
     const client = await connect((await makeToken()).secret);
