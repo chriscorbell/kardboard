@@ -47,9 +47,10 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
     <div
       ref={ref}
       className={cx(
-        "group relative select-none rounded-card border bg-surface px-3 py-2.5 transition-[border-color,box-shadow,opacity] duration-150 ease-out-expo",
+        "group relative select-none rounded-card border bg-surface px-3 py-2.5 transition-[border-color,box-shadow] duration-150 ease-out-expo",
         dragging ? "opacity-40" : "opacity-100",
-        overlay ? "border-line-strong shadow-[0_18px_40px_-12px_rgba(0,0,0,0.7)]" : "border-line hover:border-line-strong hover:shadow-[0_4px_16px_-8px_rgba(0,0,0,0.6)]",
+        // Lifted: its shadow comes up as it is picked up, and the drop lays it back down.
+        overlay ? "animate-[card-lift_150ms_ease-out] border-line-strong shadow-[0_18px_40px_-12px_rgba(0,0,0,0.7)]" : "border-line hover:border-line-strong hover:shadow-[0_4px_16px_-8px_rgba(0,0,0,0.6)]",
         className,
       )}
       {...rest}
