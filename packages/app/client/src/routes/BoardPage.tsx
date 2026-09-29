@@ -478,7 +478,7 @@ export function BoardPage() {
           {activeCard ? (
             // Lifted as it is picked up; the drop animation lays it back down on the gap it fills.
             <motion.div initial={reduce ? false : { rotate: 0, scale: 1 }} animate={{ rotate: 1.5, scale: 1.02 }} transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}>
-              <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay className="w-[284px]" />
+              <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay />
             </motion.div>
           ) : null}
         </DragOverlay>
