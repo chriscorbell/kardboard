@@ -104,6 +104,14 @@
   .prose-cb td, .prose-cb th { border: 1px solid var(--color-line); padding: 4px 8px; }
 }
 
+/* A card picked up to drag: its shadow rises from none, and the border from the resting one. */
+@keyframes card-lift {
+  from {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+    border-color: var(--color-line);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

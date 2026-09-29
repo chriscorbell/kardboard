@@ -56,19 +56,32 @@ function SortableCard({ card, creator, agent, questionIsMine, onOpen }: { card: 
 // throughout a drag rather than once at its start.
 const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
 
-const EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
-// The lifted card lands on the gap it fills and straightens as it does; the gap's own card stays hidden
-// under it until it has landed, so the two never show at once.
+// Quick to arrive and still once it has: an ease with a long tail creeps the last few pixels after the
+// card seems to have landed, which reads as a second movement.
+const DROP_EASE = "cubic-bezier(0.25, 1, 0.5, 1)";
+const DROP_MS = 200;
+// The lifted card is the card itself, the same size and square, with a shadow. It glides onto the gap
+// it fills and lays the shadow down on the way, so when it gives way to the card underneath nothing
+// moves or changes. That card stays hidden until then and appears at once, covered exactly as it was.
 const DROP_ANIMATION: DropAnimation = {
-  duration: 220,
-  easing: EASE,
+  duration: DROP_MS,
+  easing: DROP_EASE,
   sideEffects({ active, dragOverlay }) {
     active.node.style.opacity = "0";
     const lifted = dragOverlay.node.firstElementChild;
-    const straighten = lifted instanceof HTMLElement ? lifted.animate([{ transform: "rotate(1.5deg) scale(1.02)" }, { transform: "none" }], { duration: 220, easing: EASE, fill: "forwards" }) : null;
+    if (lifted instanceof HTMLElement) {
+      const from = getComputedStyle(lifted);
+      const to = getComputedStyle(active.node);
+      lifted.animate(
+        [
+          { boxShadow: from.boxShadow, borderColor: from.borderColor },
+          { boxShadow: to.boxShadow, borderColor: to.borderColor },
+        ],
+        { duration: DROP_MS, easing: DROP_EASE, fill: "forwards" },
+      );
+    }
     return () => {
       active.node.style.opacity = "";
-      straighten?.cancel();
     };
   },
 };
@@ -475,12 +488,7 @@ export function BoardPage() {
           ))}
         </div>
         <DragOverlay dropAnimation={reduce ? null : DROP_ANIMATION}>
-          {activeCard ? (
-            // Lifted as it is picked up; the drop animation lays it back down on the gap it fills.
-            <motion.div initial={reduce ? false : { rotate: 0, scale: 1 }} animate={{ rotate: 1.5, scale: 1.02 }} transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}>
-              <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay />
-            </motion.div>
-          ) : null}
+          {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay /> : null}
         </DragOverlay>
       </DndContext>
       <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} sessionsEnabled={board.data.board.sessionsEnabled} onCreated={openCard} />
