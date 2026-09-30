@@ -34,7 +34,7 @@ Resend sends as `Milo <milo@kardboard.cc>`. Verify `resend._domainkey` (TXT), `s
 
 ## Compose alignment
 
-`deploy/compose.yaml` and `chriscorbell/stacks/kardboard/compose.yaml` must remain aligned; Watchtower applies image updates but does not apply Compose edits.
+`deploy/compose.yaml` and `hosts/minicore/stacks/kardboard/compose.yaml` in `chriscorbell/fleet` must remain identical; Watchtower applies image updates but does not apply Compose edits.
 
 ## Migration verification
 

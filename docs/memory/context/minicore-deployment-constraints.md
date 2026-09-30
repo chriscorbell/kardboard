@@ -5,7 +5,7 @@ Status: verified
 Scope: environment, minicore
 Verified: 2026-09-24
 Source: read-only SSH inspection of minicore on 2026-09-13, ports and `ufw` rechecked 2026-09-24, and `~/Code/fleet/AGENTS.md`, `~/Code/stacks/*/compose.yaml`
-Recheck when: `chriscorbell/stacks` gains a shared network, proxy, database, or object store, or the Cloudflare Tunnel switches from token to file configuration
+Recheck when: minicore's stacks in `chriscorbell/fleet` gain a shared network, proxy, database, or object store, or the Cloudflare Tunnel switches from token to file configuration
 
 Facts that took a full fleet survey to establish and that `~/Code/fleet` does not state outright:
 
@@ -15,4 +15,4 @@ Facts that took a full fleet survey to establish and that `~/Code/fleet` does no
 - Host ports in use: 3050, 3060, 3147, 3834, 4533, 5030, 7359, 8080, 8096, 8409, 8443, 8554, 8555, 8971, 25565, 50300. kardboard takes 3070 for the app and 3073 for the preview router.
 - `ufw` is inactive; every published port is open on the LAN. The only host firewall rules kardboard adds are the `kardboard-lan-isolation` ones, which restrict Session and Preview bridges and nothing else; see [the network isolation runbook](../../runbooks/network-isolation.md).
 - Canonical CI workflow to copy: `chriscorbell/invox` `.github/workflows/ci.yml` (validate job, then publish to GHCR `:latest` and `:sha` on push to `main`). Source repos of the other GHCR images are not cloned on mbp.
-- Compose file changes are manual: commit to `chriscorbell/stacks`, then `git pull` and `docker compose up -d` on minicore.
+- Compose file changes are manual: commit to `hosts/minicore/stacks/` in `chriscorbell/fleet`, then `ssh -A minicore 'git -C ~/fleet pull --ff-only'` and `docker compose up -d` on minicore.

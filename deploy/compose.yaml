@@ -1,4 +1,4 @@
-# kardboard stack for minicore. Copy this directory to chriscorbell/stacks/kardboard and run
+# kardboard stack for minicore. Copy this directory to hosts/minicore/stacks/kardboard in chriscorbell/fleet and run
 # `docker compose up -d`. Watchtower updates app, runner, egress, and preview-router on each push
 # to main; session and preview containers carry the opt-out label and are managed by the runner.
 #
@@ -52,7 +52,7 @@ services:
       # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.
       KARDBOARD_BACKUP_COPY_DIR: /nas/backup/minicore/kardboard
     volumes:
-      - ../../data/kardboard/app:/data
+      - /home/chris/docker/data/kardboard/app:/data
       # `/nas`, the plain directory holding the host's NAS automount points, never a share itself:
       # binding an automount point whose NAS is unreachable fails the container's start with "no such
       # device" (tried on minicore, 2026-09-24), which would take the app down on any redeploy while
@@ -96,7 +96,7 @@ services:
       CODEX_AUTH_FILE: ${KARDBOARD_CODEX_AUTH_FILE:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../../data/kardboard/runner:/data
+      - /home/chris/docker/data/kardboard/runner:/data
     networks: [control]
     # The runner's /healthz pings the Docker daemon and answers 503 when it cannot reach it.
     healthcheck:
@@ -119,7 +119,7 @@ services:
       # this proxy too and do not hold the runner token, which is why it is reused here.
       EGRESS_CONTROL_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
     volumes:
-      - ../../data/kardboard/secrets:/secrets
+      - /home/chris/docker/data/kardboard/secrets:/secrets
     networks: [control, workload]
     # Up, and which credentials are loaded, as booleans; a missing one does not fail the check.
     healthcheck:

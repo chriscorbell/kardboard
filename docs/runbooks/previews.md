@@ -19,7 +19,7 @@ See [domain configuration](domains.md) for Clerk, Google sign-in, email, and the
 
 Compose reads values from `.env`; it does not execute shell commands in that file. Run `openssl rand -base64 32` in a terminal, then save its output as `KARDBOARD_PREVIEW_SECRET`. Saving `$(openssl rand -base64 32)` literally creates a predictable value instead. Do not print or commit the secret. Changing an existing secret signs open previews out.
 
-Keep `deploy/compose.yaml` and `chriscorbell/stacks/kardboard/compose.yaml` aligned. Publish the stacks change, pull it on minicore, copy `deploy/.env` to `/home/chris/docker/stacks/kardboard/.env`, and run `docker compose up -d`. Watchtower updates images but does not apply Compose changes.
+Keep `deploy/compose.yaml` and `hosts/minicore/stacks/kardboard/compose.yaml` in `chriscorbell/fleet` identical. Publish the fleet change, pull it on minicore (`ssh -A minicore 'git -C ~/fleet pull --ff-only'`), copy `deploy/.env` to `/home/chris/docker/stacks/kardboard/.env`, and run `docker compose up -d`. Watchtower updates images but does not apply Compose changes.
 
 Check both `http://127.0.0.1:3070/healthz` and `http://127.0.0.1:3073/healthz` on minicore. Request an unused `https://<id>.kardboard.cc/` hostname: valid TLS followed by `No preview at this address.` confirms DNS and tunnel routing. It does not prove an image builds or a Member can sign in.
 
