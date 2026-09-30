@@ -124,7 +124,7 @@ The Admin is also emailed, at most once every six hours for the same problem, wh
 
 ## Infrastructure
 
-kardboard runs on minicore as one compose stack named `kardboard` in `chriscorbell/stacks`, with data under `/home/chris/docker/data/kardboard`:
+kardboard runs on minicore as one compose stack named `kardboard` in `chriscorbell/fleet` (`hosts/minicore/stacks/kardboard`), with data under `/home/chris/docker/data/kardboard`:
 
 | Service | Role | Network |
 | --- | --- | --- |
