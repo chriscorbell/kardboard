@@ -159,8 +159,10 @@ function ColumnLane({
     <section
       className={cx(
         "flex snap-start snap-always flex-col",
-        collapse && "relative overflow-hidden transition-[flex-grow,flex-basis,min-width,max-width] duration-300 ease-out-expo",
-        shut ? "min-w-11 max-w-11 shrink-0 grow-0 basis-11" : "min-w-[84vw] max-w-[100vw] grow basis-0 sm:min-w-[228px] lg:max-w-[320px]",
+        collapse && "relative overflow-hidden transition-[flex-grow,flex-basis,min-width] duration-300 ease-out-expo",
+        // Open columns share the whole width of the board, however wide, down to a floor below which it
+        // scrolls. A shut one is its strip's width exactly, and gives the rest to its neighbours.
+        shut ? "min-w-11 shrink-0 grow-0 basis-11" : "min-w-[84vw] grow basis-0 sm:min-w-[228px]",
       )}
       aria-label={label}
     >
