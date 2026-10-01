@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { requestBlob } from "./api";
+import { downloadBlob, imageBlob } from "./attachmentBlobs";
 
 // Attachments are served only to the bearer token, never to a cookie, so a plain <img src> or
 // <a href> to /api/attachments is refused in production. They are fetched like any API call and
-// shown from an object URL, which is released when the view goes away.
+// shown from an object URL, which is released when the view goes away. The bytes are typed again
+// before they get that URL, so it cannot open as a page (see attachmentBlobs.ts).
 
 export type AttachmentLoad = { status: "idle" } | { status: "loading" } | { status: "ready"; url: string } | { status: "error"; error: unknown };
 
-export function useAttachmentUrl(id: string, enabled: boolean): AttachmentLoad & { retry: () => void } {
+export function useAttachmentUrl(id: string, mime: string, enabled: boolean): AttachmentLoad & { retry: () => void } {
   const [load, setLoad] = useState<AttachmentLoad>({ status: "idle" });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -18,7 +20,7 @@ export function useAttachmentUrl(id: string, enabled: boolean): AttachmentLoad &
     requestBlob(`/attachments/${id}`).then(
       (blob) => {
         if (cancelled) return;
-        url = URL.createObjectURL(blob);
+        url = URL.createObjectURL(imageBlob(blob, mime));
         setLoad({ status: "ready", url });
       },
       (error: unknown) => {
@@ -29,7 +31,7 @@ export function useAttachmentUrl(id: string, enabled: boolean): AttachmentLoad &
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [id, enabled, attempt]);
+  }, [id, mime, enabled, attempt]);
   return { ...load, retry: () => setAttempt((n) => n + 1) };
 }
 
@@ -68,7 +70,7 @@ export function useAttachmentDownload(id: string, filename: string) {
     if (state.busy) return;
     setState({ busy: true, error: null });
     try {
-      const url = URL.createObjectURL(await requestBlob(`/attachments/${id}`));
+      const url = URL.createObjectURL(downloadBlob(await requestBlob(`/attachments/${id}`)));
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;

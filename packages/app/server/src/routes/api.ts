@@ -20,6 +20,8 @@ import {
   updateCommentSchema,
   updateMeSchema,
   upsertBoardSchema,
+  isDisplayableImage,
+  mimeEssence,
   ACTIVE_SESSION_STATUSES,
   type BoardView,
   type CardDetail,
@@ -362,7 +364,7 @@ api.post("/comments/:id/attachments", uploadLimit, async (c) => {
     return addAttachment({
       commentId: comment.id,
       filename: file.name || "attachment",
-      mime: file.type || "application/octet-stream",
+      mime: file.type,
       size: file.size,
       sha256,
     });
@@ -378,17 +380,23 @@ api.get("/attachments/:id", async (c) => {
   if ("error" in access) return access.error;
   const file = path.join(env.dataDir, "uploads", att.sha256.slice(0, 2), att.sha256);
   if (!fs.existsSync(file)) return c.json({ error: "missing" }, 404);
-  // The uploader chose the type. An SVG, unlike other images, can carry script, so it downloads
-  // instead of rendering, and the sandbox header keeps anything else from running on this origin.
-  const inline = att.mime.startsWith("image/") && att.mime !== "image/svg+xml" ? "inline" : "attachment";
+  // The uploader chose the type. Only the raster images are shown in place; anything else, an SVG
+  // or an HTML page among them, downloads, and the sandbox header keeps it from running on this
+  // origin if a browser renders it anyway. The type is cut down again here because rows written
+  // before uploads were normalised can carry parameters or capitals.
+  const type = mimeEssence(att.mime);
+  const disposition = isDisplayableImage(type) ? "inline" : "attachment";
   return new Response(fs.createReadStream(file) as unknown as ReadableStream, {
     headers: {
-      "Content-Type": att.mime,
+      "Content-Type": type,
       "Content-Length": String(att.size),
-      "Content-Disposition": `${inline}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
+      "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(att.filename)}`,
       "Cache-Control": "private, max-age=3600",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
+      // A page on another origin cannot embed the file, even if its request were to carry a
+      // credential. Not same-site: a Preview runs a branch's code on a subdomain of this site.
+      "Cross-Origin-Resource-Policy": "same-origin",
     },
   });
 });

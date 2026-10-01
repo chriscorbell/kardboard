@@ -280,6 +280,29 @@ export interface Attachment {
   createdAt: string;
 }
 
+// The Attachment types shown as pictures, by the server inline and by the app as thumbnails and in
+// the viewer. Every other type is a file to download. These are raster formats that no browser runs
+// script in, which is why SVG is not among them: an SVG opened on its own is a document, and its
+// script runs with whatever the origin it opened on can reach.
+export const DISPLAYABLE_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"] as const;
+
+const MIME_ESSENCE = /^[\w!#$%&'*+.^`|~-]+\/[\w!#$%&'*+.^`|~-]+$/;
+
+/**
+ * A type as the uploader's browser named it, cut to its lowercase `type/subtype`: "Image/SVG+XML;
+ * charset=utf-8" is "image/svg+xml". Anything not shaped like a type is application/octet-stream, so
+ * comparing the result against a list cannot be dodged with case, parameters, or whitespace.
+ */
+export function mimeEssence(mime: string): string {
+  const essence = mime.split(";", 1)[0]!.trim().toLowerCase();
+  return MIME_ESSENCE.test(essence) ? essence : "application/octet-stream";
+}
+
+/** Whether an Attachment of this type is shown as a picture rather than downloaded. */
+export function isDisplayableImage(mime: string): boolean {
+  return (DISPLAYABLE_IMAGE_TYPES as readonly string[]).includes(mimeEssence(mime));
+}
+
 export interface Comment {
   id: string;
   cardId: string;

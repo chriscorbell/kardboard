@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { AlertCircle, FileText, ImageOff, Loader2 } from "lucide-react";
-import type { Attachment } from "@kardboard/shared";
+import { isDisplayableImage, type Attachment } from "@kardboard/shared";
 import { cx } from "../../components/ui";
 import { useAttachmentDownload, useAttachmentUrl, useNearViewport } from "../../lib/attachments";
 import { fileSize } from "../../lib/format";
@@ -8,14 +8,15 @@ import { ImageViewer } from "./ImageViewer";
 
 const chip = "inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-bg px-2.5 text-[12px] text-ink-muted transition-colors hover:border-line-strong hover:text-ink";
 
-// A Comment's attachments: images as thumbnails that open in the viewer, other files as chips.
+// A Comment's attachments: images as thumbnails that open in the viewer, other files as chips. Only
+// the raster types count as images, so an SVG is a chip and downloads.
 export function Attachments({ attachments }: { attachments: Attachment[] }) {
-  const images = attachments.filter((a) => a.mime.startsWith("image/"));
+  const images = attachments.filter((a) => isDisplayableImage(a.mime));
   const [viewing, setViewing] = useState<number | null>(null);
   return (
     <div className="mt-2 flex flex-wrap gap-2">
       {attachments.map((a) =>
-        a.mime.startsWith("image/") ? <AttachmentImage key={a.id} a={a} onOpen={() => setViewing(images.indexOf(a))} /> : <AttachmentFile key={a.id} a={a} />,
+        isDisplayableImage(a.mime) ? <AttachmentImage key={a.id} a={a} onOpen={() => setViewing(images.indexOf(a))} /> : <AttachmentFile key={a.id} a={a} />,
       )}
       <ImageViewer images={images} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />
     </div>
@@ -25,7 +26,7 @@ export function Attachments({ attachments }: { attachments: Attachment[] }) {
 function AttachmentImage({ a, onOpen }: { a: Attachment; onOpen: () => void }) {
   const placeholder = useRef<HTMLDivElement>(null);
   const near = useNearViewport(placeholder);
-  const load = useAttachmentUrl(a.id, near);
+  const load = useAttachmentUrl(a.id, a.mime, near);
   const [painted, setPainted] = useState(false);
 
   if (load.status === "error") {
