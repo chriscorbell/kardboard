@@ -61,7 +61,7 @@ export function ImageViewer({ images, index, onIndex, onClose }: { images: Attac
 function Shown({ image, index, count, onIndex, onClose }: { image: Attachment; index: number; count: number; onIndex: (i: number) => void; onClose: () => void }) {
   const reduce = useReducedMotion();
   // Served private and cached for an hour, so this is the thumbnail's own download again, not another.
-  const load = useAttachmentUrl(image.id, true);
+  const load = useAttachmentUrl(image.id, image.mime, true);
   const { busy, download } = useAttachmentDownload(image.id, image.filename);
   const img = useRef<HTMLImageElement>(null);
   const [zoomable, setZoomable] = useState(false);

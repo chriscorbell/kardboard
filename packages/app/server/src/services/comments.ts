@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { extractMentionHandles, type Attachment, type Comment, type User } from "@kardboard/shared";
+import { extractMentionHandles, mimeEssence, type Attachment, type Comment, type User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { newId } from "../ids.js";
@@ -229,7 +229,8 @@ export async function addAttachment(input: {
   sha256: string;
 }): Promise<Attachment> {
   const id = newId();
-  await db.insert(schema.attachments).values({ id, ...input });
+  // Stored as the bare type, so everything that reads it later compares like with like.
+  await db.insert(schema.attachments).values({ id, ...input, mime: mimeEssence(input.mime) });
   const row = (await db.select().from(schema.attachments).where(eq(schema.attachments.id, id)).get())!;
   const comment = (await getComment(input.commentId))!;
   const card = (await getCard(comment.cardId))!;
