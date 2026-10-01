@@ -206,6 +206,16 @@ describe("the people a Board names", () => {
     assert.equal(grace.name, "Grace");
   });
 
+  it("sends the members' emails to the Admin alone", async () => {
+    const forMember = (await boardView(MEMBER)).members;
+    assert.deepEqual(forMember.map((m) => m.id).sort(), ["ada", "admin", "grace"]);
+    for (const m of forMember) assert.equal("email" in m, false, `${m.id}'s email reached a Member`);
+    assert.equal(forMember.find((m) => m.id === "grace")!.handle, "grace", "what a Mention needs is all there");
+
+    const forAdmin = (await boardView(ADMIN)).members;
+    assert.equal(forAdmin.find((m) => m.id === "grace")!.email, OTHER);
+  });
+
   it("names someone who only appears in the activity or an Approval", async () => {
     const card = await newCard();
     await db.insert(schema.users).values([

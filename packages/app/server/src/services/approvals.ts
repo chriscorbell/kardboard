@@ -97,6 +97,19 @@ export function pullRequestMismatch(pr: Pick<PullRequest, "number" | "headRef" |
   return null;
 }
 
+/**
+ * Why kardboard may not merge this pull request into the branch it targets now, or null when it
+ * may. An Approval binds the head a Member reviewed, not the branch it merges into, and a Session's
+ * token can retarget a pull request. The merge App bypasses the ruleset, so without this an
+ * Approval would merge the reviewed head into whatever branch the Session last pointed it at. A
+ * Session's work goes to the default branch, and that is the only branch kardboard merges into.
+ */
+export function baseMismatch(pr: Pick<PullRequest, "number" | "baseRef" | "defaultBranch">): string | null {
+  if (!pr.defaultBranch) return `GitHub did not say which branch is the default for pull request #${pr.number}`;
+  if (pr.baseRef !== pr.defaultBranch) return `pull request #${pr.number} merges into ${pr.baseRef || "another branch"}, not the default branch ${pr.defaultBranch}`;
+  return null;
+}
+
 function pullNumberFromUrl(url: string | undefined, repo: Repo): number | null {
   const m = url ? /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i.exec(url.trim()) : null;
   if (!m || m[1]!.toLowerCase() !== repo.owner.toLowerCase() || m[2]!.toLowerCase() !== repo.repo.toLowerCase()) return null;
@@ -145,17 +158,38 @@ function recordedDiffers(card: CardRow, pr: PullRequest): boolean {
   return pr.headSha !== card.prHeadSha || pr.number !== card.prNumber || pr.url !== card.prUrl || (pr.baseRef || null) !== card.prBaseRef;
 }
 
+// A pull request's address exactly as GitHub writes it.
+const PULL_URL = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/;
+
+/**
+ * A report recorded without asking GitHub. The Card still shows its URL as a link Members follow,
+ * so it has to be a pull request on github.com, in the Board's repository when the Board has one,
+ * and the number recorded beside it is the one in the URL.
+ */
+function asGiven(reported: { number?: number; url?: string }, repo: Repo | null): { prNumber?: number; prUrl?: string } {
+  if (reported.url === undefined) return { prNumber: reported.number };
+  const m = PULL_URL.exec(reported.url);
+  const where = repo ? `${repo.owner}/${repo.repo}` : null;
+  if (!m || (repo && (m[1]!.toLowerCase() !== repo.owner.toLowerCase() || m[2]!.toLowerCase() !== repo.repo.toLowerCase()))) {
+    throw new ApprovalError(`pr_url must be a pull request in ${where ?? "a repository on github.com"}, such as https://github.com/${where ?? "owner/repo"}/pull/12`);
+  }
+  const number = Number(m[3]);
+  if (reported.number !== undefined && reported.number !== number) throw new ApprovalError(`pr_number ${reported.number} and pr_url name different pull requests`);
+  return { prNumber: number, prUrl: reported.url };
+}
+
 /**
  * A Session reporting its Card's pull request. With the merge App configured the report is checked
  * on GitHub before it is recorded, and the URL and head come from GitHub rather than from the
- * Session. Without it nothing can merge, so the report is recorded as given.
+ * Session. Without it nothing can merge, so the report is recorded as given, once its URL passes
+ * `asGiven`.
  */
 export async function linkPullRequest(cardId: string, reported: { number?: number; url?: string }): Promise<Card> {
   const card = await getCard(cardId);
   if (!card) throw new Error("card not found");
   const board = (await getBoardById(card.boardId))!;
   const repo = parseRepoUrl(board.repoUrl);
-  if (!repo || !githubConfigured("merge")) return setCardWorkState(cardId, { prNumber: reported.number, prUrl: reported.url });
+  if (!repo || !githubConfigured("merge")) return setCardWorkState(cardId, asGiven(reported, repo));
   const number = reported.number ?? pullNumberFromUrl(reported.url, repo);
   if (!number) throw new ApprovalError(`pass pr_number, or a pr_url of a pull request in ${repo.owner}/${repo.repo}`);
   const pr = await getPullRequest(repo.owner, repo.repo, number);
@@ -182,8 +216,13 @@ export async function refreshPullRequestHead(cardId: string): Promise<string | n
   const wrong = pullRequestMismatch(pr, repo, card.branch);
   if (wrong) return `${wrong}, so a member cannot approve it`;
   if (recordedDiffers(card, pr)) await recordPullRequest(cardId, pr);
+  const base = baseMismatch(pr);
+  if (base) return `${base}, so a member cannot approve it: point it at the default branch with gh pr edit --base`;
   return null;
 }
+
+/** GitHub's answer to a merge, or kardboard's refusal to ask for one into a branch other than the default. */
+type MergeAttempt = MergeOutcome | { ok: false; reason: "wrong_base"; message: string };
 
 /**
  * What a merge attempt means for the Approval it was made on: whether the Approval survives, what
@@ -197,8 +236,14 @@ export type MergeFollowUp =
   | { kind: "invalidated"; comment: string; rerun: true; reason: string }
   | { kind: "refused"; comment: string; error: string };
 
-export function followUpFor(outcome: MergeOutcome, prNumber: number, mention: string): MergeFollowUp {
+export function followUpFor(outcome: MergeAttempt, prNumber: number, mention: string): MergeFollowUp {
   if (outcome.ok) return { kind: "merged", sha: outcome.sha };
+  if (outcome.reason === "wrong_base") {
+    // Retargeted after the Member looked. The head they approved is unchanged, so the Approval still
+    // holds for the default branch, once the pull request targets it again.
+    const why = `${outcome.message.charAt(0).toUpperCase()}${outcome.message.slice(1)}, and kardboard merges only into the default branch.`;
+    return { kind: "refused", error: why, comment: `${mention} Nothing was merged. ${why} Your approval still stands: press Try merging again on this card once the pull request targets the default branch again.`.trim() };
+  }
   if (outcome.reason === "head_changed") {
     return { kind: "invalidated", rerun: false, comment: `${mention} The branch changed after you approved, so nothing was merged. Please look at the change again and approve once more if it still looks right.`.trim() };
   }
@@ -237,7 +282,7 @@ async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: P
   const { card, approvalId, pr, repo, mention } = input;
   // Every hold was checked before this; a change made from here on is not what the merge was for.
   const mergedAt = new Date().toISOString();
-  const outcome: MergeOutcome = await mergePullRequest(repo.owner, repo.repo, pr.number, input.headSha, `${pr.title} (#${pr.number})`, pr.body).catch((err: Error) => ({
+  const outcome: MergeAttempt = await mergeIntoDefaultBranch(repo, pr, input.headSha).catch((err: Error) => ({
     ok: false as const,
     reason: "error" as const,
     message: `the merge call failed (${err.message})`,
@@ -262,6 +307,18 @@ async function mergeOnApproval(input: { card: CardRow; approvalId: string; pr: P
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor: AGENT, type: "card.merge_refused", payload: { prNumber: pr.number, error: followUp.error } });
   await createComment({ cardId: card.id, body: followUp.comment, actor: AGENT });
   publish(card.boardId, { type: "card.upserted", card: (await getCard(card.id))! });
+}
+
+// GitHub's merge takes the head it must find but not the branch it merges into, and Approve reads
+// the pull request a while before it merges, since reading the checks takes a moment. So the base
+// is read once more just before the merge, which leaves a Session one round trip, not that whole
+// while, to retarget the pull request in.
+async function mergeIntoDefaultBranch(repo: Repo, pr: PullRequest, headSha: string): Promise<MergeAttempt> {
+  const now = await getPullRequest(repo.owner, repo.repo, pr.number);
+  if (!now) return { ok: false, reason: "error", message: `pull request #${pr.number} could not be read again just before merging` };
+  const base = baseMismatch(now);
+  if (base) return { ok: false, reason: "wrong_base", message: base };
+  return mergePullRequest(repo.owner, repo.repo, pr.number, headSha, `${pr.title} (#${pr.number})`, pr.body);
 }
 
 /**
@@ -380,6 +437,9 @@ async function approveUnderLock(cardId: string, actor: Actor, reviewedSha: strin
     const wrong = pullRequestMismatch(pr, repo, card.branch);
     if (wrong) throw new ApprovalError(`This card can't be approved: ${wrong}.`);
     if (recordedDiffers(card, pr)) await recordPullRequest(card.id, pr);
+    // Checked after recording, so the Card shows the branch it targets now beside the refusal.
+    const base = baseMismatch(pr);
+    if (base) throw new ApprovalError(`This card can't be approved: ${base}, and kardboard merges only into the default branch.`, 409);
     // Commits the Member was not shown. The Card now shows the head that is there, so they can look again.
     if (reviewedSha !== pr.headSha) {
       throw new ApprovalError(
@@ -448,6 +508,8 @@ async function retryUnderLock(cardId: string, actor: Actor, overrideChecks: bool
   if (!pr || pr.state !== "open") throw new ApprovalError("No open pull request is linked to this card, so there is nothing to merge.");
   const wrong = pullRequestMismatch(pr, repo, card.branch);
   if (wrong) throw new ApprovalError(`This card can't be merged: ${wrong}.`);
+  const base = baseMismatch(pr);
+  if (base) throw new ApprovalError(`This card can't be merged: ${base}, and kardboard merges only into the default branch.`, 409);
   if (!approval.headSha || (approval.prNumber && pr.number !== approval.prNumber)) {
     await db.update(schema.approvals).set({ invalidatedAt: new Date().toISOString(), mergeError: null }).where(eq(schema.approvals.id, approval.id));
     publish(card.boardId, { type: "card.upserted", card: (await getCard(cardId))! });

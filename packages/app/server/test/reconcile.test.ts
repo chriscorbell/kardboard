@@ -255,6 +255,24 @@ describe("a pull request closed without a merge", () => {
   });
 });
 
+describe("a pull request merged into a branch other than the default", () => {
+  it("does not complete the card, and asks its creator what to do as for one closed unmerged", async () => {
+    mergedOnGitHub();
+    github.pulls.get(7)!.base = "staging";
+
+    assert.equal(await reconcileCard(CARD), "closed");
+
+    const card = (await getCard(CARD))!;
+    assert.equal(card.column, "blocked");
+    assert.equal(card.outcome, null);
+    assert.deepEqual(await events("card.merged"), []);
+    assert.deepEqual(github.requests.filter((r) => r.startsWith("DELETE")), [], "the branch is left alone");
+    const said = await comments();
+    assert.equal(said.length, 1);
+    assert.match(said[0]!, /^@ada Pull request #7 was merged on GitHub into staging, not the default branch main, so I've moved this card to Blocked/);
+  });
+});
+
 describe("new commits on the branch", () => {
   it("shows the new head in Review, voids the approval on the old one, and asks for another look", async () => {
     await db.insert(schema.approvals).values({ id: "approval-1", cardId: CARD, userId: "bea", prNumber: 7, headSha: HEAD_A, mergeError: "422 Rate limited" });

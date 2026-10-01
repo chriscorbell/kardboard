@@ -256,6 +256,38 @@ describe("get_card", () => {
   });
 });
 
+// No merge App is configured here, so a pull request is recorded as the Session gives it, which is
+// the path where nothing on GitHub vouches for the URL.
+describe("set_work_state", () => {
+  it("records a pull request in the board's repository and an https preview anywhere", async () => {
+    const { client } = await sessionOn(CARD);
+    const result = await call(client, "set_work_state", { pr_url: "https://github.com/acme/widgets/pull/12", preview_url: "https://card-own.widgets.pages.dev" });
+    assert.notEqual(result.isError, true, text(result));
+    const own = await row(CARD);
+    assert.deepEqual([own.prNumber, own.prUrl, own.previewUrl], [12, "https://github.com/acme/widgets/pull/12", "https://card-own.widgets.pages.dev"]);
+  });
+
+  it("refuses links a member should not be sent to", async () => {
+    const { client } = await sessionOn(CARD);
+    const refused: [Record<string, unknown>, RegExp][] = [
+      [{ preview_url: "http://card-own.widgets.pages.dev" }, /https/],
+      [{ preview_url: "data:text/html,<h1>Sign in</h1>" }, /https/],
+      [{ preview_url: "javascript:alert(1)" }, /https/],
+      [{ pr_url: "http://github.com/acme/widgets/pull/12" }, /github\.com/],
+      [{ pr_url: "https://github.com.example.net/acme/widgets/pull/12" }, /github\.com/],
+      [{ pr_url: "https://github.com/mallory/widgets/pull/12" }, /acme\/widgets/],
+      [{ pr_url: "https://github.com/acme/widgets/pull/12", pr_number: 13 }, /different pull requests/],
+    ];
+    for (const [args, reason] of refused) {
+      const result = await call(client, "set_work_state", args);
+      assert.equal(result.isError, true, JSON.stringify(args));
+      assert.match(text(result), reason, JSON.stringify(args));
+    }
+    const own = await row(CARD);
+    assert.deepEqual([own.prNumber, own.prUrl, own.previewUrl], [null, null, null]);
+  });
+});
+
 describe("preview_status", () => {
   async function preview(values: Partial<typeof schema.previews.$inferInsert>) {
     await db.insert(schema.previews).values({ id: "pv-1", boardId: BOARD, cardId: CARD, host: "card-own.kardboard.cc", branch: "kardboard/card-own", ...values });

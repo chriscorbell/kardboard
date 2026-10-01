@@ -47,7 +47,7 @@ Sessions are off for a new board, and the admin turns them on per board. A board
 3. The container clones the repository on a branch named after the card and starts the provider CLI with a workflow prompt and the kardboard MCP server.
 4. The Session orients, classifies the request, implements it, runs the repository's acceptance command from `AGENTS.md`, pushes, and opens a pull request.
 5. It reports with one comment and moves the card to Review. Unclear requests go to Blocked with a question instead.
-6. On Approve, kardboard squash-merges through a second GitHub App that bypasses the branch ruleset, deletes the branch, and moves the card to Done.
+6. On Approve, kardboard squash-merges into the default branch, and nowhere else, through a second GitHub App that bypasses the branch ruleset, deletes the branch, and moves the card to Done.
 
 A request too large for one pull request is split into child cards instead. Each child starts its own session as soon as it is created, the parent waits in Blocked, and it wakes by itself once every child reaches Done — told which of them were merged and which were closed without an implementation. Nothing else the agent does starts a session: a card it creates for a person to act on has no parent and waits in Ready for them.
 

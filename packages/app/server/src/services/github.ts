@@ -160,6 +160,8 @@ export interface PullRequest {
   headRepo: string | null;
   /** The branch it merges into. */
   baseRef: string;
+  /** The repository's default branch, which GitHub sends with the pull request. Null if it did not. */
+  defaultBranch: string | null;
   state: "open" | "closed";
   merged: boolean;
   /** When it was last closed, merged or not; a pull request reopened and closed again gets a new one. */
@@ -176,7 +178,7 @@ type PullJson = {
   title: string;
   body?: string | null;
   head: { sha: string; ref: string; repo?: { full_name: string } | null };
-  base?: { ref: string };
+  base?: { ref: string; repo?: { default_branch?: string } | null };
   state: "open" | "closed";
   merged?: boolean;
   merged_at?: string | null;
@@ -196,6 +198,7 @@ function toPr(p: PullJson): PullRequest {
     headRef: p.head.ref,
     headRepo: p.head.repo?.full_name ?? null,
     baseRef: p.base?.ref ?? "",
+    defaultBranch: p.base?.repo?.default_branch ?? null,
     state: p.state,
     merged: Boolean(p.merged ?? p.merged_at),
     closedAt: p.closed_at ?? null,
