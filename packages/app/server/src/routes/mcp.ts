@@ -22,6 +22,7 @@ import { linkPullRequest, refreshPullRequestHead } from "../services/approvals.j
 import { githubConfigured, parseRepoUrl } from "../services/github.js";
 import { refreshCardChecks } from "../services/checks.js";
 import { childRefusal, countChildren, MAX_CHILDREN } from "../services/children.js";
+import { takeSessionWrite } from "../services/session-writes.js";
 import { attachmentContent } from "../services/attachment-content.js";
 import { ACCESS_TOKEN_PREFIX, findAccessToken } from "../services/access-tokens.js";
 import { CardDeletionRefused, deleteCard } from "../services/card-deletion.js";
@@ -173,6 +174,7 @@ function buildServer(session: SessionRow): McpServer {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
       await assertBoardCard(id);
+      takeSessionWrite(session.id, "comment");
       const comment = await createComment({ cardId: id, body, actor, sessionId: session.id });
       return { content: [{ type: "text", text: JSON.stringify({ commentId: comment.id }) }] };
     },
@@ -190,6 +192,7 @@ function buildServer(session: SessionRow): McpServer {
       const id = card_id ?? session.cardId;
       if (!id) throw new Error("card_id required for a sweep session");
       const card = await assertBoardCard(id);
+      takeSessionWrite(session.id, "move");
       let moved;
       try {
         moved = await moveCard(id, { column, position: card.position, revision, actor });
@@ -270,6 +273,7 @@ function buildServer(session: SessionRow): McpServer {
         const refusal = childRefusal(parent, await countChildren(parent.id));
         if (refusal) throw new Error(refusal);
       }
+      takeSessionWrite(session.id, "card");
       const card = await createCard({ boardId: session.boardId, title, description, priority, column: column as (typeof COLUMNS)[number], actor, parentCardId: parent_card_id ?? null });
       return { content: [{ type: "text", text: JSON.stringify({ cardId: card.id }) }] };
     },

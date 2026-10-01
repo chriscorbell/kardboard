@@ -57,7 +57,38 @@ export function emailWanted(preference: EmailPreference, n: { kind: string; colu
   return n.kind === "card_moved" && (n.column === "blocked" || n.column === "review");
 }
 
-// One notification is one row, plus an email when the User wants that kind by email.
+// However a burst of notifications comes about, a Session talked into mentioning everyone or a
+// person tidying a Board, emailing every one would bury the reader and spend the Resend quota and
+// the sending domain's standing that invitations and every other Board rely on. So one person is
+// emailed at most this many notifications in any hour; past that the bell still records each one.
+// Invitations and the Admin's alerts are not notifications, and are neither counted nor held back.
+// Kept in memory, since one process sends every email (ADR 0004); a restart starts the counts again.
+export const NOTIFICATION_EMAILS_PER_HOUR = 20;
+const HOUR_MS = 60 * 60_000;
+const emailedAt = new Map<string, number[]>();
+const heldBackLoggedAt = new Map<string, number>();
+
+/**
+ * Whether one more notification email may go to this User now, counting it when it may. A held
+ * back email is logged once an hour per User, not once per email, so a flood does not fill the log.
+ */
+export function notificationEmailAllowed(user: Pick<User, "id" | "email">, now = Date.now()): boolean {
+  const recent = (emailedAt.get(user.id) ?? []).filter((at) => now - at < HOUR_MS);
+  if (recent.length >= NOTIFICATION_EMAILS_PER_HOUR) {
+    emailedAt.set(user.id, recent);
+    if (now - (heldBackLoggedAt.get(user.id) ?? -Infinity) >= HOUR_MS) {
+      heldBackLoggedAt.set(user.id, now);
+      console.warn(`[email] holding back notification emails to=${user.email}: ${recent.length} sent in the last hour, the most one person is sent; the bell still records every notification`);
+    }
+    return false;
+  }
+  recent.push(now);
+  emailedAt.set(user.id, recent);
+  return true;
+}
+
+// One notification is one row, plus an email when the User wants that kind by email and has not
+// had their hour's worth.
 async function notify(input: {
   userId: string;
   card: Card;
@@ -86,6 +117,7 @@ async function notify(input: {
   });
   const { emailPreference } = await getPreferences(input.userId);
   if (!emailWanted(emailPreference, { kind: input.kind, column: input.card.column })) return;
+  if (!notificationEmailAllowed(user)) return;
   await queueEmail({
     toUserId: input.userId,
     subject: input.emailSubject,

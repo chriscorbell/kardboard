@@ -20,6 +20,7 @@ process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
 const { mcp } = await import("../src/routes/mcp.js");
+const { SESSION_WRITE_LIMITS } = await import("../src/services/session-writes.js");
 
 await runMigrations();
 
@@ -272,6 +273,25 @@ describe("an agent holding an access token", () => {
       told.map((n) => [n.userId, n.cardId]),
       [["ada", "adas"]],
     );
+  });
+
+  it("is not held to a Session's caps on comments, cards, and moves, being the Admin's own agent", async () => {
+    await card("c1");
+    const client = await connect((await makeToken()).secret);
+    for (let i = 0; i <= SESSION_WRITE_LIMITS.comment; i++) {
+      const posted = await tool(client, "post_comment", { card_id: "c1", body: `Note ${i}` });
+      assert.notEqual(posted.isError, true, text(posted));
+    }
+    for (let i = 0; i <= SESSION_WRITE_LIMITS.card; i++) {
+      const made = await tool(client, "create_card", { title: `Card ${i}` });
+      assert.notEqual(made.isError, true, text(made));
+    }
+    let revision = 0;
+    for (let i = 0; i <= SESSION_WRITE_LIMITS.move; i++) {
+      const moved = await tool(client, "move_card", { card_id: "c1", column: i % 2 === 0 ? "in_progress" : "ready", revision });
+      assert.notEqual(moved.isError, true, text(moved));
+      revision = json(moved).revision as number;
+    }
   });
 });
 
