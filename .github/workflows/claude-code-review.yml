@@ -16,11 +16,10 @@ permissions: {}
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # Not for Dependabot's pull requests: the action refuses a run started by a bot and fails the
+    # check, and Dependabot's runs get none of the repository's secrets anyway. A person's push to
+    # such a branch is reviewed as usual.
+    if: github.actor != 'dependabot[bot]'
 
     runs-on: ubuntu-latest
     permissions:
