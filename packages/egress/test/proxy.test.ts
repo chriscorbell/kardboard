@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 import { after, before, describe, it } from "node:test";
 import { URL } from "node:url";
 import { UsageLimits } from "../src/limits.js";
-import { anthropicHeaders, callAllowed, createProxy, escapesRoute, ipAllowed, passThroughHeaders, upstreamPath } from "../src/proxy.js";
+import {
+  allowedCall,
+  anthropicHeaders,
+  bearerMatches,
+  callAllowed,
+  createProxy,
+  createServer,
+  escapesRoute,
+  ipAllowed,
+  MAX_CONNECTIONS,
+  passThroughHeaders,
+  upstreamPath,
+} from "../src/proxy.js";
 
 type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string };
 
@@ -336,6 +350,50 @@ describe("noticing that a provider is out of usage", () => {
     await upstream.close();
   });
 
+  it("counts only the calls that run a turn", () => {
+    assert.equal(allowedCall("claude", "POST", "/v1/messages?beta=true")?.turn, true);
+    assert.equal(allowedCall("codex", "POST", "/responses")?.turn, true);
+    assert.equal(allowedCall("codex", "POST", "/responses/compact")?.turn, true);
+    for (const [provider, method, path] of [
+      ["claude", "POST", "/v1/messages/count_tokens"],
+      ["claude", "GET", "/v1/models"],
+      ["claude", "HEAD", "/api/hello"],
+      ["codex", "GET", "/models"],
+      ["codex", "POST", "/memories/trace_summarize"],
+    ] as const) {
+      assert.ok(allowedCall(provider, method, path), `${path} is still allowed`);
+      assert.equal(allowedCall(provider, method, path)?.turn, undefined, path);
+    }
+  });
+
+  it("ignores a 429 on a call that does not run a turn, whatever window it names", async () => {
+    const reset = String(Math.floor(Date.now() / 1000) + 20 * 3600);
+    const upstream = await refusingUpstream({ "anthropic-ratelimit-unified-reset": reset });
+    const limits = new UsageLimits();
+    const proxy = await proxyServer(
+      createProxy({
+        claudeToken: "t",
+        anthropicUpstream: upstream.url,
+        codexUpstream: upstream.url,
+        codex: { headers: async () => ({ authorization: "Bearer real", accountId: null }) },
+        allowedNetworks: [],
+        limits,
+      }),
+    );
+
+    assert.equal((await fetch(`${proxy.base}/anthropic/v1/messages/count_tokens`, { method: "POST", body: "{}" })).status, 429, "the Session still sees it");
+    await fetch(`${proxy.base}/anthropic/v1/models`);
+    await fetch(`${proxy.base}/openai/models`);
+    await fetch(`${proxy.base}/openai/memories/trace_summarize`, { method: "POST", body: "{}" });
+    assert.deepEqual(limits.snapshot(), { claude: null, codex: null }, "neither Provider is parked for every Board");
+
+    await fetch(`${proxy.base}/anthropic/v1/messages`, { method: "POST", body: "{}" });
+    assert.ok(limits.snapshot().claude?.until, "a turn's refusal still is recorded, with its window");
+
+    await proxy.close();
+    await upstream.close();
+  });
+
   it("records nothing when the provider answers normally", async () => {
     const seen: Seen[] = [];
     const upstream = await upstreamServer(seen);
@@ -381,6 +439,16 @@ describe("serving the limits to the app", () => {
 
     await proxy.close();
     await upstream.close();
+  });
+
+  it("compares the token whole, and matches nothing when none is expected", () => {
+    assert.equal(bearerMatches("Bearer control-token", "control-token"), true);
+    assert.equal(bearerMatches("Bearer control-toke", "control-token"), false, "a prefix");
+    assert.equal(bearerMatches("Bearer control-token-and-more", "control-token"), false, "a longer guess");
+    assert.equal(bearerMatches("control-token", "control-token"), false, "without the scheme");
+    assert.equal(bearerMatches(undefined, "control-token"), false);
+    assert.equal(bearerMatches("Bearer ", ""), false);
+    assert.equal(bearerMatches(undefined, ""), false);
   });
 
   it("is open when no control token is configured, which is the dev case", async () => {
@@ -501,5 +569,187 @@ describe("counting the calls it refused", () => {
     assert.equal(seen.length, 0);
     await proxy.close();
     await upstream.close();
+  });
+});
+
+/** Stands in for a provider that answers however a test needs, and can be shut while a call hangs. */
+function scriptedUpstream(listener: http.RequestListener): Promise<{ url: URL; close: () => Promise<void> }> {
+  const server = http.createServer(listener);
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as { port: number };
+      const close = () =>
+        new Promise<void>((r) => {
+          server.closeAllConnections();
+          server.close(() => r());
+        });
+      resolve({ url: new URL(`http://127.0.0.1:${port}`), close });
+    });
+  });
+}
+
+type Answer = { status: number; body: string; complete: boolean };
+
+/** A POST whose body goes out in pieces with no length, as a streamed body does. */
+function postInPieces(base: string, path: string, pieces: number[]): Promise<Answer> {
+  const url = new URL(base);
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: url.hostname, port: url.port, method: "POST", path, agent: false }, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      // `close` rather than `end`, so a response that is cut short still settles, as incomplete.
+      res.on("close", () => resolve({ status: res.statusCode ?? 0, body, complete: res.complete }));
+    });
+    // Once the proxy has answered and hung up, writing on fails; by then the answer has settled this.
+    req.on("error", reject);
+    for (const size of pieces) req.write(Buffer.alloc(size, "x"));
+    req.end();
+  });
+}
+
+describe("bounding what a Session can hold", () => {
+  const config = (upstream: URL, more: Partial<Parameters<typeof createProxy>[0]> = {}) => ({
+    claudeToken: "t",
+    anthropicUpstream: upstream,
+    codexUpstream: upstream,
+    codex: null,
+    allowedNetworks: [],
+    ...more,
+  });
+
+  it("closes a connection past the limit without answering it", async () => {
+    assert.equal(createServer(config(new URL("http://127.0.0.1"))).maxConnections, MAX_CONNECTIONS);
+
+    const server = createServer(config(new URL("http://127.0.0.1"), { maxConnections: 1 }));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as { port: number };
+
+    const first = net.connect(port, "127.0.0.1");
+    const [held] = (await once(server, "connection")) as [net.Socket];
+    const second = net.connect(port, "127.0.0.1");
+    second.on("error", () => {});
+    let answered = "";
+    second.on("data", (c) => (answered += c));
+    second.write("GET /healthz HTTP/1.1\r\nHost: egress\r\n\r\n");
+    await once(second, "close");
+    assert.equal(answered, "");
+
+    first.destroy();
+    await once(held, "close");
+    assert.equal((await fetch(`http://127.0.0.1:${port}/healthz`)).status, 200, "and serves again once there is room");
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  });
+
+  it("refuses a body that says it is too large before reading it or calling upstream", async () => {
+    let calls = 0;
+    const upstream = await scriptedUpstream((req, res) => {
+      calls++;
+      req.resume();
+      res.end();
+    });
+    const proxy = await proxyServer(createProxy(config(upstream.url, { maxBodyBytes: 1024 })));
+    const { hostname, port } = new URL(proxy.base);
+    // Only the headers go out, so an answer that waited for the body would never come.
+    const status = await new Promise<number>((resolve) => {
+      const req = http.request({ hostname, port, method: "POST", path: "/anthropic/v1/messages", headers: { "content-length": "2048" }, agent: false }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on("error", () => {});
+      req.flushHeaders();
+      setTimeout(() => {
+        req.destroy();
+        resolve(0);
+      }, 2_000).unref();
+    });
+    await proxy.close();
+    await upstream.close();
+    assert.equal(status, 413);
+    assert.equal(calls, 0);
+  });
+
+  it("refuses a streamed body as it passes the limit, and forwards one within it", async () => {
+    const seen: Seen[] = [];
+    const upstream = await upstreamServer(seen);
+    const proxy = await proxyServer(createProxy(config(upstream.url, { maxBodyBytes: 1024 })));
+
+    const over = await postInPieces(proxy.base, "/anthropic/v1/messages", [512, 1024]);
+    assert.equal(over.status, 413);
+    assert.deepEqual(JSON.parse(over.body), { error: "request_too_large" });
+    assert.equal(seen.length, 0, "the provider never received a whole request");
+
+    const within = await postInPieces(proxy.base, "/anthropic/v1/messages", [512, 512]);
+    assert.equal(within.status, 200);
+    assert.equal(seen.at(-1)?.body.length, 1024);
+    await proxy.close();
+    await upstream.close();
+  });
+
+  it("cuts a provider call that goes quiet, before or during its answer", async () => {
+    const upstream = await scriptedUpstream((req, res) => {
+      req.resume();
+      if (req.url!.endsWith("silent")) return;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("event: ping\n\n");
+    });
+    const proxy = await proxyServer(createProxy(config(upstream.url, { upstreamIdleMs: 100 })));
+    const started = Date.now();
+
+    const silent = await fetch(`${proxy.base}/anthropic/v1/messages?silent`, { method: "POST", body: "{}" });
+    assert.equal(silent.status, 504);
+    assert.deepEqual(await silent.json(), { error: "upstream_timeout" });
+
+    const stalled = await postInPieces(proxy.base, "/anthropic/v1/messages?stalls", [2]);
+    assert.equal(stalled.status, 200);
+    assert.equal(stalled.body, "event: ping\n\n");
+    assert.equal(stalled.complete, false, "the Session sees its stream cut, not a clean end");
+    const elapsed = Date.now() - started;
+    await proxy.close();
+    await upstream.close();
+    // Node's default agent fires a socket timeout of its own after five seconds; this one must be ours.
+    assert.ok(elapsed < 2_000, `cut after the configured idle time, not ${elapsed} ms`);
+  });
+
+  it("lets a long streamed turn through for as long as the provider keeps talking", async () => {
+    const upstream = await scriptedUpstream((req, res) => {
+      req.resume();
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      let sent = 0;
+      const timer = setInterval(() => {
+        res.write(`data: ${sent}\n\n`);
+        if (++sent === 10) {
+          clearInterval(timer);
+          res.end();
+        }
+      }, 30);
+    });
+    const proxy = await proxyServer(createProxy(config(upstream.url, { upstreamIdleMs: 200 })));
+    const res = await fetch(`${proxy.base}/anthropic/v1/messages`, { method: "POST", body: "{}" });
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), Array.from({ length: 10 }, (_, i) => `data: ${i}\n\n`).join(""), "longer than the idle limit, but never idle");
+    await proxy.close();
+    await upstream.close();
+  });
+
+  it("hangs up on the provider when the Session does", async () => {
+    let providerHungUp!: (value: boolean) => void;
+    const hungUp = new Promise<boolean>((r) => (providerHungUp = r));
+    const upstream = await scriptedUpstream((req, res) => {
+      req.resume();
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 0\n\n");
+      res.on("close", () => providerHungUp(true));
+    });
+    const proxy = await proxyServer(createProxy(config(upstream.url)));
+    const session = new AbortController();
+    const res = await fetch(`${proxy.base}/anthropic/v1/messages`, { method: "POST", body: "{}", signal: session.signal });
+    assert.equal(res.status, 200);
+    session.abort();
+    setTimeout(() => providerHungUp(false), 2_000).unref();
+    const hungUpInTime = await hungUp;
+    await proxy.close();
+    await upstream.close();
+    assert.equal(hungUpInTime, true, "the provider's connection outlived the Session's");
   });
 });

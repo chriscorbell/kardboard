@@ -1,5 +1,7 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
+import { Transform } from "node:stream";
 import { URL } from "node:url";
 import type { CodexCredential } from "./codex-credential.js";
 import { isAuthFailure, isUsageLimit, UsageLimits, type Provider } from "./limits.js";
@@ -17,7 +19,23 @@ export type ProxyConfig = {
   limits?: UsageLimits;
   /** Guards `/limits`. Session containers reach this proxy too and have no reason to read it. */
   controlToken?: string;
+  /** Stand-ins for the bounds below, which only a test sets. */
+  maxConnections?: number;
+  maxBodyBytes?: number;
+  upstreamIdleMs?: number;
 };
+
+// Session containers are treated as hostile, so nothing they send may hold this process, or the
+// provider connections it opens with the Admin's credential, without limit.
+//
+// At most four Sessions run at once, each with its subagents and a few calls in flight, so a few
+// hundred connections is far more than they need.
+export const MAX_CONNECTIONS = 256;
+// A Claude request can carry a 1M-token context and images, which comes to tens of megabytes.
+export const MAX_BODY_BYTES = 64 * 1024 * 1024;
+// A streamed turn can run for many minutes, but bytes keep arriving while it does. Ten minutes
+// without one either way is a provider that has gone away.
+export const UPSTREAM_IDLE_MS = 10 * 60_000;
 
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "host", "content-length"]);
 
@@ -57,6 +75,18 @@ export function anthropicHeaders(incoming: http.IncomingHttpHeaders, upstream: U
   return headers;
 }
 
+export type AllowedCall = {
+  method: string;
+  path: RegExp;
+  /**
+   * Runs a turn. Only the answer to one of these says anything about the subscription: a model lookup
+   * or a token count the provider declines or throttles for its own reasons is neither a rejected
+   * sign-in nor a spent usage window, and every Session makes a turn call within seconds of starting,
+   * so nothing real is missed by looking only here.
+   */
+  turn?: true;
+};
+
 /**
  * The calls a Session may make on each route, by method and path after the route prefix. The token
  * attached here is the Admin's own subscription, which also reads and changes the account behind it:
@@ -67,15 +97,15 @@ export function anthropicHeaders(incoming: http.IncomingHttpHeaders, upstream: U
  * `models`, and `memories/trace_summarize` under its base URL. A refusal is logged with its path, so
  * a new call after a CLI upgrade shows up in the egress log rather than as a mystery.
  */
-export const ALLOWED_CALLS: Record<Provider, { method: string; path: RegExp }[]> = {
+export const ALLOWED_CALLS: Record<Provider, AllowedCall[]> = {
   claude: [
-    { method: "POST", path: /^\/v1\/messages$/ },
+    { method: "POST", path: /^\/v1\/messages$/, turn: true },
     { method: "POST", path: /^\/v1\/messages\/count_tokens$/ },
     { method: "GET", path: /^\/v1\/models(\/[A-Za-z0-9._-]+)?$/ },
     { method: "HEAD", path: /^\/api\/hello$/ },
   ],
   codex: [
-    { method: "POST", path: /^\/responses(\/compact)?$/ },
+    { method: "POST", path: /^\/responses(\/compact)?$/, turn: true },
     { method: "GET", path: /^\/models$/ },
     { method: "POST", path: /^\/memories\/trace_summarize$/ },
   ],
@@ -90,21 +120,49 @@ export function escapesRoute(path: string): boolean {
   return /%2e|%2f|%5c|\\/i.test(path) || path.split("/").some((segment) => segment === "." || segment === "..");
 }
 
-export function callAllowed(provider: Provider, method: string | undefined, targetPath: string): boolean {
+/** The entry on the allowlist that a call matches, or undefined when a Session may not make it. */
+export function allowedCall(provider: Provider, method: string | undefined, targetPath: string): AllowedCall | undefined {
   const path = targetPath.split("?")[0]!;
-  if (escapesRoute(path)) return false;
-  return ALLOWED_CALLS[provider].some((call) => call.method === method && call.path.test(path));
+  if (escapesRoute(path)) return undefined;
+  return ALLOWED_CALLS[provider].find((call) => call.method === method && call.path.test(path));
+}
+
+export function callAllowed(provider: Provider, method: string | undefined, targetPath: string): boolean {
+  return allowedCall(provider, method, targetPath) !== undefined;
 }
 
 /**
- * The calls that run a turn. Only their answer says anything about the credential: a model lookup or
- * a token count the provider declines for its own reasons is not a rejected sign-in, and every
- * Session makes a turn call within seconds of starting, so nothing real is missed by looking only here.
+ * Whether a request carries the control token. Both sides are hashed first so the comparison takes
+ * the same time however much of a guess is right, and so their lengths always match, as
+ * `timingSafeEqual` needs. An empty expected token matches nothing.
  */
-export function isTurnCall(provider: Provider, method: string | undefined, targetPath: string): boolean {
-  const path = targetPath.split("?")[0]!;
-  if (method !== "POST") return false;
-  return provider === "claude" ? path === "/v1/messages" : /^\/responses(\/compact)?$/.test(path);
+export function bearerMatches(authorization: string | undefined, token: string): boolean {
+  if (!token) return false;
+  const digest = (value: string) => createHash("sha256").update(value).digest();
+  return timingSafeEqual(digest(authorization ?? ""), digest(`Bearer ${token}`));
+}
+
+/** Passes a request body on until it grows past `maxBytes`, then fails rather than pass on more. */
+function capped(maxBytes: number): Transform {
+  let seen = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, done) {
+      seen += chunk.length;
+      if (seen > maxBytes) done(new Error(`request body over ${maxBytes} bytes`));
+      else done(null, chunk);
+    },
+  });
+}
+
+/**
+ * The proxy as a server, with its connection limit. Past the limit Node closes a new connection as
+ * soon as it is accepted, which bounds what a Session opening connections without end costs this
+ * process, though not what it costs the other Sessions until it is stopped.
+ */
+export function createServer(config: ProxyConfig): http.Server {
+  const server = http.createServer(createProxy(config));
+  server.maxConnections = config.maxConnections ?? MAX_CONNECTIONS;
+  return server;
 }
 
 /** Join the upstream's own base path with the path left after the route prefix is removed. */
@@ -114,12 +172,24 @@ export function upstreamPath(upstream: URL, targetPath: string): string {
 
 export function createProxy(config: ProxyConfig): http.RequestListener {
   const limits = config.limits ?? new UsageLimits();
+  const maxBodyBytes = config.maxBodyBytes ?? MAX_BODY_BYTES;
+  const upstreamIdleMs = config.upstreamIdleMs ?? UPSTREAM_IDLE_MS;
   const credentials = () => ({ claude: config.claudeToken !== "", codex: config.codex !== null });
   // A test points an upstream at a local http server; production upstreams are https.
   const request = (options: https.RequestOptions, cb: (res: http.IncomingMessage) => void) =>
     options.protocol === "http:" ? http.request(options, cb) : https.request(options, cb);
 
-  function forward(req: http.IncomingMessage, res: http.ServerResponse, provider: Provider, upstream: URL, targetPath: string, headers: Record<string, string>) {
+  // The connection is closed after the answer, so the rest of an oversized body is never read.
+  function tooLarge(res: http.ServerResponse) {
+    console.warn(`[egress] refused a request body over ${maxBodyBytes} bytes`);
+    if (res.headersSent) return void res.destroy();
+    res.writeHead(413, { "content-type": "application/json", connection: "close" });
+    res.end(JSON.stringify({ error: "request_too_large" }));
+  }
+
+  function forward(req: http.IncomingMessage, res: http.ServerResponse, provider: Provider, turn: boolean, upstream: URL, targetPath: string, headers: Record<string, string>) {
+    // A body that says up front it is too large is refused before anything goes upstream.
+    if (Number(req.headers["content-length"] ?? 0) > maxBodyBytes) return tooLarge(res);
     const proxied = request(
       {
         protocol: upstream.protocol,
@@ -128,19 +198,22 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
         path: upstreamPath(upstream, targetPath),
         method: req.method,
         headers,
+        timeout: upstreamIdleMs,
       },
       (up) => {
-        // The refusal still reaches the Session, which may retry through it; the app only acts on
-        // one when the Session went on to fail. Recording it costs nothing either way.
-        if (isUsageLimit(up.statusCode)) {
-          const limit = limits.note(provider, up.headers);
-          console.warn(`[egress] ${provider} refused a request for want of usage; window reopens ${limit.until ?? "at an unstated time"}`);
-        }
-        // A rejected credential fails every Session on this Provider until the Admin replaces it,
-        // and nothing but this proxy sees the provider's answer, so it is kept for the app.
-        if (isTurnCall(provider, req.method, targetPath)) {
+        // Only a turn's answer speaks for the subscription (see `AllowedCall`). A recorded refusal
+        // stops the app starting Sessions on this Provider, on every Board, until the window it
+        // names reopens, so a throttled token count or model lookup, which a Session can make as
+        // often as it likes, must not be taken for one.
+        if (turn) {
           const status = up.statusCode ?? 0;
-          if (isAuthFailure(status)) {
+          if (isUsageLimit(status)) {
+            // The refusal still reaches the Session, which may retry through it.
+            const limit = limits.note(provider, up.headers);
+            console.warn(`[egress] ${provider} refused a request for want of usage; window reopens ${limit.until ?? "at an unstated time"}`);
+          } else if (isAuthFailure(status)) {
+            // A rejected credential fails every Session on this Provider until the Admin replaces
+            // it, and nothing but this proxy sees the provider's answer, so it is kept for the app.
             limits.noteAuthFailure(provider, status, `${req.method} ${targetPath.split("?")[0]} answered ${status}`);
             console.warn(`[egress] ${provider} rejected the credential with ${status}`);
           } else if (status >= 200 && status < 300) {
@@ -153,12 +226,37 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
         up.pipe(res);
       },
     );
+    // The idle timer counts bytes either way, so a long turn that streams keeps it from firing.
+    proxied.on("timeout", () => {
+      console.error(`[egress] ${provider} sent nothing for ${upstreamIdleMs / 1000} seconds; cutting the call`);
+      if (!res.headersSent) {
+        res.writeHead(504, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "upstream_timeout" }));
+      } else {
+        res.destroy();
+      }
+      proxied.destroy();
+    });
     proxied.on("error", (err: Error) => {
+      // Ending the call raised this: a refusal or a timeout has already answered, or the Session left.
+      if (res.writableEnded || res.destroyed) return;
       console.error("[egress] upstream error", err.message);
-      if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" });
+      // Once a response has begun, cutting it is the only way left to tell the Session it failed.
+      if (res.headersSent) return void res.destroy();
+      res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "upstream_unreachable" }));
     });
-    req.pipe(proxied);
+    // A Session that hangs up mid-call leaves the provider's answer nowhere to go.
+    res.on("close", () => {
+      if (!res.writableFinished) proxied.destroy();
+    });
+    // A body sent without a length, or with a false one, is counted as it streams through.
+    const body = capped(maxBodyBytes);
+    body.on("error", () => {
+      tooLarge(res);
+      proxied.destroy();
+    });
+    req.pipe(body).pipe(proxied);
   }
 
   function refuse(req: http.IncomingMessage, res: http.ServerResponse, provider: Provider, targetPath: string) {
@@ -191,7 +289,7 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
     // loaded and whether the provider last rejected it.
     if (req.url === "/limits") {
       req.resume();
-      if (config.controlToken && (req.headers["authorization"] ?? "") !== `Bearer ${config.controlToken}`) {
+      if (config.controlToken && !bearerMatches(req.headers["authorization"], config.controlToken)) {
         res.writeHead(401, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "unauthorized" }));
         return;
@@ -203,14 +301,16 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
 
     if (req.url?.startsWith("/anthropic/")) {
       const targetPath = req.url.slice("/anthropic".length);
-      if (!callAllowed("claude", req.method, targetPath)) return refuse(req, res, "claude", targetPath);
-      forward(req, res, "claude", config.anthropicUpstream, targetPath, anthropicHeaders(req.headers, config.anthropicUpstream, config.claudeToken));
+      const call = allowedCall("claude", req.method, targetPath);
+      if (!call) return refuse(req, res, "claude", targetPath);
+      forward(req, res, "claude", call.turn === true, config.anthropicUpstream, targetPath, anthropicHeaders(req.headers, config.anthropicUpstream, config.claudeToken));
       return;
     }
 
     if (req.url?.startsWith("/openai/")) {
       const targetPath = req.url.slice("/openai".length);
-      if (!callAllowed("codex", req.method, targetPath)) return refuse(req, res, "codex", targetPath);
+      const call = allowedCall("codex", req.method, targetPath);
+      if (!call) return refuse(req, res, "codex", targetPath);
       const codex = config.codex;
       if (!codex) {
         res.writeHead(503, { "content-type": "application/json" });
@@ -227,7 +327,7 @@ export function createProxy(config: ProxyConfig): http.RequestListener {
           ({ authorization, accountId }) => {
             headers["authorization"] = authorization;
             if (accountId) headers["chatgpt-account-id"] = accountId;
-            forward(req, res, "codex", config.codexUpstream, targetPath, headers);
+            forward(req, res, "codex", call.turn === true, config.codexUpstream, targetPath, headers);
           },
           (err: Error) => {
             // The message can carry a fragment of the token endpoint's answer, so only its status
