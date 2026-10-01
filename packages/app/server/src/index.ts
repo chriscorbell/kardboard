@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "./env.js";
+import { appShell, securityHeaders } from "./headers.js";
 import { client, runMigrations } from "./db/index.js";
 import { api } from "./routes/api.js";
 import { mcp } from "./routes/mcp.js";
@@ -24,6 +25,9 @@ import { ensureSeed } from "./seed.js";
 startLogFile(env.logDir, env.logKeepDays);
 
 const app = new Hono();
+// First, so every response carries them, the health check and redirects included. An authenticated
+// MCP call is the one exception: its transport writes to the socket itself, and only agents read it.
+app.use("*", securityHeaders({ production: env.isProduction, publicUrl: env.publicUrl }));
 // Registered ahead of the request logger, so the container's health check, which calls it every 30
 // seconds, does not fill the log.
 //
@@ -67,16 +71,14 @@ app.route("/mcp", mcp);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.resolve(here, "../client");
 if (fs.existsSync(path.join(clientDir, "index.html"))) {
-  // Runtime config is injected into the page so one image serves every environment.
-  const runtimeConfig = JSON.stringify({ clerkPublishableKey: env.authMode === "clerk" ? env.clerkPublishableKey : "" });
-  const indexHtml = fs
-    .readFileSync(path.join(clientDir, "index.html"), "utf8")
-    .replace("<!--kardboard-config-->", `<script>window.__KARDBOARD_CONFIG__=${runtimeConfig}</script>`);
+  const shell = appShell(fs.readFileSync(path.join(clientDir, "index.html"), "utf8"), {
+    clerkPublishableKey: env.authMode === "clerk" ? env.clerkPublishableKey : "",
+  });
   app.use("/assets/*", serveStatic({ root: path.relative(process.cwd(), clientDir) }));
   app.use("/brand/*", serveStatic({ root: path.relative(process.cwd(), clientDir) }));
   app.get("*", async (c) => {
     if (c.req.path.startsWith("/api") || c.req.path.startsWith("/mcp")) return c.notFound();
-    return c.html(indexHtml);
+    return shell(c);
   });
 }
 

@@ -5,11 +5,14 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 // In production the server injects the key at request time; in dev Vite reads it from packages/app/.env.
 declare global {
   interface Window {
-    __KARDBOARD_CONFIG__?: { clerkPublishableKey?: string };
+    __KARDBOARD_CONFIG__?: { clerkPublishableKey?: string; nonce?: string };
   }
 }
 export const clerkPublishableKey: string | undefined =
   (window.__KARDBOARD_CONFIG__?.clerkPublishableKey ?? (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined)) || undefined;
+// This page's script nonce, which the server puts on the page's own scripts and Clerk puts on the ones
+// it loads. Vite's dev server sends no script policy, so in dev there is none.
+export const scriptNonce: string | undefined = window.__KARDBOARD_CONFIG__?.nonce || undefined;
 
 type AuthValue = {
   mode: "dev" | "clerk";

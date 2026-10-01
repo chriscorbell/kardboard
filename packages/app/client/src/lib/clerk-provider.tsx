@@ -2,7 +2,7 @@ import { ClerkProvider, SignIn, useAuth as useClerkAuth, useClerk, useUser } fro
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { keys, request } from "./api";
-import { ClerkBridge, clerkPublishableKey } from "./auth";
+import { ClerkBridge, clerkPublishableKey, scriptNonce } from "./auth";
 import { setTokenProvider } from "./api";
 
 function Bridge({ children }: { children: ReactNode }) {
@@ -53,6 +53,7 @@ export default function ClerkAuthProvider({ children }: { children: ReactNode })
   return (
     <ClerkProvider
       publishableKey={clerkPublishableKey!}
+      nonce={scriptNonce}
       appearance={{
         variables: {
           colorBackground: "#191816",
