@@ -1,6 +1,10 @@
 # The workflows pin every action to a commit, so a moved tag cannot change what runs. This keeps the
 # pins current: once a week it proposes newer ones in a single pull request, naming each release in
-# the comment beside its pin. npm packages are left out until Dependabot's pnpm 11 support settles.
+# the comment beside its pin. A new major version changes what an action does and is a decision to
+# make on purpose, so only minor and patch releases are proposed. npm packages are left out until
+# Dependabot's pnpm 11 support settles, and base images too: they are floating tags such as
+# node:24-alpine, which every image build already takes the newest patch of, so all Dependabot could
+# propose for them is a new Node or Ubuntu major.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -10,21 +14,6 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-
-  # Base images, in one weekly pull request across every Dockerfile. They are floating tags such as
-  # node:24-alpine and ubuntu:24.04, so what this proposes is a move to a newer Node major or Ubuntu
-  # release, a decision to review rather than a routine bump. The root Dockerfile is the one a runner
-  # Preview of this repository builds, kept here so it moves with the app's.
-  - package-ecosystem: docker
-    directories:
-      - /
-      - /packages/app
-      - /packages/runner
-      - /packages/egress
-      - /packages/preview-router
-      - /images/agent
-    schedule:
-      interval: weekly
-    groups:
-      base-images:
-        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
