@@ -4,11 +4,13 @@ import Docker from "dockerode";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { bearerMatches } from "./auth.js";
 import { cacheMounts } from "./cache.js";
 import { CliUpdater, clisMount } from "./clis.js";
 import { codexWiring } from "./codex.js";
+import { minAgeHoursFrom } from "./cooldown.js";
 import { pruneSupersededImages } from "./images.js";
-import { ID_PATTERN, readLogSlice } from "./logs.js";
+import { cappedLineAppender, cappedLogStream, ID_PATTERN, MAX_LOG_BYTES, readLogSlice } from "./logs.js";
 import { createSessionNetwork, prunePreviewNetworks, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
 import { buildAndRunPreview, PreviewCancelled, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
 import { resumeLogFrom, runningSessions } from "./reattach.js";
@@ -36,6 +38,8 @@ const env = {
   previewNetwork: process.env.KARDBOARD_PREVIEW_NETWORK ?? "kardboard_preview",
   logDir: process.env.KARDBOARD_LOG_DIR ?? "/data/logs",
   logRetentionDays: Number(process.env.KARDBOARD_LOG_RETENTION_DAYS ?? "14"),
+  // Each Session and Preview log stops growing here (logs.ts).
+  logMaxBytes: Number(process.env.KARDBOARD_LOG_MAX_BYTES ?? String(MAX_LOG_BYTES)),
   memoryBytes: Number(process.env.KARDBOARD_SESSION_MEMORY_BYTES ?? String(4 * 1024 * 1024 * 1024)),
   nanoCpus: Number(process.env.KARDBOARD_SESSION_NANO_CPUS ?? String(2e9)),
   pidsLimit: Number(process.env.KARDBOARD_SESSION_PIDS_LIMIT ?? "1024"),
@@ -47,10 +51,15 @@ const env = {
   // A path on the Docker host: the runner never opens it, it only names it in a bind.
   codexAuthFile: process.env.CODEX_AUTH_FILE ?? "",
   codexViaEgress: /^(1|true|yes)$/i.test(process.env.KARDBOARD_CODEX_VIA_EGRESS ?? ""),
-  // Keep the newest Claude Code and Codex in the shared volume Sessions run them from (clis.ts).
+  // Keep a recent Claude Code and Codex in the shared volume Sessions run them from (clis.ts).
   // `off` leaves Sessions on the versions built into the agent image.
   cliUpdates: (process.env.KARDBOARD_CLI_UPDATES ?? "on") !== "off",
+  // How long a release must have been npm's `latest` before Sessions run it (cooldown.ts); 0 turns
+  // the wait off.
+  cliMinAgeHours: minAgeHoursFrom(process.env.KARDBOARD_CLI_MIN_AGE_HOURS),
 };
+// Beside the log directory rather than in it, where the age-based prune would take it.
+const cliFirstSeenFile = path.join(path.dirname(env.logDir), "clis-first-seen.json");
 
 if (!env.token) {
   console.error("KARDBOARD_RUNNER_TOKEN is required");
@@ -63,7 +72,7 @@ const app = new Hono();
 
 app.use("*", async (c, next) => {
   if (c.req.path === "/healthz") return next();
-  if ((c.req.header("authorization") ?? "") !== `Bearer ${env.token}`) return c.json({ error: "unauthorized" }, 401);
+  if (!bearerMatches(c.req.header("authorization"), env.token)) return c.json({ error: "unauthorized" }, 401);
   await next();
 });
 
@@ -156,7 +165,7 @@ function watchContainer(sessionId: string, container: Docker.Container, since?: 
   if (watching.has(sessionId)) return;
   watching.add(sessionId);
   const logPath = path.join(env.logDir, `${sessionId}.log`);
-  const out = fs.createWriteStream(logPath, { flags: "a" });
+  const out = cappedLogStream(logPath, env.logMaxBytes);
   void container.logs({ follow: true, stdout: true, stderr: true, timestamps: true, ...(since ? { since } : {}) }).then((stream) => {
     container.modem.demuxStream(stream, out, out);
     stream.on("end", () => out.end());
@@ -379,7 +388,7 @@ app.post("/previews", async (c) => {
   const req: PreviewRequest = parsed.data;
   const logPath = path.join(env.logDir, `preview-${req.previewId}.log`);
   fs.writeFileSync(logPath, `[preview] accepted ${req.host}${req.buildId ? ` build ${req.buildId}` : ""} at ${new Date().toISOString()}\n`);
-  const onLog = (line: string) => fs.appendFileSync(logPath, `${line}\n`);
+  const onLog = cappedLineAppender(logPath, env.logMaxBytes);
   if (req.buildId) acceptedSinceStart?.add(req.buildId);
 
   let sha: string | null = null;
@@ -434,10 +443,10 @@ void pruneExitedSessions()
   .then((removed) => removed.length && console.log(`[runner] removed ${removed.length} orphaned session network(s)`))
   .catch((err) => console.error("[runner] prune failed", err));
 
-const cliUpdater = new CliUpdater({ docker, image: env.defaultImage, ensureImage });
+const cliUpdater = new CliUpdater({ docker, image: env.defaultImage, ensureImage, minAgeHours: env.cliMinAgeHours, firstSeenFile: cliFirstSeenFile });
 if (env.cliUpdates) cliUpdater.start();
 
-// Which CLI versions Sessions are running, and any release that was refused.
-app.get("/clis", (c) => c.json({ enabled: env.cliUpdates, tools: cliUpdater.status() }));
+// Which CLI versions Sessions are running, any release that was refused, and the next one waiting.
+app.get("/clis", (c) => c.json({ enabled: env.cliUpdates, minAgeHours: env.cliMinAgeHours, tools: cliUpdater.status() }));
 
 serve({ fetch: app.fetch, port: env.port }, (info) => console.log(`kardboard runner listening on :${info.port}`));

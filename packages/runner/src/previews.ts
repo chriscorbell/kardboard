@@ -68,6 +68,9 @@ export function previewContainerSpec(req: PreviewRequest, limits: PreviewLimits,
       "kardboard.preview.host": req.host,
     },
     HostConfig: {
+      // A branch's app may spawn children and leave them; an init as PID 1 reaps them, where the
+      // app itself would let them pile up as zombies until the pids limit refused new processes.
+      Init: true,
       Memory: limits.memoryBytes,
       NanoCpus: limits.nanoCpus,
       PidsLimit: limits.pidsLimit,

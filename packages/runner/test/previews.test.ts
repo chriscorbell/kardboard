@@ -89,6 +89,11 @@ describe("the Preview container", () => {
     assert.deepEqual(spec.HostConfig?.CapDrop, ["ALL"]);
     assert.deepEqual(spec.HostConfig?.SecurityOpt, ["no-new-privileges:true"]);
   });
+
+  it("runs an init that reaps what the branch's app leaves behind, as a Session does", () => {
+    assert.equal(spec.HostConfig?.Init, true);
+    assert.deepEqual(spec.HostConfig?.RestartPolicy, { Name: "unless-stopped" });
+  });
 });
 
 describe("the Preview build", () => {
