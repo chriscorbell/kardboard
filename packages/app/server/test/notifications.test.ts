@@ -12,7 +12,7 @@ process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_PUBLIC_URL = "https://kardboard.test";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
-const { emailWanted, listNotifications, markCardNotificationsRead, markNotificationsRead, notifyCardMoved, notifyMentions } = await import("../src/services/notifications.js");
+const { emailWanted, listNotifications, markCardNotificationsRead, markNotificationsRead, NOTIFICATION_EMAILS_PER_HOUR, notificationEmailAllowed, notifyCardMoved, notifyMentions } = await import("../src/services/notifications.js");
 const { createComment } = await import("../src/services/comments.js");
 const { getAgentProfile } = await import("../src/services/settings.js");
 
@@ -364,6 +364,41 @@ describe("email preferences", () => {
     await notifyCardMoved({ ...card, column: "done" }, "review", { kind: "agent", id: null });
 
     assert.deepEqual(await emailSubjects(creator), ['"Ship it" moved to Done']);
+  });
+});
+
+describe("how many notifications one person is emailed", () => {
+  const emailsTo = async (user: User) => (await db.select().from(schema.outboundEmails).where(eq(schema.outboundEmails.toUserId, user.id))).length;
+
+  it(`emails at most ${NOTIFICATION_EMAILS_PER_HOUR} an hour, still records every one in the bell, and says so in the log once`, async (t) => {
+    const warn = t.mock.method(console, "warn", () => undefined);
+    const flooded = await member("Ada");
+    const other = await member("Grace");
+    const card = await makeCard(BOARD, flooded, "Flooded");
+    const theirs = await makeCard(BOARD, other, "Quiet");
+
+    for (let i = 0; i < NOTIFICATION_EMAILS_PER_HOUR + 3; i++) {
+      await notifyCardMoved({ ...card, column: i % 2 === 0 ? "review" : "blocked" }, "in_progress", { kind: "agent", id: null });
+    }
+    await notifyCardMoved({ ...theirs, column: "review" }, "in_progress", { kind: "agent", id: null });
+
+    assert.equal(await emailsTo(flooded), NOTIFICATION_EMAILS_PER_HOUR);
+    assert.equal((await listNotifications(flooded)).unread, NOTIFICATION_EMAILS_PER_HOUR + 3);
+    assert.equal(await emailsTo(other), 1, "another person's emails are their own");
+    const heldBack = warn.mock.calls.filter((c) => String(c.arguments[0]).includes("holding back notification emails"));
+    assert.equal(heldBack.length, 1);
+    assert.ok(String(heldBack[0]!.arguments[0]).includes(`to=${flooded.email}`));
+  });
+
+  it("sends again as the hour's earlier emails age out of it", (t) => {
+    t.mock.method(console, "warn", () => undefined);
+    const user = { id: "rolling", email: "rolling@example.com" };
+    const start = Date.parse("2026-09-30T09:00:00Z");
+    for (let i = 0; i < NOTIFICATION_EMAILS_PER_HOUR; i++) assert.equal(notificationEmailAllowed(user, start + i * 60_000), true);
+    assert.equal(notificationEmailAllowed(user, start + 30 * 60_000), false);
+    assert.equal(notificationEmailAllowed(user, start + 60 * 60_000 - 1), false, "the first is still inside the hour");
+    assert.equal(notificationEmailAllowed(user, start + 60 * 60_000), true, "the first has aged out");
+    assert.equal(notificationEmailAllowed(user, start + 60 * 60_000), false, "and its place is taken");
   });
 });
 

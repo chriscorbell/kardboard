@@ -20,6 +20,7 @@ const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { mcp } = await import("../src/routes/mcp.js");
 const { runner } = await import("../src/services/runner-client.js");
 const { MAX_CHILDREN } = await import("../src/services/children.js");
+const { SESSION_WRITE_LIMITS } = await import("../src/services/session-writes.js");
 const { attachmentContent, INLINE_IMAGE_LIMIT, looksLikeText, sniffImage } = await import("../src/services/attachment-content.js");
 
 await runMigrations();
@@ -364,6 +365,63 @@ describe("splitting a card with create_card", () => {
     const { client } = await sessionOn(null, "sweep");
     const result = await call(client, "create_card", { title: "An Admin step" });
     assert.notEqual(result.isError, true, text(result));
+  });
+});
+
+// A Session may have been talked into flooding the Board, and through it people's inboxes. Each
+// Session's own writes are capped, and one that reaches a cap is told to finish.
+describe("what one Session may write", () => {
+  const refusal = (done: string) => new RegExp(`already ${done}, the limit for one session\\. Finish with what you have: call finish`);
+
+  it(`refuses a comment past ${SESSION_WRITE_LIMITS.comment}, and leaves another Session on the Board alone`, async () => {
+    const { client } = await sessionOn(CARD);
+    for (let i = 0; i < SESSION_WRITE_LIMITS.comment; i++) {
+      const posted = await call(client, "post_comment", { body: `Note ${i}` });
+      assert.notEqual(posted.isError, true, text(posted));
+    }
+    const refused = await call(client, "post_comment", { body: "One too many" });
+    assert.equal(refused.isError, true);
+    assert.match(text(refused), refusal(`posted ${SESSION_WRITE_LIMITS.comment} comments`));
+    assert.equal((await db.select().from(schema.comments)).length, SESSION_WRITE_LIMITS.comment);
+
+    await card("card-second", { column: "in_progress" });
+    const { client: other } = await sessionOn("card-second");
+    const theirs = await call(other, "post_comment", { body: "Still mine to post" });
+    assert.notEqual(theirs.isError, true, text(theirs));
+  });
+
+  it(`refuses a card past ${SESSION_WRITE_LIMITS.card}, and leaves another Session on the Board alone`, async () => {
+    const { client } = await sessionOn(CARD);
+    for (let i = 0; i < SESSION_WRITE_LIMITS.card; i++) {
+      const made = await call(client, "create_card", { title: `Note ${i}` });
+      assert.notEqual(made.isError, true, text(made));
+    }
+    const refused = await call(client, "create_card", { title: "One too many" });
+    assert.equal(refused.isError, true);
+    assert.match(text(refused), refusal(`created ${SESSION_WRITE_LIMITS.card} cards`));
+    assert.equal((await db.select().from(schema.cards)).length, SESSION_WRITE_LIMITS.card + 1, "the Session's own card and the ones it made");
+
+    const { client: other } = await sessionOn(null, "sweep");
+    const theirs = await call(other, "create_card", { title: "An Admin step" });
+    assert.notEqual(theirs.isError, true, text(theirs));
+  });
+
+  it(`gives a sweep the same caps, refusing a move past ${SESSION_WRITE_LIMITS.move}`, async () => {
+    const { client } = await sessionOn(null, "sweep");
+    let revision = 0;
+    for (let i = 0; i < SESSION_WRITE_LIMITS.move; i++) {
+      const moved = await call(client, "move_card", { card_id: CARD, column: i % 2 === 0 ? "ready" : "in_progress", revision });
+      assert.notEqual(moved.isError, true, text(moved));
+      revision = json(moved).revision as number;
+    }
+    const refused = await call(client, "move_card", { card_id: CARD, column: "ready", revision });
+    assert.equal(refused.isError, true);
+    assert.match(text(refused), refusal(`moved cards ${SESSION_WRITE_LIMITS.move} times`));
+    assert.equal((await row(CARD)).revision, revision);
+
+    const { client: other } = await sessionOn(CARD);
+    const theirs = await call(other, "move_card", { column: "ready", revision });
+    assert.notEqual(theirs.isError, true, text(theirs));
   });
 });
 
