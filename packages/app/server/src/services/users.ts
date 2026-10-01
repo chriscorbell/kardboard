@@ -162,9 +162,16 @@ export async function removeUser(id: string): Promise<void> {
   ]);
 }
 
+/**
+ * Which User a Clerk identity signs in as. One already linked signs in by its Clerk id alone, whatever
+ * addresses its Clerk account has since gained or lost. A first sign-in takes the row invited at
+ * `email`, which must be an address Clerk has verified, and only while no other Clerk user holds that
+ * row: otherwise whoever later verifies an address the Admin or a Member dropped from their Clerk
+ * account would sign in as them.
+ */
 export async function activateFromClerk(input: {
   clerkUserId: string;
-  email: string;
+  email: string | null;
   name: string | null;
   avatarUrl: string | null;
 }): Promise<User | null> {
@@ -185,9 +192,12 @@ export async function activateFromClerk(input: {
     }
     return toUser(byClerk);
   }
-  const invited = await findUserByEmail(input.email);
-  if (!invited || invited.status === "revoked") return null;
-  await db
+  if (!input.email) return null;
+  const invited = await db.select().from(schema.users).where(eq(schema.users.email, input.email.toLowerCase())).get();
+  if (!invited || invited.status === "revoked" || invited.clerkUserId) return null;
+  // Only while the row is still unlinked, so a second Clerk user signing in at the same moment
+  // cannot take it over between the read and the write.
+  const linked = await db
     .update(schema.users)
     .set({
       clerkUserId: input.clerkUserId,
@@ -195,6 +205,8 @@ export async function activateFromClerk(input: {
       avatarUrl: input.avatarUrl ?? invited.avatarUrl,
       name: invited.name || input.name || invited.email,
     })
-    .where(eq(schema.users.id, invited.id));
-  return getUser(invited.id);
+    .where(and(eq(schema.users.id, invited.id), isNull(schema.users.clerkUserId)))
+    .returning()
+    .get();
+  return linked ? toUser(linked) : null;
 }

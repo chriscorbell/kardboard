@@ -49,6 +49,11 @@ function Bridge({ children }: { children: ReactNode }) {
   );
 }
 
+// Clerk follows a redirect URL only to an allowed origin, and by default allows every subdomain of
+// the app's domain, which includes each Preview host running branch code. Only the app itself is
+// allowed here; old hosts redirect to it before this page loads, so its origin is the canonical one.
+const allowedRedirectOrigins = [window.location.origin];
+
 export default function ClerkAuthProvider({ children }: { children: ReactNode }) {
   return (
     <ClerkProvider
@@ -68,6 +73,7 @@ export default function ClerkAuthProvider({ children }: { children: ReactNode })
           fontFamily: "Geist Variable, ui-sans-serif, system-ui, sans-serif",
         },
       }}
+      allowedRedirectOrigins={allowedRedirectOrigins}
     >
       <Bridge>{children}</Bridge>
     </ClerkProvider>
