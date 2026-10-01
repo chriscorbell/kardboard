@@ -33,18 +33,20 @@ export function securityHeaders(input: { production: boolean; publicUrl: string 
 // Only scripts the shell itself names may run, and whatever those load: clerk-js, its UI, and the
 // Cloudflare challenge it may add are all inserted by a trusted script, which `'strict-dynamic'`
 // allows wherever they come from. `https:` is Clerk's fallback for a browser too old to know
-// `'strict-dynamic'`; one that knows it ignores host sources.
+// `'strict-dynamic'`; one that knows it ignores host sources. Anything else, an uploaded file opened
+// from a blob URL on this origin among them, runs no script. The page sets its own policy, so it
+// repeats the framing rule every other response gets from `securityHeaders`.
 //
-// Report-only for now: Clerk's production instance cannot be exercised locally, so the policy is
-// enforced once the live site has run under it without reporting a violation.
-export function scriptPolicy(nonce: string): string {
-  return `script-src 'nonce-${nonce}' 'strict-dynamic' https:; object-src 'none'; base-uri 'none'`;
+// Enforced since 2026-10-01, after the policy ran report-only on kardboard.cc with Clerk's sign-in
+// loaded, and on every signed-in page of a production build, without a single violation.
+export function shellPolicy(nonce: string): string {
+  return `script-src 'nonce-${nonce}' 'strict-dynamic' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`;
 }
 
 /**
  * The page every client route is served from. Runtime config is injected into it so one image serves
  * every environment, and each request gets a fresh nonce: on every script tag in the page, in the
- * config for the Clerk provider to put on the scripts it loads, and in the script policy.
+ * config for the Clerk provider to put on the scripts it loads, and in the page's policy.
  */
 export function appShell(template: string, config: Record<string, unknown>): (c: Context) => Response {
   return (c) => {
@@ -52,7 +54,7 @@ export function appShell(template: string, config: Record<string, unknown>): (c:
     const html = template
       .replace("<!--kardboard-config-->", `<script>window.__KARDBOARD_CONFIG__=${JSON.stringify({ ...config, nonce })}</script>`)
       .replace(/<script\b/g, `<script nonce="${nonce}"`);
-    c.header("Content-Security-Policy-Report-Only", scriptPolicy(nonce));
+    c.header("Content-Security-Policy", shellPolicy(nonce));
     return c.html(html);
   };
 }

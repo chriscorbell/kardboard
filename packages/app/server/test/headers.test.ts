@@ -50,7 +50,7 @@ function assertCommonHeaders(res: Response) {
 }
 
 function nonceOf(res: Response): string {
-  const match = /^script-src 'nonce-([A-Za-z0-9+/=]+)' 'strict-dynamic'/.exec(res.headers.get("content-security-policy-report-only") ?? "");
+  const match = /^script-src 'nonce-([A-Za-z0-9+/=]+)' 'strict-dynamic'/.exec(res.headers.get("content-security-policy") ?? "");
   assert.ok(match, "the shell names a nonce in its script policy");
   return match[1]!;
 }
@@ -60,13 +60,14 @@ describe("the app shell", () => {
     const res = await app.request("/b/board-one");
     assert.equal(res.status, 200);
     assertCommonHeaders(res);
-    assert.equal(res.headers.get("content-security-policy"), DEFAULT_POLICY);
+    assert.match(res.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'$/);
+    assert.equal(res.headers.get("content-security-policy-report-only"), null);
   });
 
   it("puts its nonce on every script tag and in the runtime config", async () => {
     const res = await app.request("/");
     const nonce = nonceOf(res);
-    assert.equal(res.headers.get("content-security-policy-report-only"), `script-src 'nonce-${nonce}' 'strict-dynamic' https:; object-src 'none'; base-uri 'none'`);
+    assert.equal(res.headers.get("content-security-policy"), `script-src 'nonce-${nonce}' 'strict-dynamic' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
     const html = await res.text();
     const scripts = html.match(/<script\b[^>]*>/g) ?? [];
     assert.equal(scripts.length, 2, "the runtime config and the client entry");
