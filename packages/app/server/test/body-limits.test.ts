@@ -77,14 +77,21 @@ describe("the MCP server", () => {
     let sent = 0;
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
-        if (sent >= 4 * MB) return controller.close();
+        // Far more than the socket buffers between client and server hold, so a stream cut early is
+        // one the client could not have finished writing.
+        if (sent >= 32 * MB) return controller.close();
         sent += chunk.length;
         controller.enqueue(chunk);
       },
     });
-    const res = await fetch(mcpUrl, { method: "POST", headers: refusedHeaders, body, duplex: "half" } as RequestInit);
-    assert.equal(res.status, 413);
-    assert.ok(sent < 4 * MB, `read ${sent} bytes before refusing`);
+    // The server answers 413 and closes while the client is still writing, so the client sees either
+    // that answer or, when the close wins the race, its own write fail. Both are the refusal.
+    const res = await fetch(mcpUrl, { method: "POST", headers: refusedHeaders, body, duplex: "half" } as RequestInit).catch((err: Error & { cause?: { code?: string } }) => {
+      if (err.cause?.code === "EPIPE" || err.cause?.code === "ECONNRESET") return null;
+      throw err;
+    });
+    if (res) assert.equal(res.status, 413);
+    assert.ok(sent < 32 * MB, `read ${sent} bytes before refusing`);
   });
 
   it("still takes the largest call a tool accepts", async () => {
