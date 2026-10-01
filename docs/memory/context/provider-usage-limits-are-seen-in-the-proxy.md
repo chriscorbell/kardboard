@@ -4,10 +4,10 @@ Read when: changing Provider fallback, touching the egress proxy's `/limits` rou
 Status: verified
 Scope: `packages/egress`, `packages/app/server/src/services/{fallback,provider-limits,orchestrator,sweep}.ts`
 Verified: 2026-09-15, by the tests in `packages/egress/test/limits.test.ts` and `packages/app/server/test/fallback.test.ts`; unobserved against a real refusal.
-Recheck when: a Provider stops going through the proxy, or a provider starts signalling exhaustion with something other than HTTP 429.
+Recheck when: a Provider stops going through the proxy, a provider starts signalling exhaustion with something other than HTTP 429, or `ALLOWED_CALLS` changes which calls are turns.
 Source: [design.md](../../design.md#providers-and-credentials), [ADR 0002](../../adr/0002-subscription-credentials-stay-in-the-egress-proxy.md)
 
-Nothing else in the stack can see a usage limit. Session containers hold no credential, so the refusal happens on the proxy's connection; the runner only sees an exit code, and the CLI's own wording for exhaustion has changed between releases (see [the Codex lesson](../lessons/codex-cli-drifts-between-releases.md)). Detect on the HTTP status: 429 and only 429, which is version-independent. Do not match on log text — this repository's own card titles contain the phrase "usage limit", so a substring rule reports a limit whenever an agent reads the board.
+Nothing else in the stack can see a usage limit. Session containers hold no credential, so the refusal happens on the proxy's connection; the runner only sees an exit code, and the CLI's own wording for exhaustion has changed between releases (see [the Codex lesson](../lessons/codex-cli-drifts-between-releases.md)). Detect on the HTTP status: 429 and only 429, which is version-independent, and since PR 74 only on a turn call (the entries marked `turn: true` in `ALLOWED_CALLS`), so a Session cannot shut a Provider for every Board by getting a token count or model lookup throttled. Do not match on log text — this repository's own card titles contain the phrase "usage limit", so a substring rule reports a limit whenever an agent reads the board.
 
 Consequences that are easy to trip over:
 

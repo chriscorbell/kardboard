@@ -4,7 +4,7 @@ Read when: finishing a card, resuming one whose pull request is already open, or
 
 Status: verified
 Scope: every kardboard board
-Verified: 2026-09-24
+Verified: 2026-09-30
 Source: pull request #2 on this repository, observed `"mergeable": "CONFLICTING"` before the merge commit `d67f5c8`; run list and `git merge-tree` checks described below, both run 2026-09-14. Applied again on 2026-09-15 for pull request #8: `main` had moved four commits during the Session and conflicted in four files, and after resolving, `gh pr view` reported `MERGEABLE` with `BLOCKED` exactly as described below.
 Recheck when: Sessions stop cloning a fresh workspace per Session, or gain a fetch of the default branch at start
 
@@ -18,7 +18,7 @@ Correction, before reporting and before promising anything about a merge:
 gh pr view <n> --json mergeable,mergeStateStatus --jq '{mergeable, mergeStateStatus}'
 ```
 
-`CONFLICTING` means resolve it now: `git fetch origin main && git merge origin/main`, resolve, re-run the acceptance command, push. `MERGEABLE` with `mergeStateStatus: BLOCKED` is the normal state for a board repository — the ruleset is waiting for the Approval, not for the Session.
+`CONFLICTING` means resolve it now: `git fetch origin main && git merge origin/main`, resolve, re-run the acceptance command, push. `MERGEABLE` with `mergeStateStatus: BLOCKED` is the normal state for a board repository — the ruleset is waiting for the Approval, not for the Session. Right after `main` moves, `mergeable` reads `UNKNOWN` for a few seconds while GitHub recomputes it; ask again rather than treating that as an answer (seen repeatedly on 2026-09-30 while merging PRs 63 to 77 in a row).
 
 Note that a Session's clone fetches only `refs/heads/main` into `origin/main`. Fetching a card's own branch, or a fresh `main`, needs an explicit `git fetch origin <branch>`.
 
