@@ -16,6 +16,15 @@
 
 name: kardboard
 
+# Docker keeps every container's output under /var/lib/docker on the root disk and, by default, lets
+# it grow without end. Each service gets a small, rotated log; the app also writes its own capped
+# daily log files under /data/logs.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   app:
     image: ghcr.io/chriscorbell/kardboard-app:latest
@@ -56,21 +65,29 @@ services:
       KARDBOARD_PREVIEW_HOST_PATTERN: ${KARDBOARD_PREVIEW_HOST_PATTERN}
       # Each verified snapshot, and every new attachment, is copied here as well: the NAS share,
       # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.
-      KARDBOARD_BACKUP_COPY_DIR: /nas/backup/minicore/kardboard
+      KARDBOARD_BACKUP_COPY_DIR: /nas/kardboard
     volumes:
       - /home/chris/docker/data/kardboard/app:/data
-      # `/nas`, the plain directory holding the host's NAS automount points, never a share itself:
-      # binding an automount point whose NAS is unreachable fails the container's start with "no such
-      # device" (tried on minicore, 2026-09-24), which would take the app down on any redeploy while
-      # the NAS is off. With `rslave`, reading `/nas/backup` inside the container mounts the share on
-      # the host when it can, and it appears here. While it cannot, the copy directory has no
+      # `/srv/kardboard-nas`, a plain directory on the host holding one automount point, `kardboard`,
+      # which /etc/fstab mounts from `backup/minicore/kardboard` on the NAS and nothing wider: the app
+      # reaches its own backup folder, not the rest of the backup share or the media share. The
+      # parent is bound rather than the automount point itself, because binding an automount point
+      # whose NAS is unreachable fails the container's start with "no such device" (tried on minicore,
+      # 2026-09-24), which would take the app down on any redeploy while the NAS is off. With
+      # `rslave`, reading `/nas/kardboard` inside the container mounts the share on the host when it
+      # can, and it appears here. While it cannot, the copy directory has no
       # `.kardboard-backup-target`, so the app copies nothing and alerts the Admin.
       - type: bind
-        source: /nas
+        source: /srv/kardboard-nas
         target: /nas
         bind:
           propagation: rslave
     networks: [control, workload]
+    # Far above what each service uses (tens of MB at rest), so only a runaway is stopped, and the
+    # host's other stacks keep their memory.
+    mem_limit: 1g
+    pids_limit: 256
+    logging: *logging
     # /healthz reads the database and answers 503 when it cannot. The runner and the egress proxy
     # are reported in its body but never fail it.
     healthcheck:
@@ -104,6 +121,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /home/chris/docker/data/kardboard/runner:/data
     networks: [control]
+    mem_limit: 1g
+    pids_limit: 256
+    logging: *logging
     # The runner's /healthz pings the Docker daemon and answers 503 when it cannot reach it.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3071/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
@@ -128,6 +148,9 @@ services:
     volumes:
       - /home/chris/docker/data/kardboard/secrets:/secrets
     networks: [control, workload]
+    mem_limit: 512m
+    pids_limit: 128
+    logging: *logging
     # Up, and which credentials are loaded, as booleans; a missing one does not fail the check.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
@@ -150,6 +173,9 @@ services:
       KARDBOARD_ROUTER_TOKEN: ${KARDBOARD_ROUTER_TOKEN:?set KARDBOARD_ROUTER_TOKEN in .env}
       KARDBOARD_PREVIEW_SECRET: ${KARDBOARD_PREVIEW_SECRET}
     networks: [control, preview]
+    mem_limit: 512m
+    pids_limit: 128
+    logging: *logging
     # Answered before any host routing, so it checks the process and nothing behind it.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3072/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

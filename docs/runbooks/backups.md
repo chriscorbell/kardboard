@@ -10,7 +10,7 @@ kardboard keeps its state in one SQLite database in WAL mode, see [ADR 0004](../
 | `uploads/<xx>/<sha256>` | Comment attachments, content-addressed and immutable |
 | `logs/app-<UTC date>.log` | The app's own console output, one file a day, kept 14 days |
 
-On minicore the app also sees the host's `/nas`, and `/nas/backup/minicore/kardboard` is where every snapshot and every attachment is copied; see [the copy off the disk](#the-copy-off-the-disk).
+On minicore the app also sees its own folder on the NAS, `backup/minicore/kardboard`, at `/nas/kardboard`, where every snapshot and every attachment is copied; see [the copy off the disk](#the-copy-off-the-disk).
 
 Copying `kardboard.db` alone is not a backup. Recent commits live in the write-ahead log until a checkpoint, so a bare copy is typically a nearly empty database: on a freshly seeded instance the main file was 4 KB against a 313 KB WAL, and the copy could not read a single table.
 
@@ -43,9 +43,9 @@ Copies run one at a time in the background, after the snapshot they copy: *Snaps
 
 A copy that fails, refuses, or does not finish within 15 minutes is reported on the Backups tab and by email. It never removes or changes a snapshot on the data disk, and the next snapshot tries again.
 
-On minicore the directory is `/nas/backup/minicore/kardboard`, on `nas`'s `backup` share, which `/etc/fstab` automounts beside Crafty's backups in `/nas/backup/minicore/crafty`. `nas` snapshots its pools daily and the `backup` machine replicates those snapshots nightly, so a copy there also outlives `nas` itself (see `~/Code/fleet/AGENTS.md`). The container runs as uid 1000, which must be able to write there.
+On minicore the directory is `backup/minicore/kardboard` on `nas`'s `backup` share, which also holds Crafty's backups and other machines'. The host sees it at `/nas/backup/minicore/kardboard` through the whole share's automount, and the app at `/nas/kardboard` through a second automount of that folder alone. `nas` snapshots its pools daily and the `backup` machine replicates those snapshots nightly, so a copy there also outlives `nas` itself (see `~/Code/fleet/AGENTS.md`). The container runs as uid 1000, which must be able to write there.
 
-The Compose file binds `/nas`, the plain directory holding the host's automount points, at `/nas` with `rslave` propagation, and the app copies to `/nas/backup/minicore/kardboard`. It does not bind the share's own mount point: on minicore on 2026-09-24, a container binding an automount point whose server was unreachable failed to start with "no such device", which would take the app down on any redeploy while the NAS is off. Binding the parent starts at once either way. Reading `/nas/backup` inside the container mounts the share on the host when the NAS answers, and `rslave` brings it into the container; while it does not, the marker is missing, so the app copies nothing and alerts the Admin. Both cases were tried with a throwaway container that day. The bind also shows the app `/nas/media`, which it never touches.
+The app does not see the rest of the NAS. Since 2026-09-30 `/etc/fstab` automounts `//10.0.0.41/backup/minicore/kardboard` alone at `/srv/kardboard-nas/kardboard`, with the same credentials file and options as the `/nas/backup` line, and the Compose file binds `/srv/kardboard-nas`, a plain directory holding only that automount point, at `/nas` with `rslave` propagation. Before, it bound the host's whole `/nas`, which let a compromised app rewrite every machine's backups and the media share. It still binds the parent, not the automount point itself: on minicore on 2026-09-24, a container binding an automount point whose server was unreachable failed to start with "no such device", which would take the app down on any redeploy while the NAS is off. Binding the parent starts at once either way. Reading `/nas/kardboard` inside the container mounts the folder on the host when the NAS answers, and `rslave` brings it into the container; while it does not, the marker is missing, so the app copies nothing and alerts the Admin.
 
 To set it up, or to check it after a change to the mount:
 
@@ -53,7 +53,12 @@ To set it up, or to check it after a change to the mount:
 ls -ld /nas/backup/minicore                    # the share answers
 mkdir -p /nas/backup/minicore/kardboard
 touch /nas/backup/minicore/kardboard/.kardboard-backup-target
-sudo -u '#1000' touch /nas/backup/minicore/kardboard/.write-test && rm /nas/backup/minicore/kardboard/.write-test
+# The fstab line, beside the /nas/backup one and with its credentials= and options:
+#   //10.0.0.41/backup/minicore/kardboard /srv/kardboard-nas/kardboard cifs credentials=…,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,iocharset=utf8,vers=3.1.1,_netdev,nofail,x-systemd.automount,x-systemd.after=network-online.target,x-systemd.mount-timeout=30s 0 0
+sudo mkdir -p /srv/kardboard-nas/kardboard
+sudo systemctl daemon-reload && sudo systemctl start 'srv-kardboard\x2dnas-kardboard.automount'
+ls -la /srv/kardboard-nas/kardboard/.kardboard-backup-target   # mounts it, and finds the marker
+sudo -u '#1000' touch /srv/kardboard-nas/kardboard/.write-test && rm /srv/kardboard-nas/kardboard/.write-test
 cd ~/docker/stacks/kardboard && docker compose up -d app
 ```
 
