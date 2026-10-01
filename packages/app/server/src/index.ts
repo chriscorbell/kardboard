@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "./env.js";
 import { appShell, securityHeaders } from "./headers.js";
+import { hasBearer } from "./secrets.js";
 import { client, runMigrations } from "./db/index.js";
 import { api } from "./routes/api.js";
 import { mcp } from "./routes/mcp.js";
@@ -36,7 +37,7 @@ app.use("*", securityHeaders({ production: env.isProduction, publicUrl: env.publ
 // never fail the check: restarting the app would not bring either of them back. The route is public
 // through the tunnel, so those details are only for a caller holding the runner token.
 app.get("/healthz", async (c) => {
-  const detail = env.runnerToken && c.req.header("authorization") === `Bearer ${env.runnerToken}` ? monitorSnapshot() : {};
+  const detail = hasBearer(c.req.header("authorization"), env.runnerToken) ? monitorSnapshot() : {};
   try {
     await Promise.race([
       client.execute("SELECT count(*) FROM sqlite_master"),

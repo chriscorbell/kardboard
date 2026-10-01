@@ -58,10 +58,23 @@ import { AccessTokenRefused, createAccessToken, listAccessTokens, revokeAccessTo
 import { CardDeletionRefused, deleteCard, mayDeleteCard } from "../services/card-deletion.js";
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+// Every other body the API reads is a JSON document, the largest a Card's or a Comment's 20,000
+// characters.
+const MAX_JSON_BYTES = 1024 * 1024;
+// How often an open event stream is pinged, which keeps a proxy from closing it as idle and is when
+// the stream checks that its User may still watch the Board.
+const EVENTS_PING_MS = Number(process.env.KARDBOARD_EVENTS_PING_MS ?? "25000");
 
 export const api = new Hono<{ Variables: AuthVariables }>();
 
 api.use("*", requireUser);
+
+// A body is read into memory, so one larger than any the API takes is refused as it streams in. An
+// Attachment upload is left out: its route has a larger limit of its own, and a limit on the whole
+// router runs first, so it would refuse every upload over 1 MB.
+const ATTACHMENT_UPLOAD = /\/comments\/[^/]+\/attachments$/;
+const jsonLimit = bodyLimit({ maxSize: MAX_JSON_BYTES, onError: (c) => c.json({ error: "request body exceeds 1 MB" }, 413) });
+api.use("*", (c, next) => (c.req.method === "POST" && ATTACHMENT_UPLOAD.test(c.req.path) ? next() : jsonLimit(c, next)));
 
 // A body that fails its schema is answered with the first thing wrong with it, in words the client
 // can show. Left to itself the validator answers with a serialised ZodError, which reaches a person
@@ -94,6 +107,14 @@ async function boardForUser(c: Parameters<typeof actorOf>[0] & { json: (b: unkno
   if (!board) return { error: c.json({ error: "not_found" }, 404) };
   if (!(await canAccessBoard(c.get("user") as never, board.id))) return { error: c.json({ error: "forbidden" }, 403) };
   return { board };
+}
+
+// Whether a User may still watch a Board whose event stream they opened: they are not revoked, which
+// a removed User always is, and the Board is still there for them to open.
+async function mayStillWatch(userId: string, boardId: string): Promise<boolean> {
+  const user = await getUser(userId);
+  if (!user || user.status === "revoked") return false;
+  return Boolean(await getBoardById(boardId)) && (await canAccessBoard(user, boardId));
 }
 
 async function meView(user: User): Promise<Me> {
@@ -142,6 +163,7 @@ api.get("/boards/:slug/events", async (c) => {
   const board = await getBoardBySlug(c.req.param("slug"));
   if (!board) return c.json({ error: "not_found" }, 404);
   if (!(await canAccessBoard(c.get("user"), board.id))) return c.json({ error: "forbidden" }, 403);
+  const userId = c.get("user").id;
   return streamSSE(c, async (stream) => {
     let id = 0;
     const unsubscribe = subscribe(board.id, (event) => {
@@ -150,7 +172,12 @@ api.get("/boards/:slug/events", async (c) => {
     stream.onAbort(unsubscribe);
     await stream.writeSSE({ event: "ready", data: "{}" });
     while (!stream.aborted) {
-      await stream.sleep(25_000);
+      await stream.sleep(EVENTS_PING_MS);
+      // Access is checked again at every ping, so a User revoked, removed, or taken off the Board
+      // stops receiving its changes within one interval rather than for as long as the tab stays
+      // open. Aborting unsubscribes and ends the response, and the client's reconnect is refused
+      // like any other request of theirs.
+      if (!(await mayStillWatch(userId, board.id))) return stream.abort();
       await stream.writeSSE({ event: "ping", data: "{}" });
     }
   });

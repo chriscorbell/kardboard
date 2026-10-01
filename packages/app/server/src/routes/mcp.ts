@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -597,7 +598,13 @@ function parsePullRequestUrl(url: string): { owner: string; repo: string; number
 
 export const mcp = new Hono<{ Bindings: { incoming: IncomingMessage; outgoing: ServerResponse } }>();
 
-mcp.all("/", async (c) => {
+// A Session reaches this route over its own network rather than through the tunnel and its upload
+// cap, and the body is parsed in memory, so it is refused as it streams in once it passes 1 MB. No
+// tool takes file bytes; the largest call, a Card's 20,000-character description, is a small
+// fraction of that.
+const requestLimit = bodyLimit({ maxSize: 1024 * 1024, onError: (c) => c.json({ error: "request body exceeds 1 MB" }, 413) });
+
+mcp.all("/", requestLimit, async (c) => {
   const header = c.req.header("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   let server: McpServer;

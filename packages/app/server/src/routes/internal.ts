@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { env } from "../env.js";
+import { hasBearer } from "../secrets.js";
 import { endSessionOnExit } from "../services/session-end.js";
 import { applyPreviewState, exchangePreviewCode, PreviewError, previewRoutes, settleBuildsInterruptedBy } from "../services/previews.js";
 
@@ -9,9 +10,9 @@ import { applyPreviewState, exchangePreviewCode, PreviewError, previewRoutes, se
 // its code exchange. Both reach the app over the control network with the shared runner token.
 export const internal = new Hono();
 
+// The tunnel makes these routes reachable from the internet, with this token their only guard.
 internal.use("*", async (c, next) => {
-  const header = c.req.header("authorization") ?? "";
-  if (!env.runnerToken || header !== `Bearer ${env.runnerToken}`) return c.json({ error: "unauthorized" }, 401);
+  if (!hasBearer(c.req.header("authorization"), env.runnerToken)) return c.json({ error: "unauthorized" }, 401);
   await next();
 });
 
