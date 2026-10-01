@@ -4,11 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-// The runner token guards the internal routes, which the tunnel makes reachable from the internet.
-// The database opens at import time, so it is pointed at a scratch directory first.
+// The runner's and the preview router's tokens guard the internal routes, which the tunnel makes
+// reachable from the internet. The database opens at import time, so it is pointed at a scratch
+// directory first.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-secrets-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_RUNNER_TOKEN = "test-runner-token";
+process.env.KARDBOARD_ROUTER_TOKEN = "test-router-token";
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const { runMigrations } = await import("../src/db/index.js");
@@ -42,14 +44,22 @@ describe("comparing a secret", () => {
 
 describe("the internal routes", () => {
   const previews = (authorization?: string) => internal.request("/previews", { headers: authorization ? { authorization } : {} });
+  const exit = (authorization: string) =>
+    internal.request("/sessions/no-such-session/exit", { method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify({ exitCode: 0 }) });
 
-  it("refuse a caller without the runner token", async () => {
+  it("refuse a caller without a token", async () => {
     assert.equal((await previews()).status, 401);
     assert.equal((await previews("Bearer wrong-token")).status, 401);
-    assert.equal((await previews("test-runner-token")).status, 401);
+    assert.equal((await previews("test-router-token")).status, 401);
   });
 
-  it("answer the runner", async () => {
-    assert.equal((await previews("Bearer test-runner-token")).status, 200);
+  it("answer the preview router on its own routes, and only there", async () => {
+    assert.equal((await previews("Bearer test-router-token")).status, 200);
+    assert.equal((await exit("Bearer test-router-token")).status, 401);
+  });
+
+  it("answer the runner on its own routes, and only there", async () => {
+    assert.equal((await exit("Bearer test-runner-token")).status, 200);
+    assert.equal((await previews("Bearer test-runner-token")).status, 401);
   });
 });

@@ -95,6 +95,7 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 | `KARDBOARD_ADMIN_EMAIL` | The first admin, created on first start. |
 | `RESEND_API_KEY`, `KARDBOARD_EMAIL_FROM` | Email delivery. Without a key, emails are logged instead of sent. |
 | `KARDBOARD_RUNNER_URL`, `KARDBOARD_RUNNER_TOKEN` | Where the runner is and the shared secret between app and runner. |
+| `KARDBOARD_ROUTER_TOKEN`, `KARDBOARD_EGRESS_TOKEN` | The preview router's secret for its two app routes, and the egress proxy's for `/limits`. Each falls back to the runner token when unset; `deploy/compose.yaml` requires both, so neither service holds the runner's. |
 | `GITHUB_SESSIONS_APP_*`, `GITHUB_MERGE_APP_*` | The two GitHub Apps. See [deploy/github-apps.md](deploy/github-apps.md). |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Held by the egress proxy only. Create it with `claude setup-token`. |
 | `KARDBOARD_BACKUP_HOUR`, `KARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |

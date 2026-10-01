@@ -52,7 +52,7 @@ export async function readEgressStatus(now = new Date()): Promise<EgressStatus> 
   if (!env.egressUrl) return unknownStatus("unconfigured", checkedAt);
   try {
     const res = await fetch(`${env.egressUrl}/limits`, {
-      headers: env.runnerToken ? { Authorization: `Bearer ${env.runnerToken}` } : {},
+      headers: env.egressToken ? { Authorization: `Bearer ${env.egressToken}` } : {},
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) {

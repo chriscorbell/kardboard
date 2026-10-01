@@ -81,6 +81,10 @@ export const env = {
   emailFrom: str("KARDBOARD_EMAIL_FROM", "Milo <milo@example.com>"),
   runnerUrl: str("KARDBOARD_RUNNER_URL"),
   runnerToken: str("KARDBOARD_RUNNER_TOKEN"),
+  // The preview router's token for its two internal routes, and the one the app shows the egress
+  // proxy for `/limits`. Each falls back to the runner token for a deployment that has not set it.
+  routerToken: str("KARDBOARD_ROUTER_TOKEN") || str("KARDBOARD_RUNNER_TOKEN"),
+  egressToken: str("KARDBOARD_EGRESS_TOKEN") || str("KARDBOARD_RUNNER_TOKEN"),
   // Only for reading which Providers are out of usage. Session traffic never passes through the app.
   egressUrl: str("KARDBOARD_EGRESS_URL").replace(/\/$/, ""),
   // Signs Preview cookies. The preview router verifies with the same secret; nothing else holds it.

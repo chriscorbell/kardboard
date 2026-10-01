@@ -14,14 +14,17 @@ const port = Number(process.env.PORT ?? "3072");
 const secret = process.env.KARDBOARD_PREVIEW_SECRET ?? "";
 const appUrl = (process.env.KARDBOARD_APP_URL ?? "http://app:3070").replace(/\/$/, "");
 const publicAppUrl = (process.env.KARDBOARD_PUBLIC_URL ?? "https://kardboard.cc").replace(/\/$/, "");
-const runnerToken = process.env.KARDBOARD_RUNNER_TOKEN ?? "";
+// The token for the app's two internal routes this router calls. It is not the runner's: this
+// process faces branch-controlled code, so it holds nothing that reaches further than those routes.
+// An older deployment that set only the runner token keeps working until it sets this.
+const appToken = process.env.KARDBOARD_ROUTER_TOKEN || process.env.KARDBOARD_RUNNER_TOKEN || "";
 const secureCookies = !/^(0|false|no)$/i.test(process.env.KARDBOARD_PREVIEW_SECURE_COOKIES ?? "1");
 
 const routes = new Map<string, Route>();
 
 async function refreshRoutes() {
   try {
-    const res = await fetch(`${appUrl}/api/internal/previews`, { headers: { Authorization: `Bearer ${runnerToken}` } });
+    const res = await fetch(`${appUrl}/api/internal/previews`, { headers: { Authorization: `Bearer ${appToken}` } });
     if (!res.ok) return;
     const list = (await res.json()) as Route[];
     routes.clear();
@@ -34,7 +37,7 @@ async function refreshRoutes() {
 async function exchange(code: string, host: string): Promise<ExchangeResult> {
   const res = await fetch(`${appUrl}/api/internal/previews/exchange`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${runnerToken}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${appToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ code, host }),
   });
   if (!res.ok) {

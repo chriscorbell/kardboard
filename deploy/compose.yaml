@@ -36,6 +36,11 @@ services:
       KARDBOARD_EMAIL_FROM: "Milo <milo@kardboard.cc>"
       KARDBOARD_RUNNER_URL: http://runner:3071
       KARDBOARD_RUNNER_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
+      # The preview router's own token for its two internal routes, and the one the app shows the
+      # egress proxy for /limits. Neither is the runner's, so neither of those services holds the key
+      # to the runner and its Docker socket.
+      KARDBOARD_ROUTER_TOKEN: ${KARDBOARD_ROUTER_TOKEN:?set KARDBOARD_ROUTER_TOKEN in .env}
+      KARDBOARD_EGRESS_TOKEN: ${KARDBOARD_EGRESS_TOKEN:?set KARDBOARD_EGRESS_TOKEN in .env}
       # Only to read which Providers are out of usage, for fallback. No Session traffic comes here.
       KARDBOARD_EGRESS_URL: http://egress:8787
       GITHUB_SESSIONS_APP_ID: ${GITHUB_SESSIONS_APP_ID}
@@ -117,8 +122,9 @@ services:
       # proxy replaces the file when it refreshes the access token and a rename needs the directory.
       CODEX_AUTH_FILE: ${KARDBOARD_CODEX_AUTH_FILE:+/secrets/codex-auth.json}
       # Guards /limits, which the app reads to decide a Provider fallback. Session containers reach
-      # this proxy too and do not hold the runner token, which is why it is reused here.
-      EGRESS_CONTROL_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
+      # this proxy too and never hold this token. It is not the runner's, so this proxy, which every
+      # Session talks to, holds nothing that reaches the runner.
+      EGRESS_CONTROL_TOKEN: ${KARDBOARD_EGRESS_TOKEN:?set KARDBOARD_EGRESS_TOKEN in .env}
     volumes:
       - /home/chris/docker/data/kardboard/secrets:/secrets
     networks: [control, workload]
@@ -139,7 +145,9 @@ services:
     environment:
       KARDBOARD_APP_URL: http://app:3070
       KARDBOARD_PUBLIC_URL: https://kardboard.cc
-      KARDBOARD_RUNNER_TOKEN: ${KARDBOARD_RUNNER_TOKEN}
+      # Reads the routing table and spends sign-in codes, and nothing else: this service faces
+      # branch-controlled code, so it never gets the runner's token.
+      KARDBOARD_ROUTER_TOKEN: ${KARDBOARD_ROUTER_TOKEN:?set KARDBOARD_ROUTER_TOKEN in .env}
       KARDBOARD_PREVIEW_SECRET: ${KARDBOARD_PREVIEW_SECRET}
     networks: [control, preview]
     # Answered before any host routing, so it checks the process and nothing behind it.
