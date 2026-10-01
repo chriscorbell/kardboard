@@ -82,6 +82,21 @@ describe("what a Preview's response may set", () => {
     assert.deepEqual(out["set-cookie"], ["ok=1"]);
     assert.equal("set-cookie" in responseHeaders({ "set-cookie": [`${COOKIE_NAME}=junk`] }), false);
   });
+
+  it("is never stored at the edge, whatever the Preview asks for", () => {
+    const out = responseHeaders({ "cdn-cache-control": "max-age=31536000", "cloudflare-cdn-cache-control": "public, max-age=31536000" });
+    assert.equal(out["cloudflare-cdn-cache-control"], "no-store");
+    assert.equal(out["cdn-cache-control"], "no-store");
+    assert.equal(responseHeaders({})["cloudflare-cdn-cache-control"], "no-store", "nor when it says nothing");
+  });
+
+  it("keeps a Preview's browser caching but makes public caching private", () => {
+    assert.equal(responseHeaders({ "cache-control": "public, max-age=31536000, immutable" })["cache-control"], "private, max-age=31536000, immutable");
+    assert.equal(responseHeaders({ "cache-control": "max-age=60,Public,private" })["cache-control"], "private, max-age=60");
+    assert.equal(responseHeaders({ "cache-control": "max-age=60" })["cache-control"], "max-age=60", "left as it was without public");
+    assert.equal(responseHeaders({ "cache-control": "no-cache" })["cache-control"], "no-cache");
+    assert.equal("cache-control" in responseHeaders({}), false, "and none is added for the browser");
+  });
 });
 
 describe("what reaches branch-controlled code", () => {
@@ -95,6 +110,25 @@ describe("what reaches branch-controlled code", () => {
     assert.equal(headers["proxy-authorization"], undefined);
     assert.equal(headers.host, "kardboard-preview-pv1:3000", "the upstream sees its own host");
     assert.equal(headers["user-agent"], "curl", "ordinary headers are left alone");
+  });
+
+  it("strips what Cloudflare says about the visitor", () => {
+    const visitor = {
+      "cf-connecting-ip": "203.0.113.7",
+      "cf-connecting-ipv6": "2001:db8::7",
+      "true-client-ip": "203.0.113.7",
+      "x-real-ip": "203.0.113.7",
+      "x-forwarded-for": "203.0.113.7",
+      "cf-ipcountry": "NZ",
+      "cf-visitor": '{"scheme":"https"}',
+      "cf-ray": "8f1e2d3c4b5a6978-AKL",
+      "cf-worker": "kardboard.cc",
+      "cdn-loop": "cloudflare",
+    };
+    const headers = forwardHeaders({ host, ...visitor, "x-forwarded-proto": "https", accept: "text/html" }, "kardboard-preview-pv1:3000");
+    for (const name of Object.keys(visitor)) assert.equal(headers[name], undefined, name);
+    assert.equal(headers["x-forwarded-proto"], "https", "the Preview still knows it was reached over HTTPS");
+    assert.equal(headers.accept, "text/html");
   });
 });
 
