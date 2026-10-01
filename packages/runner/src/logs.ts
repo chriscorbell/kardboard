@@ -83,6 +83,13 @@ export function readLogSlice(dir: string, sessionId: string, offset: number, max
 
 export const MAX_LOG_BYTES = 200 * 1024 * 1024;
 
+// Docker keeps its own copy of every container's output, under /var/lib/docker on the host's root
+// disk, and by default lets it grow without end. The runner reads a Session's output live and keeps
+// it in the capped file above, so Docker's copy is only a buffer: what a re-attach after a runner
+// restart reads back. A Preview's runtime output goes nowhere else at all, for up to the seven days
+// it lives. So every Session and Preview container gets a small, rotated Docker log.
+export const WORKLOAD_LOG_CONFIG = { Type: "json-file", Config: { "max-size": "50m", "max-file": "2" } };
+
 const sizeOf = (file: string) => fs.statSync(file, { throwIfNoEntry: false })?.size ?? 0;
 
 export function cutNotice(maxBytes: number, at = new Date()): string {

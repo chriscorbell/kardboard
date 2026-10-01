@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import type Docker from "dockerode";
+import { WORKLOAD_LOG_CONFIG } from "./logs.js";
 import { createPreviewNetwork, removePreviewNetwork } from "./networks.js";
 
 // A Preview is the branch's own Dockerfile, built and run as a container. It holds no kardboard
@@ -80,6 +81,7 @@ export function previewContainerSpec(req: PreviewRequest, limits: PreviewLimits,
       SecurityOpt: ["no-new-privileges:true"],
       CapDrop: ["ALL"],
       RestartPolicy: { Name: "unless-stopped" },
+      LogConfig: WORKLOAD_LOG_CONFIG,
     },
   };
 }

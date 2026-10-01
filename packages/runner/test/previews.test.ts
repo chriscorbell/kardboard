@@ -76,6 +76,10 @@ describe("the Preview container", () => {
     assert.ok((spec.Env ?? []).includes("PORT=3000"));
   });
 
+  it("keeps Docker's own copy of its output small, since it may run for days", () => {
+    assert.deepEqual(spec.HostConfig?.LogConfig, { Type: "json-file", Config: { "max-size": "50m", "max-file": "2" } });
+  });
+
   it("is labelled for cleanup and opted out of Watchtower", () => {
     assert.equal(spec.Labels?.["kardboard.preview"], "pv1");
     assert.equal(spec.Labels?.["kardboard.preview.host"], req.host);

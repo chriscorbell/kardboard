@@ -10,7 +10,7 @@ import { CliUpdater, clisMount } from "./clis.js";
 import { codexWiring } from "./codex.js";
 import { minAgeHoursFrom } from "./cooldown.js";
 import { pruneSupersededImages } from "./images.js";
-import { cappedLineAppender, cappedLogStream, ID_PATTERN, MAX_LOG_BYTES, readLogSlice } from "./logs.js";
+import { cappedLineAppender, cappedLogStream, ID_PATTERN, MAX_LOG_BYTES, readLogSlice, WORKLOAD_LOG_CONFIG } from "./logs.js";
 import { createSessionNetwork, prunePreviewNetworks, pruneSessionNetworks, removeSessionNetwork } from "./networks.js";
 import { buildAndRunPreview, PreviewCancelled, PreviewError, removePreview, type PreviewRequest } from "./previews.js";
 import { resumeLogFrom, runningSessions } from "./reattach.js";
@@ -274,6 +274,7 @@ app.post("/sessions", async (c) => {
         SecurityOpt: ["no-new-privileges:true"],
         CapDrop: ["ALL"],
         ReadonlyRootfs: false,
+        LogConfig: WORKLOAD_LOG_CONFIG,
       },
     });
     created = container;
