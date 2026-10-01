@@ -73,6 +73,9 @@ export const env = {
   redirectHosts: str("KARDBOARD_REDIRECT_HOSTS").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
   authMode: resolveAuthMode({ auth: str("KARDBOARD_AUTH"), production: isProduction, preview: str("KARDBOARD_PREVIEW_HOST") !== "" }),
   clerkSecretKey: str("CLERK_SECRET_KEY"),
+  // The Clerk instance's PEM public key, which lets session tokens be verified without asking Clerk.
+  // Optional. A PEM written on one line with `\n` escapes, as an env file often holds it, works too.
+  clerkJwtKey: str("CLERK_JWT_KEY").replace(/\\n/g, "\n"),
   clerkPublishableKey: str("CLERK_PUBLISHABLE_KEY") || str("VITE_CLERK_PUBLISHABLE_KEY"),
   resendApiKey: str("RESEND_API_KEY"),
   emailFrom: str("KARDBOARD_EMAIL_FROM", "Milo <milo@example.com>"),

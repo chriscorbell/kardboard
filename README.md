@@ -91,6 +91,7 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 | `KARDBOARD_PUBLIC_URL`, `KARDBOARD_REDIRECT_HOSTS` | Canonical app URL and comma-separated old hosts that redirect to it. |
 | `KARDBOARD_AUTH` | `clerk`, or `dev` for local work. Dev mode signs every request in as the seeded admin, so with `NODE_ENV=production` the app refuses to start unless this is `clerk`; the one exception is a Preview container, which the runner marks with `KARDBOARD_PREVIEW_HOST`. |
 | `CLERK_SECRET_KEY`, `VITE_CLERK_PUBLISHABLE_KEY` | Clerk credentials for `clerk` mode. |
+| `CLERK_JWT_KEY` | Optional. The JWKS Public Key (PEM) from Clerk's API keys page, on one line with `\n` escapes. With it, session tokens are verified without a call to Clerk. |
 | `KARDBOARD_ADMIN_EMAIL` | The first admin, created on first start. |
 | `RESEND_API_KEY`, `KARDBOARD_EMAIL_FROM` | Email delivery. Without a key, emails are logged instead of sent. |
 | `KARDBOARD_RUNNER_URL`, `KARDBOARD_RUNNER_TOKEN` | Where the runner is and the shared secret between app and runner. |

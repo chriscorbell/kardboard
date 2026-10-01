@@ -8,32 +8,56 @@ import { activateFromClerk, toUser } from "./services/users.js";
 export type AuthVariables = { user: User };
 export type AppContext = Context<{ Variables: AuthVariables }>;
 
-let clerk: { verifyToken: (t: string) => Promise<{ sub: string } | null>; fetchUser: (id: string) => Promise<{ email: string; name: string | null; avatarUrl: string | null }> } | null = null;
+let clerk: { verifyToken: (t: string) => Promise<{ sub: string } | null>; fetchUser: (id: string) => Promise<{ email: string | null; name: string | null; avatarUrl: string | null }> } | null = null;
 
 async function getClerk() {
   if (clerk) return clerk;
   const mod = await import("@clerk/backend");
   const client = mod.createClerkClient({ secretKey: env.clerkSecretKey, publishableKey: env.clerkPublishableKey });
   clerk = {
-    async verifyToken(token) {
-      try {
-        const payload = await mod.verifyToken(token, { secretKey: env.clerkSecretKey, authorizedParties: [env.publicUrl] });
-        return { sub: payload.sub };
-      } catch {
-        return null;
-      }
-    },
+    verifyToken: (token) => verifySessionToken(token, { jwtKey: env.clerkJwtKey, secretKey: env.clerkSecretKey }),
     async fetchUser(id) {
       const u = await client.users.getUser(id);
-      const primary = u.emailAddresses.find((e) => e.id === u.primaryEmailAddressId) ?? u.emailAddresses[0];
       return {
-        email: primary?.emailAddress ?? "",
+        email: signInEmail(u),
         name: [u.firstName, u.lastName].filter(Boolean).join(" ") || null,
         avatarUrl: u.imageUrl ?? null,
       };
     },
   };
   return clerk;
+}
+
+/**
+ * Whose session a Clerk session token is, or null when it is not one this app accepts. With the
+ * instance's PEM public key, `CLERK_JWT_KEY`, the check is networkless. Without it @clerk/backend
+ * fetches the instance's keys from Clerk, with retries, whenever a token names a key id it has not
+ * seen, so any anonymous caller can make the app call Clerk on every request.
+ *
+ * The PEM goes to `verifyJwt` rather than to `verifyToken` as `jwtKey`. They check the same claims and
+ * signature, but `verifyToken` would keep a copy of the key under every key id a token names, and the
+ * caller writes that id: each request could leave another copy behind, without limit.
+ */
+export async function verifySessionToken(token: string, keys: { jwtKey: string; secretKey: string }): Promise<{ sub: string } | null> {
+  const authorizedParties = [env.publicUrl];
+  try {
+    const payload = keys.jwtKey
+      ? await (await import("@clerk/backend/jwt")).verifyJwt(token, { key: keys.jwtKey, authorizedParties })
+      : await (await import("@clerk/backend")).verifyToken(token, { secretKey: keys.secretKey, authorizedParties });
+    return { sub: payload.sub };
+  } catch {
+    return null;
+  }
+}
+
+type ClerkEmailAddress = { id: string; emailAddress: string; verification: { status: string } | null };
+
+// The address a Clerk user's first sign-in is matched to an Invitation by: the primary address when
+// Clerk has verified it, otherwise another verified one. An unverified address says nothing about
+// who holds it, so a user with none is matched to no one.
+export function signInEmail(user: { primaryEmailAddressId: string | null; emailAddresses: ClerkEmailAddress[] }): string | null {
+  const verified = user.emailAddresses.filter((e) => e.verification?.status === "verified");
+  return (verified.find((e) => e.id === user.primaryEmailAddressId) ?? verified[0])?.emailAddress ?? null;
 }
 
 // Only which User a Clerk identity is, never the User itself: status and role are read from the

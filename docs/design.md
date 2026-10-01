@@ -6,7 +6,7 @@ kardboard is a self-hosted kanban platform for work done by coding agents. On a 
 
 The Admin is the single operator: Chris. Members are invited humans, mostly clients, each granted access to specific Boards. The Agent is one global non-human identity, named "Milo" by default and configurable by the Admin, under which every Session acts on every Board, and so does any agent the Admin runs with an Access token. Members see the Agent as a colleague on the Board: it comments, moves Cards, asks questions, and reports when work is ready.
 
-Access is invite-only. The Admin adds an email address as an Invitation; Clerk authenticates the identity; kardboard's own User table decides whether that identity is a User and which Boards it may open. An authenticated identity with no Invitation sees a "not invited" page. See [ADR 0001](adr/0001-clerk-for-identity-with-local-allowlist.md).
+Access is invite-only. The Admin adds an email address as an Invitation; Clerk authenticates the identity; kardboard's own User table decides whether that identity is a User and which Boards it may open. An authenticated identity with no Invitation sees a "not invited" page. A first sign-in is matched to its Invitation by an address Clerk has verified, the primary one when it is, and never to a User another Clerk identity already holds; from then on the User signs in by that Clerk identity alone, whatever addresses it gains or loses. See [ADR 0001](adr/0001-clerk-for-identity-with-local-allowlist.md).
 
 ## Boards and Cards
 
