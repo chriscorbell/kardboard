@@ -19,7 +19,8 @@ import { underClaimLock } from "./orchestrator.js";
 //               `implemented` included. This is also how a restart between GitHub accepting a
 //               merge and the Card reaching Done is finished (design review, finding 4). A Card
 //               that did reach Done on that merge and was reopened since is not completed again.
-//   closed      Closed without a merge: the Card goes to Blocked and its creator is asked what now.
+//   closed      Closed without a merge, or merged into a branch other than the default: the Card
+//               goes to Blocked and its creator is asked what now.
 //   new head    Someone pushed to the branch. The Card shows the new head, Approvals of the old one
 //               are void, and a Card in Review says it needs another look.
 //   interrupted An Approval still standing with no merge and no refusal is a merge that did not
@@ -81,6 +82,10 @@ async function reconcileUnderLock(cardId: string): Promise<ReconcileResult> {
       await forgetMergedPullRequest(card.id, pr.number);
       return "skipped";
     }
+    // Merged into a branch other than the default, which a Session's token can do on a branch no
+    // ruleset protects: the work has not landed where kardboard merges, so the Card is not done,
+    // and its creator is asked what now, as for a pull request closed without a merge.
+    if (pr.defaultBranch && pr.baseRef !== pr.defaultBranch) return closedWithoutMerge(card, pr);
     await completeMerge(card, {
       prNumber: pr.number,
       headRef: pr.headRef,
@@ -159,10 +164,11 @@ async function closedWithoutMerge(card: CardView, pr: PullRequest): Promise<Reco
   if (!blocked) return "unchanged";
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor: SYSTEM_ACTOR, type: "pull_request.closed", payload: { prNumber: pr.number, closedAt: pr.closedAt } });
   const creator = card.creatorKind === "user" && card.creatorId ? await handles([card.creatorId]) : [];
+  const what = pr.merged ? `was merged on GitHub into ${pr.baseRef}, not the default branch ${pr.defaultBranch}` : "was closed on GitHub without being merged";
   await createComment({
     cardId: card.id,
     actor: AGENT,
-    body: `${creator.length ? `${creator[0]} ` : ""}Pull request #${pr.number} was closed on GitHub without being merged, so I've moved this card to Blocked. Should the work go on in a new pull request, or should this card be closed?`,
+    body: `${creator.length ? `${creator[0]} ` : ""}Pull request #${pr.number} ${what}, so I've moved this card to Blocked. Should the work go on in a new pull request, or should this card be closed?`,
   });
   return "closed";
 }

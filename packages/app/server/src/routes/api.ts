@@ -125,10 +125,12 @@ api.get("/boards/:slug", async (c) => {
   const board = await getBoardBySlug(c.req.param("slug"));
   if (!board) return c.json({ error: "not_found" }, 404);
   if (!(await canAccessBoard(c.get("user"), board.id))) return c.json({ error: "forbidden" }, 403);
+  const members = await listMentionable(board.id);
   const view: BoardView = {
     board,
     cards: await listCards(board.id),
-    members: await listMentionable(board.id),
+    // See BoardMember: the emails go to the Admin alone.
+    members: c.get("user").role === "admin" ? members : members.map(({ email: _email, ...member }) => member),
     people: await listBoardPeople(board.id),
     sessions: await listBoardSessions(board.id, 20),
     agent: await getAgentProfile(),

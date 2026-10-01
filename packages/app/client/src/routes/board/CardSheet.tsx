@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, GitBranch, GitPullRequest, History, Link2, Pencil, Reply, Trash2, Upload, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Person, type Priority, type Provider, type User } from "@kardboard/shared";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardMember, type BoardView, type Card, type Column, type Comment, type Person, type Priority, type Provider } from "@kardboard/shared";
 import { useCard, useCreateComment, useDeleteCard, useDeleteComment, useMarkCardRead, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
@@ -459,7 +459,7 @@ function CommentList({
 }: {
   comments: Comment[];
   people: Map<string, Person>;
-  mentionable: User[];
+  mentionable: BoardMember[];
   agent: AgentProfile;
   handles: Map<string, string>;
   meId: string;
@@ -568,7 +568,7 @@ function CommentList({
   );
 }
 
-const NewComment = forwardRef<ComposerHandle, { cardId: string; members: User[]; known: Person[]; agent: AgentProfile; placeholder?: string; onPosted?: () => void }>(function NewComment(
+const NewComment = forwardRef<ComposerHandle, { cardId: string; members: BoardMember[]; known: Person[]; agent: AgentProfile; placeholder?: string; onPosted?: () => void }>(function NewComment(
   { cardId, members, known, agent, placeholder, onPosted },
   ref,
 ) {

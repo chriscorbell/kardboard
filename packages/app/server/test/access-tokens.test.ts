@@ -254,6 +254,11 @@ describe("an agent holding an access token", () => {
     assert.match(text(wrongRepo), /acme\/widgets/);
     const notPull = await tool(client, "link_pull_request", { card_id: "c1", pr_url: "https://github.com/acme/widgets/issues/4" });
     assert.equal(notPull.isError, true);
+    // The Card shows it as a link, so it is GitHub's own address over https and nothing like it.
+    for (const pr_url of ["http://github.com/acme/widgets/pull/4", "https://github.com.example.net/acme/widgets/pull/4"]) {
+      assert.equal((await tool(client, "link_pull_request", { card_id: "c1", pr_url })).isError, true, pr_url);
+    }
+    assert.equal((await row("c1")).prUrl, null);
 
     const linked = json(await tool(client, "link_pull_request", { card_id: "c1", pr_url: "https://github.com/Acme/Widgets/pull/4", branch: "dark-mode" }));
     assert.equal(linked.prNumber, 4);

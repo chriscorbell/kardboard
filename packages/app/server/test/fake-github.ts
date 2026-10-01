@@ -22,6 +22,7 @@ export interface FakePull {
   state: "open" | "closed";
   merged?: boolean;
   closedAt?: string | null;
+  /** The branch it merges into. Defaults to `main`, which is the repository's default branch. */
   base?: string;
   /** What GitHub says of mergeability: null while it is still computing. Defaults to true. */
   mergeable?: boolean | null;
@@ -89,7 +90,7 @@ export function installFakeGitHub(repo: string): FakeGitHub {
     title: "The change",
     body: "What it does.",
     head: { sha: p.sha, ref: p.ref, repo: p.repo ? { full_name: p.repo } : null },
-    base: { ref: p.base ?? "main" },
+    base: { ref: p.base ?? "main", repo: { full_name: repo, default_branch: "main" } },
     state: p.state,
     merged: p.merged ?? false,
     closed_at: p.closedAt ?? null,

@@ -109,6 +109,12 @@ export interface User {
  */
 export type Person = Pick<User, "id" | "handle" | "name" | "avatarUrl">;
 
+/**
+ * A User on a Board's member list. Only the Admin is sent the email: a Board can be shared by people
+ * from different clients, and a Member has no need of anyone else's address.
+ */
+export type BoardMember = Omit<User, "email"> & Partial<Pick<User, "email">>;
+
 export interface Board {
   id: string;
   slug: string;
@@ -373,7 +379,7 @@ export interface BoardView {
   board: Board;
   cards: Card[];
   /** Who can open the Board now and is not revoked: the people a Mention can reach. */
-  members: User[];
+  members: BoardMember[];
   /** Everyone who can open the Board or appears on it, former Members included. For names only. */
   people: Person[];
   sessions: SessionSummary[];

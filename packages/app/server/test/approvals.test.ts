@@ -151,6 +151,18 @@ describe("the MCP tools a Session uses", () => {
       await session.close();
     }
   });
+
+  it("move_card tells the session a member cannot approve a pull request into another branch", async () => {
+    await db.update(schema.cards).set({ column: "in_progress", prNumber: 7, prHeadSha: HEAD_A }).where(eq(schema.cards.id, CARD));
+    github.pulls.get(7)!.base = "develop";
+    const session = await sessionOn(CARD);
+    try {
+      const moved = await session.callTool({ name: "move_card", arguments: { column: "review", revision: (await getCard(CARD))!.revision } });
+      assert.match(JSON.parse(text(moved)).note, /merges into develop, not the default branch main, so a member cannot approve it/);
+    } finally {
+      await session.close();
+    }
+  });
 });
 
 describe("approving a card", () => {
@@ -181,6 +193,41 @@ describe("approving a card", () => {
     await db.update(schema.cards).set({ prNumber: 8 }).where(eq(schema.cards.id, CARD));
     await assert.rejects(approveCard(CARD, MEMBER, "d".repeat(40)), /not this card's branch/);
     assert.deepEqual(github.merges, []);
+  });
+
+  it("refuses a pull request retargeted at another branch, and shows the card where it points now", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    assert.equal((await getCard(CARD))!.prBaseRef, "main");
+    github.pulls.get(7)!.base = "release";
+
+    await assert.rejects(approveCard(CARD, MEMBER, HEAD_A), (err: unknown) => err instanceof ApprovalError && err.status === 409 && /merges into release, not the default branch main/.test(err.message));
+    assert.deepEqual(github.merges, []);
+    assert.deepEqual(await listApprovals(CARD), []);
+    assert.equal((await getCard(CARD))!.prBaseRef, "release");
+  });
+
+  it("merges nothing when the pull request is retargeted while its checks are read, and keeps the approval for a retry", async () => {
+    await linkPullRequest(CARD, { number: 7 });
+    const fake = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input instanceof Request ? input.url : input).includes("/check-runs")) github.pulls.get(7)!.base = "release";
+      return fake(input, init);
+    }) as typeof fetch;
+    let approval: Approval;
+    try {
+      approval = await approveCard(CARD, MEMBER, HEAD_A);
+    } finally {
+      globalThis.fetch = fake;
+    }
+
+    assert.deepEqual(github.merges, []);
+    assert.equal(approval.invalidatedAt, null);
+    assert.match(approval.mergeError ?? "", /^Pull request #7 merges into release, not the default branch main/);
+    assert.equal((await getCard(CARD))!.column, "review");
+
+    github.pulls.get(7)!.base = "main";
+    await retryMerge(CARD, MEMBER);
+    assert.deepEqual(github.merges, [{ number: 7, sha: HEAD_A }]);
   });
 
   it("refuses while a Session is still working on the card", async () => {
@@ -355,6 +402,15 @@ describe("retrying a merge GitHub refused", () => {
     const card = (await getCard(CARD))!;
     assert.equal(card.column, "review");
     assert.equal(card.prHeadSha, HEAD_B);
+  });
+
+  it("refuses while the pull request targets another branch, and keeps the approval", async () => {
+    const refused = await refusedApproval();
+    github.pulls.get(7)!.base = "release";
+
+    await assert.rejects(retryMerge(CARD, MEMBER), (err: unknown) => err instanceof ApprovalError && err.status === 409 && /merges into release, not the default branch main/.test(err.message));
+    assert.deepEqual(github.merges, []);
+    assert.equal(approvalAwaitingRetry(await listApprovals(CARD))?.id, refused.id);
   });
 
   it("refuses when no approval is waiting on a refused merge", async () => {

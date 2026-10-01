@@ -34,6 +34,17 @@ type SessionRow = typeof schema.sessions.$inferSelect;
 const DONE_SHOWN = 15;
 const EARLIER_SESSIONS_SHOWN = 10;
 
+// The links a Session reports go on its Card for Members to follow, so they have to be https: not a
+// `data:` or `javascript:` URL, and not a page on plain http. A pull request's has to be on GitHub
+// too, so "Pull request" on a Card never leads to a look-alike of GitHub's sign-in. A preview's host
+// is left open, since in external mode it is whatever the project's CI deploys to.
+function httpsUrl(value: string): URL | null {
+  const url = URL.canParse(value) ? new URL(value) : null;
+  return url?.protocol === "https:" ? url : null;
+}
+const previewUrlSchema = z.string().refine((v) => httpsUrl(v) !== null, "must be an https:// URL");
+const pullRequestUrlSchema = z.string().refine((v) => httpsUrl(v)?.hostname === "github.com", "must be the https://github.com/ URL of a pull request, such as https://github.com/owner/repo/pull/12");
+
 // What get_board sends, to a Session and to an agent holding an Access token alike. Done only grows,
 // and every agent reads the Board, so by default it sends the newest few. The members are who an
 // agent may Mention: never their email, which it has no use for.
@@ -285,7 +296,7 @@ function buildServer(session: SessionRow): McpServer {
     "set_work_state",
     {
       description: "Record the pull request and preview for your own card. The pull request must be the one opened from this card's branch in the board's repository; kardboard checks that on GitHub and records its current head, which is the revision a member approves. Call it again after pushing more commits.",
-      inputSchema: { pr_url: z.string().url().optional(), pr_number: z.number().int().optional(), preview_url: z.string().url().optional() },
+      inputSchema: { pr_url: pullRequestUrlSchema.optional(), pr_number: z.number().int().optional(), preview_url: previewUrlSchema.optional() },
     },
     async ({ pr_url, pr_number, preview_url }) => {
       if (session.kind !== "card" || !session.cardId) throw new Error("only card sessions can set work state");
