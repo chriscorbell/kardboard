@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:24-alpine AS base
+FROM node:26-alpine AS base
 RUN corepack enable && corepack prepare pnpm@11.25.0 --activate
 WORKDIR /repo
 
@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile --filter @kardboard/preview-router --config.c
 COPY packages/preview-router packages/preview-router
 RUN pnpm --filter @kardboard/preview-router build && pnpm install --frozen-lockfile --prod --filter @kardboard/preview-router --config.confirmModulesPurge=false && mkdir -p packages/preview-router/node_modules
 
-FROM node:24-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production PORT=3072
 WORKDIR /repo/packages/preview-router
 COPY --from=build /repo/node_modules /repo/node_modules

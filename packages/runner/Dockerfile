@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:24-alpine AS base
+FROM node:26-alpine AS base
 RUN corepack enable && corepack prepare pnpm@11.25.0 --activate
 WORKDIR /repo
 
@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile --filter @kardboard/runner --config.confirmMo
 COPY packages/runner packages/runner
 RUN pnpm --filter @kardboard/runner build && pnpm install --frozen-lockfile --prod --filter @kardboard/runner --config.confirmModulesPurge=false && mkdir -p packages/runner/node_modules
 
-FROM node:24-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production PORT=3071
 # git clones a Preview's branch; busybox tar packs it into a build context for the Docker daemon.
 RUN apk add --no-cache git
