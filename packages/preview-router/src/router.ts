@@ -1,5 +1,5 @@
 import http from "node:http";
-import { COOKIE_NAME, cookieHeader, forwardHeaders, holdingPage, readCookies, responseHeaders, safeNext, signInRedirect, verifyCookie, type Route } from "./preview.js";
+import { COOKIE_NAME, NO_STORE, cookieHeader, forwardHeaders, holdingPage, readCookies, responseHeaders, safeNext, signInRedirect, verifyCookie, type Route } from "./preview.js";
 
 // The request handling half of the preview router, kept apart from the process so a test can drive
 // it against a local upstream. `index.ts` builds the config from the environment and listens.
@@ -24,14 +24,14 @@ function fail(res: http.ServerResponse, status: number, message: string) {
     res.destroy();
     return;
   }
-  res.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
+  res.writeHead(status, { ...NO_STORE, "content-type": "text/plain; charset=utf-8" });
   res.end(message);
 }
 
 export function createRouter(config: RouterConfig): http.RequestListener {
   function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (req.url === "/healthz") {
-      res.writeHead(200);
+      res.writeHead(200, NO_STORE);
       res.end("ok");
       return;
     }
@@ -59,7 +59,7 @@ export function createRouter(config: RouterConfig): http.RequestListener {
         .exchange(code, host)
         .then((result) => {
           if ("error" in result) return fail(res, 403, result.error);
-          res.writeHead(302, { "set-cookie": cookieHeader(result.cookie, result.maxAgeSeconds, config.secureCookies), location: next });
+          res.writeHead(302, { ...NO_STORE, "set-cookie": cookieHeader(result.cookie, result.maxAgeSeconds, config.secureCookies), location: next });
           res.end();
         })
         .catch((err: Error) => {
@@ -70,14 +70,14 @@ export function createRouter(config: RouterConfig): http.RequestListener {
     }
 
     if (!readCookies(req.headers.cookie, COOKIE_NAME).some((value) => verifyCookie(value, host, route, config.secret))) {
-      res.writeHead(302, { location: signInRedirect(config.publicAppUrl, host, path) });
+      res.writeHead(302, { ...NO_STORE, location: signInRedirect(config.publicAppUrl, host, path) });
       res.end();
       return;
     }
 
     const hold = () => {
       const { status, body } = holdingPage(route, host);
-      res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
+      res.writeHead(status, { ...NO_STORE, "content-type": "text/html; charset=utf-8" });
       res.end(body);
     };
 

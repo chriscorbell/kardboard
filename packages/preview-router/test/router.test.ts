@@ -63,6 +63,16 @@ describe("the preview router", () => {
         setImmediate(() => (req.url === "/reset" ? res.socket?.resetAndDestroy() : res.socket?.destroy()));
         return;
       }
+      if (req.url === "/assets/app.js") {
+        res.writeHead(200, { "content-type": "text/javascript", "cache-control": "public, max-age=31536000, immutable", "cdn-cache-control": "max-age=31536000" });
+        res.end("export {}");
+        return;
+      }
+      if (req.url === "/headers") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(req.headers));
+        return;
+      }
       if (req.url === "/cookies") {
         res.writeHead(200, { "set-cookie": ["theme=dark; Path=/; Domain=kardboard.cc", `${COOKIE_NAME}=junk; Domain=kardboard.cc`] });
         res.end();
@@ -141,6 +151,45 @@ describe("the preview router", () => {
   it("keeps a Preview's cookies on its own host and drops any named like the router's", async () => {
     const res = await send(router.port, "/cookies", member);
     assert.deepEqual(res.headers["set-cookie"], ["theme=dark; Path=/"]);
+  });
+
+  it("keeps a Preview's assets out of the edge cache and out of shared caches", async () => {
+    const res = await send(router.port, "/assets/app.js", member);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["cloudflare-cdn-cache-control"], "no-store");
+    assert.equal(res.headers["cdn-cache-control"], "no-store", "replacing the Preview's own");
+    assert.equal(res.headers["cache-control"], "private, max-age=31536000, immutable", "the browser may still keep it");
+  });
+
+  it("lets nothing keep the router's own answers", async () => {
+    const first = other({ target: null, status: "building", error: null });
+    exchange = async () => ({ cookie: "c", maxAgeSeconds: 60 });
+    const answers = {
+      "sign-in redirect": await send(router.port, "/assets/app.js"),
+      "redirect after sign-in": await send(router.port, "/__kardboard/auth?code=abc&next=%2F"),
+      "holding page": await send(router.port, "/app.js", first),
+      "unknown host": await send(router.port, "/app.js", { host: "unknown.kardboard.cc" }),
+      "health check": await send(router.port, "/healthz"),
+    };
+    for (const [name, res] of Object.entries(answers)) {
+      assert.equal(res.headers["cloudflare-cdn-cache-control"], "no-store", name);
+      assert.equal(res.headers["cdn-cache-control"], "no-store", name);
+      assert.equal(res.headers["cache-control"], "no-store", name);
+    }
+  });
+
+  it("tells a Preview nothing about who is visiting", async () => {
+    const res = await send(router.port, "/headers", {
+      ...member,
+      "cf-connecting-ip": "203.0.113.7",
+      "x-forwarded-for": "203.0.113.7",
+      "cf-ipcountry": "NZ",
+      "cf-ray": "8f1e2d3c4b5a6978-AKL",
+      "x-forwarded-proto": "https",
+    });
+    const seen = JSON.parse(res.body) as Record<string, string>;
+    for (const name of ["cf-connecting-ip", "x-forwarded-for", "cf-ipcountry", "cf-ray", "cookie"]) assert.equal(seen[name], undefined, name);
+    assert.equal(seen["x-forwarded-proto"], "https");
   });
 
   it("keeps serving the previous container while a rebuild runs", async () => {

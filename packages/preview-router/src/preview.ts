@@ -51,18 +51,58 @@ export function verifyCookie(value: string | undefined, host: string, route: Rou
 // the Preview cookie itself, any other cookie that reached this host, and any Authorization header.
 export type Headers = Record<string, string | string[] | undefined>;
 
+// Cloudflare tells the origin who is visiting: the Member's address, their country, and ids that
+// tie the request to them in Cloudflare's logs. Branch-controlled code has no use for any of it,
+// so it goes too. X-Forwarded-Proto stays, so a Preview can still tell it was reached over HTTPS.
+const VISITOR_HEADERS = [
+  "cf-connecting-ip",
+  "cf-connecting-ipv6",
+  "true-client-ip",
+  "x-real-ip",
+  "x-forwarded-for",
+  "cf-ipcountry",
+  "cf-visitor",
+  "cf-ray",
+  "cf-worker",
+  "cdn-loop",
+];
+
 export function forwardHeaders(headers: Headers, targetHost: string): Headers {
   const out: Headers = { ...headers, host: targetHost };
   delete out.cookie;
   delete out.authorization;
   delete out["proxy-authorization"];
+  for (const name of VISITOR_HEADERS) delete out[name];
   return out;
 }
 
+// Cloudflare stores responses for paths that look static, `.js`, `.css`, images and the like, by
+// default and without regard to cookies, then serves the stored copy to whoever asks next without
+// reaching this router. A Member's request could leave a Preview's code at the edge for a stranger
+// to read, and a stranger's could leave the sign-in redirect there for every Member. So nothing
+// the router sends may be stored at the edge. Cloudflare obeys Cloudflare-CDN-Cache-Control ahead
+// of Cache-Control and keeps it to itself; CDN-Cache-Control says the same to any other CDN on
+// the way, and browsers ignore both.
+export const EDGE_NO_STORE = { "cloudflare-cdn-cache-control": "no-store", "cdn-cache-control": "no-store" };
+
+// The router's own answers, the redirects, holding page and errors, are not kept by browsers either.
+export const NO_STORE = { ...EDGE_NO_STORE, "cache-control": "no-store" };
+
+// A Preview's Cache-Control still reaches the browser, which may keep what it was told to, but
+// `public` invites any shared cache along the way to keep it too, so it becomes `private`.
+function privateCacheControl(value: string): string {
+  const directives = value.split(",").map((d) => d.trim()).filter(Boolean);
+  if (!directives.some((d) => d.toLowerCase() === "public")) return value;
+  return ["private", ...directives.filter((d) => !/^(public|private)$/i.test(d))].join(", ");
+}
+
 // A Preview may set cookies for its own host, but not for the parent domain, where every other
-// Preview would receive them, and never one carrying the router's own cookie name.
+// Preview would receive them, and never one carrying the router's own cookie name. Nor may it
+// ask the edge to store it: its own CDN cache headers are replaced with the router's.
 export function responseHeaders(headers: Headers): Headers {
-  const out: Headers = { ...headers };
+  const out: Headers = { ...headers, ...EDGE_NO_STORE };
+  const cacheControl = headers["cache-control"];
+  if (typeof cacheControl === "string") out["cache-control"] = privateCacheControl(cacheControl);
   const cookies = headers["set-cookie"];
   if (!cookies) return out;
   const kept = (Array.isArray(cookies) ? cookies : [cookies])
