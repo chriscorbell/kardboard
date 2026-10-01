@@ -1,8 +1,7 @@
-import http from "node:http";
 import { URL } from "node:url";
 import { CodexCredential } from "./codex-credential.js";
 import { UsageLimits } from "./limits.js";
-import { createProxy } from "./proxy.js";
+import { createServer } from "./proxy.js";
 
 // Credential-injecting egress proxy. Session containers never hold the provider token; they send
 // requests here and the proxy adds the real credential before forwarding to the provider.
@@ -15,6 +14,7 @@ import { createProxy } from "./proxy.js";
 //   /healthz     -> up, and which credentials are loaded, as booleans
 //
 // Only the provider calls listed in `ALLOWED_CALLS` in proxy.ts go upstream; the rest get a 403.
+// Connections, request bodies, and silent provider calls are bounded there too.
 //
 // Verified 2026-09-14: a raw /v1/messages call from a workload container with no credential
 // received a model reply through this proxy, so the bearer plus oauth beta rewrite is accepted
@@ -42,16 +42,14 @@ const codex = codexAuthFile
     })
   : null;
 
-const server = http.createServer(
-  createProxy({
-    claudeToken,
-    anthropicUpstream: new URL(process.env.EGRESS_ANTHROPIC_UPSTREAM ?? "https://api.anthropic.com"),
-    codexUpstream: new URL(process.env.EGRESS_CODEX_UPSTREAM ?? "https://chatgpt.com/backend-api/codex"),
-    codex,
-    allowedNetworks: (process.env.EGRESS_ALLOWED_CIDRS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-    limits: new UsageLimits(),
-    controlToken,
-  }),
-);
+const server = createServer({
+  claudeToken,
+  anthropicUpstream: new URL(process.env.EGRESS_ANTHROPIC_UPSTREAM ?? "https://api.anthropic.com"),
+  codexUpstream: new URL(process.env.EGRESS_CODEX_UPSTREAM ?? "https://chatgpt.com/backend-api/codex"),
+  codex,
+  allowedNetworks: (process.env.EGRESS_ALLOWED_CIDRS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+  limits: new UsageLimits(),
+  controlToken,
+});
 
 server.listen(port, () => console.log(`kardboard egress listening on :${port}`));
