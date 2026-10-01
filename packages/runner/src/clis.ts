@@ -1,13 +1,15 @@
 import type Docker from "dockerode";
+import { DEFAULT_MIN_AGE_HOURS, ReleaseCooldown, type PendingRelease } from "./cooldown.js";
 
 // Claude Code and Codex publish new releases several times a day, and an image rebuilt for each one
-// would churn for nothing. Instead the runner keeps the newest release of each in one named volume,
+// would churn for nothing. Instead the runner keeps a recent release of each in one named volume,
 // which every Session mounts read-only and runs from; the version built into the agent image is only
-// the fallback. Every few minutes the runner asks npm for each CLI's `latest`, and when that is a
-// version it has not made current, or the agent image has changed since, it runs `kardboard-clis
-// ensure` in a short-lived container of the agent image. That installs the release into the volume
-// and makes it current only if it passes the image's own checks (images/agent/clis.sh), so a release
-// that drops a flag the entrypoint passes stays out of every Session.
+// the fallback. Every few minutes the runner asks npm for each CLI's `latest`, and picks the newest
+// version it first saw there long enough ago, a day by default (cooldown.ts). When that is a version
+// it has not made current, or the agent image has changed since, it runs `kardboard-clis ensure` in a
+// short-lived container of the agent image. That installs the release into the volume and makes it
+// current only if it passes the image's own checks (images/agent/clis.sh), so a release that drops a
+// flag the entrypoint passes stays out of every Session.
 //
 // The installer runs as root, since the volume is root's and Sessions only read it, and on a bridge
 // of its own whose name the host firewall already keeps off the LAN, like a Session's. It holds no
@@ -58,18 +60,20 @@ export interface CliState {
   image: string | null;
   checkedAt: string | null;
   error: string | null;
+  /** A newer release npm names that is still waiting out its minimum age. */
+  pending: PendingRelease | null;
 }
 
-export const NO_STATE: CliState = { current: null, failed: null, image: null, checkedAt: null, error: null };
+export const NO_STATE: CliState = { current: null, failed: null, image: null, checkedAt: null, error: null, pending: null };
 
 /**
- * Whether to run the installer: npm has a version this runner has not made current, or the agent
- * image changed, and its checks must pass again. A version that failed under this same image is left
- * until a newer release or a newer image, rather than reinstalled every few minutes.
+ * Whether to run the installer: the version chosen to run is one this runner has not made current,
+ * or the agent image changed, and its checks must pass again. A version that failed under this same
+ * image is left until a newer release or a newer image, rather than reinstalled every few minutes.
  */
-export function needsEnsure(state: CliState, latest: string, image: string): boolean {
-  if (state.failed === latest && state.image === image) return false;
-  return state.current !== latest || state.image !== image;
+export function needsEnsure(state: CliState, version: string, image: string): boolean {
+  if (state.failed === version && state.image === image) return false;
+  return state.current !== version || state.image !== image;
 }
 
 export function ensureContainerSpec(image: string, tool: CliTool, version: string): Docker.ContainerCreateOptions {
@@ -116,13 +120,21 @@ export interface CliUpdaterDeps {
   ensureImage: (image: string) => Promise<void>;
   latest?: (pkg: string) => Promise<string>;
   timeoutMs?: number;
+  /** How long a version must have been npm's `latest` before it is taken; 0 takes it at once. */
+  minAgeHours?: number;
+  /** Where the first-seen times survive a restart; in memory only when absent. */
+  firstSeenFile?: string;
+  now?: () => Date;
 }
 
 export class CliUpdater {
   private states = new Map<CliTool, CliState>();
   private running: Promise<void> | null = null;
+  private cooldown: ReleaseCooldown;
 
-  constructor(private deps: CliUpdaterDeps) {}
+  constructor(private deps: CliUpdaterDeps) {
+    this.cooldown = new ReleaseCooldown(deps.firstSeenFile ?? null, (deps.minAgeHours ?? DEFAULT_MIN_AGE_HOURS) * 3_600_000);
+  }
 
   status(): Record<CliTool, CliState> {
     return Object.fromEntries(CLI_TOOLS.map((t) => [t.name, this.states.get(t.name) ?? NO_STATE])) as Record<CliTool, CliState>;
@@ -158,16 +170,24 @@ export class CliUpdater {
         console.warn(`[clis] could not ask npm for ${tool.pkg}: ${(err as Error).message}`);
         continue;
       }
-      if (!needsEnsure(state, latest, imageId)) continue;
+      const { version, pending } = this.cooldown.observe(tool.name, latest, (this.deps.now ?? (() => new Date()))());
+      if (pending && pending.version !== state.pending?.version) {
+        console.log(`[clis] ${tool.name} ${pending.version} waits until ${pending.eligibleAt}, ${this.cooldown.minAgeMs / 3_600_000} hours after it was first seen as npm's latest`);
+      }
+      // With nothing old enough yet, whatever the volume already holds stays current.
+      if (!version || !needsEnsure(state, version, imageId)) {
+        this.states.set(tool.name, { ...state, pending });
+        continue;
+      }
       const checkedAt = new Date().toISOString();
-      const result = await this.ensure(tool.name, latest);
+      const result = await this.ensure(tool.name, version);
       if (result.ok) {
-        this.states.set(tool.name, { current: latest, failed: null, image: imageId, checkedAt, error: null });
-        if (state.current !== latest) console.log(`[clis] ${tool.name} ${latest} is current`);
+        this.states.set(tool.name, { current: version, failed: null, image: imageId, checkedAt, error: null, pending });
+        if (state.current !== version) console.log(`[clis] ${tool.name} ${version} is current`);
       } else {
         // A version that no longer passes is taken out of use by the installer, so it is not current.
-        this.states.set(tool.name, { current: state.current === latest ? null : state.current, failed: latest, image: imageId, checkedAt, error: result.output });
-        console.error(`[clis] ${tool.name} ${latest} was not made current:\n${result.output}`);
+        this.states.set(tool.name, { current: state.current === version ? null : state.current, failed: version, image: imageId, checkedAt, error: result.output, pending });
+        console.error(`[clis] ${tool.name} ${version} was not made current:\n${result.output}`);
       }
     }
   }
