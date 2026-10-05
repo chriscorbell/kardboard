@@ -25,7 +25,7 @@ Sessions are off for a new board, and the admin turns them on per board. A board
 
 ## Features
 
-- **Six fixed columns** with clear meanings: Inbox, Blocked, Ready, In Progress, Review, Done.
+- **Six fixed columns** with clear meanings: Backlog, Blocked, Ready, In Progress, Review, Done.
 - **Cards** with Markdown descriptions, priority, comments, `@mentions`, and file attachments you can pick, paste, or drop, including on a new card. Search and filters, and a Done column that stays a narrow strip until you open it, and then folds its older cards.
 - **Clear waiting states**: a card says when the agent will pick it up, pins the agent's question when it is blocked on you, and tells you in plain words when a run failed, with **Try again**.
 - **One agent identity** across all boards, with a configurable name and avatar (the default is Milo).

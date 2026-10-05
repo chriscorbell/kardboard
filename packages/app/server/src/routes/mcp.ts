@@ -275,7 +275,7 @@ function buildServer(session: SessionRow): McpServer {
   // A split is one level deep, of the Session's own Card only, and bounded: see `childRefusal`.
   server.registerTool(
     "create_card",
-    { description: `Create a card in any column except Inbox, which is reserved for humans. Set parent_card_id to your own card when splitting it: a child card left in Ready starts its own session immediately, and your card wakes once every child reaches Done. Only your own card can be a parent, a card that is itself a child cannot be split again, and one card has at most ${MAX_CHILDREN} children. A card with no parent starts nothing and waits in Ready for a person.`, inputSchema: { title: z.string().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS.filter((c) => c !== "inbox") as [string, ...string[]]).default("ready"), priority: z.enum(PRIORITIES).default("none"), parent_card_id: z.string().optional() } },
+    { description: `Create a card in any column except Backlog, which is reserved for humans. Set parent_card_id to your own card when splitting it: a child card left in Ready starts its own session immediately, and your card wakes once every child reaches Done. Only your own card can be a parent, a card that is itself a child cannot be split again, and one card has at most ${MAX_CHILDREN} children. A card with no parent starts nothing and waits in Ready for a person.`, inputSchema: { title: z.string().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS.filter((c) => c !== "inbox") as [string, ...string[]]).default("ready"), priority: z.enum(PRIORITIES).default("none"), parent_card_id: z.string().optional() } },
     async ({ title, description, column, priority, parent_card_id }) => {
       if (parent_card_id) {
         if (parent_card_id !== session.cardId) {
@@ -427,7 +427,7 @@ function buildServer(session: SessionRow): McpServer {
 // them itself and says so when it closes the Card.
 const TOKEN_INSTRUCTIONS = `This is a kardboard board: the shared record of work on one project, which you and the people on it read and change. You act on it as its agent. Nothing on this board starts on its own. You work it when the person running you asks, and people move cards by hand.
 
-Read get_board first, and read every card it marks replyWaiting: a person has commented there since you last did, often answering your question. The columns: Inbox holds new requests not yet looked at. Blocked holds cards waiting on a person's answer. Ready holds understood cards nobody has started. In Progress holds cards being worked on. Review holds cards whose pull request is open for a look. Done holds merged, closed, or duplicate cards.
+Read get_board first, and read every card it marks replyWaiting: a person has commented there since you last did, often answering your question. The columns: Backlog, column inbox, holds new requests not yet looked at. Blocked holds cards waiting on a person's answer. Ready holds understood cards nobody has started. In Progress holds cards being worked on. Review holds cards whose pull request is open for a look. Done holds merged, closed, or duplicate cards.
 
 Keep the board true to the work. Move a card to In Progress when you start it. If you need a person's answer, ask in a comment that mentions them by @handle and move the card to Blocked. Once its pull request is open, record it with link_pull_request and move the card to Review. When you have merged the pull request, move the card to Done with merged set. Every edit and move takes the revision you last read: if the card changed since, read it again before deciding.`;
 
@@ -476,7 +476,7 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
   server.registerTool(
     "create_card",
     {
-      description: "Create a card. A new request goes in Inbox; one already understood well enough to start goes in Ready. Give it a title that says what it asks for, and a description with what someone picking it up needs. A column reads top down, so position top puts the card first, as what to take next; it goes to the bottom otherwise.",
+      description: "Create a card. A new request goes in Backlog, column inbox; one already understood well enough to start goes in Ready. Give it a title that says what it asks for, and a description with what someone picking it up needs. A column reads top down, so position top puts the card first, as what to take next; it goes to the bottom otherwise.",
       inputSchema: { title: z.string().trim().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS).default("inbox"), priority: z.enum(PRIORITIES).default("none"), position: z.enum(["top", "bottom"]).default("bottom") },
     },
     async ({ title, description, column, priority, position }) => {
