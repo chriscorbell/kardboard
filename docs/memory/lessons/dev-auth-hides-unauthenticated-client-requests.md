@@ -3,7 +3,7 @@
 Read when: adding anything in `packages/app/client` that loads from `/api` without `request()` (an `<img src>`, an `<a href>`, an `EventSource`, a `window.open`), or when something works locally and returns 401 in production.
 Status: verified
 Scope: component, `packages/app`
-Verified: 2026-09-30
+Verified: 2026-10-05
 Source: `packages/app/server/src/auth.ts` (`resolveUser`), `packages/app/client/src/lib/api.ts` (`send`), `packages/app/client/src/lib/attachments.ts`, `packages/app/client/src/lib/realtime.ts`; branch `kardboard/fix-client`
 Recheck when: `resolveUser` in `auth.ts` changes how it reads a token, or the server starts accepting a cookie
 
