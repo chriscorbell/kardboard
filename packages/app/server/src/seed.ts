@@ -77,7 +77,7 @@ async function seedDemo(): Promise<void> {
   // The signed-in dev Admin needs something behind the bell.
   await db.insert(schema.notifications).values([
     { id: newId(), userId: admin.id, boardId: lumen.id, cardId: footer!.id, kind: "mention", title: "Milo mentioned you", body: comments[2]!.body.slice(0, 500), actorName: "Milo", createdAt: minutesAgo(45) },
-    { id: newId(), userId: admin.id, boardId: lumen.id, cardId: meridian!.id, kind: "card_moved", title: "Milo moved your card to In progress", body: "Inbox → In progress", actorName: "Milo", createdAt: minutesAgo(80) },
+    { id: newId(), userId: admin.id, boardId: lumen.id, cardId: meridian!.id, kind: "card_moved", title: "Milo moved your card to In progress", body: "Backlog → In progress", actorName: "Milo", createdAt: minutesAgo(80) },
     { id: newId(), userId: admin.id, boardId: lumen.id, cardId: notfound!.id, kind: "card_moved", title: "Milo moved your card to Done", body: "Review → Done", actorName: "Milo", readAt: minutesAgo(1900), createdAt: minutesAgo(2000) },
   ]);
 

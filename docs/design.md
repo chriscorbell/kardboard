@@ -14,7 +14,7 @@ One Board per project and repository. Six fixed Columns:
 
 | Column | Meaning |
 | --- | --- |
-| Inbox | New Cards not yet triaged. On a Board that runs Sessions, reserved for human creation and awaiting intake by a Session. |
+| Backlog | New Cards not yet triaged. On a Board that runs Sessions, reserved for human creation and awaiting intake by a Session. |
 | Blocked | Waiting on a human answer. |
 | Ready | Triaged and actionable, not being worked on. |
 | In Progress | Being implemented, by a Session where the Board runs them. |
@@ -25,7 +25,7 @@ A Card has a title, Markdown description, Priority (none, low, medium, high), Co
 
 A Card in Blocked whose last word is the Agent's shows that question at the top of the Card and "Needs your answer" on its tile. The Board can be searched by title, description, and id, and filtered to Cards a User created, Cards waiting on them, or a Priority; the filter lives in the URL. Done starts as a narrow strip with its name and count, which opens into the full Column when clicked and closes again from its header; whether it is open is remembered per Board in each browser. A Card dropped on the strip goes to Done. Open, Done shows its ten most recently updated Cards and folds the rest. A User opening a Board for the first time sees a short explanation of the Columns, the Agent, and Approve, which stays dismissed on every device; on a Board without Sessions it explains the Columns alone and says that nothing starts on its own.
 
-Members may drag Cards anywhere. Inbox to Ready means "do this next". A human move into In Progress or Review is corrected by the next Session or Hygiene sweep, with a one-line Comment explaining the move back.
+Members may drag Cards anywhere. Backlog to Ready means "do this next". A human move into In Progress or Review is corrected by the next Session or Hygiene sweep, with a one-line Comment explaining the move back.
 
 A human move to Done is an immediate server-side closure: the Card's Done reason is recorded as `closed`, any active Session on the Card is cancelled, its pending re-run is cleared, and any Approval on the Card is invalidated. A Card that leaves Done has its Approvals invalidated too, and if its pull request was merged, the Card lets go of it, so its next pull request starts clean and the merged one is never completed a second time. A merge GitHub has already accepted is completed work and is recorded as Done with reason `merged` instead. Every Card carries a revision number; every mutation from a Session or a sweep names the revision it was based on and is rejected when the Card has moved on, so a stale report cannot reopen a closed Card. Done reasons are `merged`, `closed`, and `duplicate`.
 
@@ -60,7 +60,7 @@ A Session that fails or runs out of time says so: kardboard posts one Comment on
 
 When the request is unclear the Session moves the Card to Blocked and Mentions the author with its question. The reply is a Trigger; the resulting Session moves the Card onward. The Agent never declines work on its own: out-of-scope or risky requests go to Blocked with a Mention of the Admin, not the client. Duplicates are linked in a Comment and moved to Done. Cards left in Blocked for 14 days with no human reply receive one reminder Mention from the nightly sweep.
 
-Sessions may create Cards in any appropriate Column except Inbox, which is reserved for human intake. A large request is split into child Cards, recorded as the parent's children rather than only linked from a Comment, and the parent sits in Blocked until the children reach Done. A Session may split only its own Card, into at most eight children, and a child cannot be split again. A Comment on a Done Card reopens it: the Session answers, or moves the Card to In Progress and opens a new pull request from the Card's own branch, which stays the same for the Card's whole life.
+Sessions may create Cards in any appropriate Column except Backlog, which is reserved for human intake. A large request is split into child Cards, recorded as the parent's children rather than only linked from a Comment, and the parent sits in Blocked until the children reach Done. A Session may split only its own Card, into at most eight children, and a child cannot be split again. A Comment on a Done Card reopens it: the Session answers, or moves the Card to In Progress and opens a new pull request from the Card's own branch, which stays the same for the Card's whole life.
 
 Only human action starts a Session, with two named exceptions that keep a split request moving without anyone touching each piece. A Card the Agent created starts its own Session when it is a child of another Card and lands in Ready; an Agent Card with no parent is a note for a person, such as an Admin step, and waits in Ready for them. And when the last child of a parent reaches Done, the parent leaves Blocked for Ready and receives a `children_done` Trigger listing each child and what it came to: `implemented` when kardboard merged its pull request, `closed` when it reached Done any other way. Nothing else the Agent does is a Trigger. When more Cards are waiting than there are free Session slots, the next one is chosen by Priority, then by the Card's position in its Column, then by age.
 

@@ -1,12 +1,13 @@
 import { z } from "zod";
 
-// Columns are fixed in v1. Order matters: it is the board's left-to-right order.
+// Columns are fixed in v1. Order matters: it is the board's left-to-right order. The first is shown as
+// Backlog but keeps the key it had as Inbox, so stored Cards, events, and agents' column values still hold.
 export const COLUMNS = ["inbox", "blocked", "ready", "in_progress", "review", "done"] as const;
 export type Column = (typeof COLUMNS)[number];
 export const columnSchema = z.enum(COLUMNS);
 
 export const COLUMN_LABELS: Record<Column, string> = {
-  inbox: "Inbox",
+  inbox: "Backlog",
   blocked: "Blocked",
   ready: "Ready",
   in_progress: "In progress",

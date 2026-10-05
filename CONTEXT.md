@@ -33,7 +33,7 @@ The kanban board for exactly one project and its repository. Owns its Members, C
 _Avoid_: Project, workspace
 
 **Column**:
-One of the six fixed stages of a Board. Inbox holds new Cards not yet triaged. Blocked holds Cards waiting on a human answer. Ready holds triaged Cards not being worked on. In Progress holds Cards being implemented. Review holds Cards with a pull request awaiting a look, and on a Board that runs Sessions, Approval. Done holds merged, closed, or duplicate Cards.
+One of the six fixed stages of a Board. Backlog holds new Cards not yet triaged. Blocked holds Cards waiting on a human answer. Ready holds triaged Cards not being worked on. In Progress holds Cards being implemented. Review holds Cards with a pull request awaiting a look, and on a Board that runs Sessions, Approval. Done holds merged, closed, or duplicate Cards.
 _Avoid_: List, lane, stage, status
 
 **Card**:

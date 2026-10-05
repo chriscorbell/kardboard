@@ -84,7 +84,7 @@ describe("notifyCardMoved", () => {
     const [only] = view.notifications;
     assert.equal(only!.kind, "card_moved");
     assert.equal(only!.title, "Grace moved your card to Review");
-    assert.equal(only!.body, "Inbox → Review");
+    assert.equal(only!.body, "Backlog → Review");
     assert.equal(only!.actorName, "Grace");
     assert.equal(only!.cardTitle, "Notifications indicator");
     assert.equal(only!.cardId, card.id);
