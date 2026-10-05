@@ -3,7 +3,7 @@
 Read when: a Codex Session exits immediately or reaches no provider, when the egress log shows `refused codex` or `refused claude`, when the runner refuses a new CLI release, when changing anything in the Codex branch of `images/agent/entrypoint.sh` or the flags it passes either CLI, or before bumping `CODEX_VERSION` in the Session image.
 Status: verified
 Scope: `images/agent`, `packages/runner`, `packages/egress`
-Verified: 2026-09-24
+Verified: 2026-10-05 for the pinned `CODEX_VERSION` and the Codex `ALLOWED_CALLS`; 2026-09-24 for the rest
 Source: [the entrypoint](../../../images/agent/entrypoint.sh), [ADR 0002](../../adr/0002-subscription-credentials-stay-in-the-egress-proxy.md); observed by running codex-cli 0.154.0 inside a Session on 2026-09-15
 Recheck when: `CODEX_VERSION` in `images/agent/Dockerfile` changes, `ALLOWED_CALLS` in `packages/egress/src/proxy.ts` does, or the checks in `images/agent/clis.sh` do.
 
