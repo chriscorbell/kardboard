@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0011 on 2026-10-07
 date: 2026-09-13
 amended: 2026-09-14 by ADR 0008, which splits the single App into a Sessions app and a Merge app
 ---

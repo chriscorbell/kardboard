@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0011 on 2026-10-07
 date: 2026-09-14
 ---
 # Two GitHub Apps separate what a Session can push from what kardboard can merge

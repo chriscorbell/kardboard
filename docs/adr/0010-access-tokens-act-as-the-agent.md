@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0012 on 2026-10-07
 date: 2026-09-28
 ---
 # Access tokens act as the Agent, on one Board without Sessions, and only the Admin makes them
