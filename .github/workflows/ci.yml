@@ -1,10 +1,9 @@
-# Deployment contract: a push to main publishes to GHCR, tagged :latest and :sha, each of the five
-# images whose inputs changed since the last run on main that succeeded. Watchtower on minicore polls
-# GHCR every 60 s and restarts the containers whose image moved, so a push that touches only the app
-# restarts only the app, and a push of documentation restarts nothing. Pull requests build all five
-# images without pushing, so a broken Dockerfile fails before it reaches main. Running the workflow
-# by hand on main publishes all five whatever changed. Roll back by pinning a :sha tag in the compose
-# file or re-running this job from an older commit.
+# Deployment contract: a push to main publishes the app image to GHCR, tagged :latest and :sha, when
+# its inputs changed since the last run on main that succeeded. Watchtower on minicore polls GHCR
+# every 60 s and restarts the app when its image moved, so a push of documentation restarts nothing.
+# Pull requests build the image without pushing, so a broken Dockerfile fails before it reaches main.
+# Running the workflow by hand on main publishes it whatever changed. Roll back by pinning a :sha tag
+# in the compose file or re-running this job from an older commit.
 name: CI
 
 on:
@@ -24,8 +23,8 @@ concurrency:
 
 # Every action is pinned to a commit, with the release it came from beside it, because a tag can be
 # moved to other code at any time and publish runs with a token that can push the images Watchtower
-# deploys. Dependabot proposes newer pins in one weekly pull request; merging one republishes all
-# five images, since this file is an input every image shares.
+# deploys. Dependabot proposes newer pins in one weekly pull request; merging one republishes the
+# image, since this file is one of its inputs.
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -45,13 +44,12 @@ jobs:
       - run: pnpm -r test
       - run: pnpm --filter @kardboard/app build
 
-  # Which images this run builds, as the publish job's matrix. A pull request or a manual run takes
-  # all five. A push to main takes the images whose inputs differ between this commit and the head of
-  # the last run on main that succeeded, whose images were therefore all published. That, and not the
-  # commit before this push, is the baseline: a run that failed, or a queued run that a newer push
-  # replaced, published nothing, and its changes are still owed. A change to an input every image
-  # shares, this workflow included, takes all five; a push that changes no image's inputs takes none,
-  # and publish is skipped.
+  # Which images this run builds, as the publish job's matrix: the app's, or none. A pull request or a
+  # manual run takes it. A push to main takes it when its inputs differ between this commit and the
+  # head of the last run on main that succeeded, whose image was therefore published. That, and not
+  # the commit before this push, is the baseline: a run that failed, or a queued run that a newer push
+  # replaced, published nothing, and its changes are still owed. A push that changes none of its
+  # inputs takes none, and publish is skipped. It stays a matrix so another image is one entry away.
   changes:
     runs-on: ubuntu-latest
     permissions:
@@ -73,14 +71,10 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           IMAGES: >-
-            [{"name": "app", "dockerfile": "packages/app/Dockerfile"},
-            {"name": "runner", "dockerfile": "packages/runner/Dockerfile"},
-            {"name": "egress", "dockerfile": "packages/egress/Dockerfile"},
-            {"name": "preview-router", "dockerfile": "packages/preview-router/Dockerfile"},
-            {"name": "agent", "dockerfile": "images/agent/Dockerfile"}]
+            [{"name": "app", "dockerfile": "packages/app/Dockerfile"}]
         run: |
           set -euo pipefail
-          all="app runner egress preview-router agent"
+          all="app"
           # The matrix entries named in a space-separated list, once each and in IMAGES order.
           pick() { jq -c --arg names "$1" '($names | split(" ")) as $wanted | [.[] | select(.name as $n | $wanted | index($n))]' <<< "$IMAGES"; }
           publish() {
@@ -110,24 +104,19 @@ jobs:
           # Without rename detection a moved file is listed at both paths, so moving one out of an
           # image's directory still rebuilds that image.
           changed=$(git diff --no-renames --name-only "$base" "$SHA")
-          # What goes into each image, read from its Dockerfile's COPY lines. Every image installs
-          # from the root lockfile and workspace files.
+          # What goes into the image, read from its Dockerfile's COPY lines: the root lockfile and
+          # workspace files, the shared package, and the app.
           names=""
           while IFS= read -r file; do
             case "$file" in
               pnpm-lock.yaml | pnpm-workspace.yaml | package.json | .npmrc | tsconfig.base.json | .dockerignore | .github/workflows/ci.yml | packages/shared/*) names="$names $all" ;;
               packages/app/*) names="$names app" ;;
-              packages/runner/*) names="$names runner" ;;
-              packages/egress/*) names="$names egress" ;;
-              packages/preview-router/*) names="$names preview-router" ;;
-              images/agent/*) names="$names agent" ;;
             esac
           done <<< "$changed"
           publish "$(pick "$names")"
 
-  # Anything other than main only proves each Dockerfile builds. A pull request is code nobody has
-  # approved yet, often written by a Session, so this job's token can read the repository and do
-  # nothing else: no registry login, and the token is not left in the checkout the build can read.
+  # Anything other than main only proves the Dockerfile builds. A pull request is code nobody has
+  # merged yet, so this job's token can read the repository and do nothing else: no registry login, and the token is not left in the checkout the build can read.
   # Publishing lives in its own job below, because a job's permissions cannot depend on the event.
   build:
     needs: [changes]

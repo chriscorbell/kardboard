@@ -37,8 +37,6 @@ Nothing on a board starts on its own. You decide which agent works on what, and 
 | `packages/app` | Web app, REST API, and MCP server. SQLite via Drizzle. Vite + React client. |
 | `packages/shared` | Types and schemas shared by server and client. |
 
-The runner, egress proxy, preview router, and agent image left in the repository are from when kardboard ran its own agents, and are being removed.
-
 ## Getting started
 
 Requires Node 24+ and pnpm 11.
@@ -76,7 +74,7 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 
 ## Deploying
 
-The app ships as a Docker image built by the included GitHub Actions workflow. [`deploy/compose.yaml`](deploy/compose.yaml) runs it on any Docker host with its data on a bind mount; it still lists the services left over from Sessions until they are removed. Put the public hostname in front of the app's port with whatever reverse proxy or tunnel you already use.
+kardboard is one Docker image, built by the included GitHub Actions workflow. [`deploy/compose.yaml`](deploy/compose.yaml) runs it on any Docker host with its data on a bind mount. Put the public hostname in front of the app's port with whatever reverse proxy or tunnel you already use.
 
 External services you need to set up once:
 

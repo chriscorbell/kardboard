@@ -81,7 +81,7 @@ Restoring replaces the live database, so it is done with the app stopped. Nothin
 
 ```bash
 cd ~/docker/stacks/kardboard
-docker compose stop app                     # the runner and sessions keep running; stop them too if a session is mid-flight
+docker compose stop app
 
 cd ~/docker/data/kardboard/app
 mv kardboard.db kardboard.db.broken          # keep the damaged files until the restore is confirmed
@@ -118,7 +118,7 @@ KARDBOARD_DATA_DIR=/tmp/kardboard-drill KARDBOARD_AUTH=dev KARDBOARD_BACKUP_HOUR
   RESEND_API_KEY= KARDBOARD_RUNNER_URL= KARDBOARD_EGRESS_URL= KARDBOARD_BACKUP_COPY_DIR= pnpm dev:server
 ```
 
-The server migrates the copy and serves it on port 3999 in dev authentication, signed in as the Admin: `curl http://127.0.0.1:3999/healthz` answers `{"ok":true,"db":"ok",…}` and `curl http://127.0.0.1:3999/api/boards` lists the Boards. With no runner, nothing starts. Stop it and delete `/tmp/kardboard-drill` afterwards.
+The server migrates the copy and serves it on port 3999 in dev authentication, signed in as the Admin: `curl http://127.0.0.1:3999/healthz` answers `{"ok":true,"db":"ok",…}` and `curl http://127.0.0.1:3999/api/boards` lists the Boards. Stop it and delete `/tmp/kardboard-drill` afterwards.
 
 ## What this does not cover
 

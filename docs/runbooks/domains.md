@@ -1,14 +1,14 @@
 # Domain configuration
 
-The product name is always lowercase: `kardboard`. The app's canonical URL is `https://kardboard.cc`; a Card's preview uses `https://<first-eight-id-characters>.kardboard.cc`.
+The product name is always lowercase: `kardboard`. The app's canonical URL is `https://kardboard.cc`.
 
 ## Routing and certificates
 
-The `homelab` tunnel points the apex at minicore port 3070 and the wildcard at preview-router port 3073. Both DNS records are proxied CNAMEs targeting the same tunnel. Unknown preview hosts return 404. Exact app aliases must precede the wildcard tunnel route.
+The `homelab` tunnel points the apex at minicore port 3070, with a proxied CNAME targeting the tunnel. Until 2026-10-07 a wildcard route and a wildcard CNAME sent `*.kardboard.cc` to the preview router on port 3073; with the router gone, both are to be removed in the Cloudflare dashboard.
 
-Cloudflare creates an explicit DNS record when adding a tunnel route, and refuses an existing record with the same name. Wildcard routes do not create DNS records; add their proxied wildcard CNAME separately. The apex and first-level previews fit Universal SSL.
+Cloudflare creates an explicit DNS record when adding a tunnel route, and refuses an existing record with the same name. The apex fits Universal SSL.
 
-`KARDBOARD_PUBLIC_URL=https://kardboard.cc` controls app links, preview sign-in redirects, and accepted Clerk token origins. `KARDBOARD_REDIRECT_HOSTS=cardboard.xode.cc,app.kardboard.cc` preserves old app links with a 308 redirect, retaining the path and query. GET and HEAD requests redirect; API mutations do not.
+`KARDBOARD_PUBLIC_URL=https://kardboard.cc` controls app links and accepted Clerk token origins. `KARDBOARD_REDIRECT_HOSTS=cardboard.xode.cc,app.kardboard.cc` preserves old app links with a 308 redirect, retaining the path and query. GET and HEAD requests redirect; API mutations do not.
 
 ## Authentication
 
@@ -22,13 +22,13 @@ Use the existing Clerk production instance, with `kardboard.cc` as its primary d
 | `clk._domainkey` | The first DKIM target shown by Clerk |
 | `clk2._domainkey` | The second DKIM target shown by Clerk |
 
-Clerk supplies certificates for its own hosts. A domain change regenerates the three mail CNAME targets; copy the new values and use Verify records in the Clerk dashboard. Its frontend API can return Cloudflare Error 1000 until Clerk has verified and deployed the domain. Its session cookie is [scoped to the app host](https://clerk.com/docs/guides/how-clerk-works/overview); the long-lived client cookie stays on the Clerk frontend API host. Enable the instance subdomain allowlist, permitting `accounts.kardboard.cc` for the account portal. Preview hosts must not be accepted as Clerk app origins. Backend token verification sets `authorizedParties` to the canonical app URL and reads bearer tokens, rather than ambient cookies. With `CLERK_JWT_KEY` set to the JWKS Public Key from the API keys page, it needs no call to Clerk. It is set in production. The key is the instance's only signing key, also served publicly at `https://clerk.kardboard.cc/.well-known/jwks.json`; if Clerk ever rotates it, every sign-in is refused until `CLERK_JWT_KEY` is replaced with the new key or removed, followed by `docker compose up -d app`. The front end sets Clerk's `allowedRedirectOrigins` to the app's own origin, since Clerk otherwise allows every subdomain, Preview hosts included.
+Clerk supplies certificates for its own hosts. A domain change regenerates the three mail CNAME targets; copy the new values and use Verify records in the Clerk dashboard. Its frontend API can return Cloudflare Error 1000 until Clerk has verified and deployed the domain. Its session cookie is [scoped to the app host](https://clerk.com/docs/guides/how-clerk-works/overview); the long-lived client cookie stays on the Clerk frontend API host. Enable the instance subdomain allowlist, permitting `accounts.kardboard.cc` for the account portal. Backend token verification sets `authorizedParties` to the canonical app URL and reads bearer tokens, rather than ambient cookies. With `CLERK_JWT_KEY` set to the JWKS Public Key from the API keys page, it needs no call to Clerk. It is set in production. The key is the instance's only signing key, also served publicly at `https://clerk.kardboard.cc/.well-known/jwks.json`; if Clerk ever rotates it, every sign-in is refused until `CLERK_JWT_KEY` is replaced with the new key or removed, followed by `docker compose up -d app`. The front end sets Clerk's `allowedRedirectOrigins` to the app's own origin, since Clerk otherwise allows every subdomain.
 
 A User stays linked to the Clerk user that first signed in as them. If that Clerk user is deleted and the person signs up again, the new account is refused as not invited until `clerk_user_id` is cleared on their row in the database; this is the same refusal that keeps someone who later verifies a dropped address from taking over the row.
 
 The Google OAuth client needs `https://kardboard.cc` as an authorized JavaScript origin and `https://clerk.kardboard.cc/v1/oauth_callback` as an authorized redirect. Its consent-screen name is `kardboard`, with `kardboard.cc` registered as an authorized domain.
 
-A [Clerk primary-domain change](https://clerk.com/docs/guides/development/deployment/changing-domains) signs users out and generates a new Publishable Key. Prepare DNS and Google settings first, then update the existing instance, save the new Publishable Key in `deploy/.env`, and recreate the app and preview router with the matching Compose configuration. Verify sign-in and reject requests originating from a preview hostname before declaring the move complete. Test `/v1/client`: the root and accounts portal should return 200, while a Preview origin returns 403 `subdomain_not_allowed`. `/v1/environment` is public and does not test this restriction.
+A [Clerk primary-domain change](https://clerk.com/docs/guides/development/deployment/changing-domains) signs users out and generates a new Publishable Key. Prepare DNS and Google settings first, then update the existing instance, save the new Publishable Key in the stack's `.env` on minicore, and recreate the app. Verify sign-in before declaring the move complete. Test `/v1/client`: the root and accounts portal should return 200, while any other subdomain returns 403 `subdomain_not_allowed`. `/v1/environment` is public and does not test this restriction.
 
 ## Email
 

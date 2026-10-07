@@ -18,7 +18,7 @@ Read this index and [the protocol](protocol.md) when starting or resuming a sess
 - [Design](../design.md): the agreed design after the 2026-10-07 refocus on one person's Boards, with links to the decision records and a Status section of what is not built yet.
 - [Decision records](../adr/): twelve ADRs. 0011 (kardboard is one person's Board, worked by their own agents; no Sessions) and 0012 (one Access token reaches every Board) are current and supersede 0002, 0003, and 0005 to 0010; 0001 (identity) and 0004 (SQLite) still hold.
 - [Design review](../design-review.md): eight findings against the v1 design, dated 2026-09-13, all about Sessions; superseded by ADR 0011 and kept as history.
-- [GitHub Apps guide](../../deploy/github-apps.md) and the [kardboard-onboard skill](https://github.com/chriscorbell/skills/tree/main/kardboard-onboard): how a repository is prepared for a board.
+- The [kardboard-onboard skill](https://github.com/chriscorbell/skills/tree/main/kardboard-onboard): how an agent is connected to kardboard and a project onboarded.
 - [README](../../README.md): how to run, build, and deploy; the Status section says what is not built.
 
 ## Review record

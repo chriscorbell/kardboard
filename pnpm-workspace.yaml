@@ -3,6 +3,3 @@ packages:
 allowBuilds:
   esbuild: true
   "@clerk/shared": true
-  ssh2: false
-  cpu-features: false
-  protobufjs: false
