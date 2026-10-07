@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0011 on 2026-10-07
 date: 2026-09-13
 ---
 # Provider credentials live only in the egress proxy

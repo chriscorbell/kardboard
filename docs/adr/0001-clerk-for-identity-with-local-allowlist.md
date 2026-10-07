@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-09-13
+amended: 2026-10-07 by ADR 0011, which leaves the allowlist one address and drops Members and Invitations
 ---
 # Clerk for identity, kardboard's User table for access
 
