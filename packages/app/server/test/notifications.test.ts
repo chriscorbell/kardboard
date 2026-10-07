@@ -34,7 +34,7 @@ async function makeCard(boardId: string, creator: User, title = "A card"): Promi
   const id = `card-${n++}`;
   await db.insert(schema.cards).values({ id, boardId, title, creatorKind: "user", creatorId: creator.id });
   const row = (await db.select().from(schema.cards).where(eq(schema.cards.id, id)).get())!;
-  return { ...row, commentCount: 0, activeSession: null } as Card;
+  return { ...row, commentCount: 0, awaitingReply: false } as Card;
 }
 
 function comment(cardId: string, author: User, body: string): Comment {
@@ -43,7 +43,6 @@ function comment(cardId: string, author: User, body: string): Comment {
     cardId,
     authorKind: "user",
     authorId: author.id,
-    sessionId: null,
     body,
     editedAt: null,
     createdAt: new Date().toISOString(),
@@ -59,8 +58,8 @@ beforeEach(async () => {
   await db.delete(schema.users);
   await db.delete(schema.boards);
   await db.insert(schema.boards).values([
-    { sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" },
-    { sessionsEnabled: true, id: OTHER_BOARD, slug: "board-two", name: "Board two" },
+    { id: BOARD, slug: "board-one", name: "Board one" },
+    { id: OTHER_BOARD, slug: "board-two", name: "Board two" },
   ]);
 });
 

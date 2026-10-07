@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, GitBranch, GitPullRequest, History, Link2, Pencil, Reply, Trash2, Upload, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardMember, type BoardView, type Card, type Column, type Comment, type Person, type Priority, type Provider } from "@kardboard/shared";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardMember, type BoardView, type Card, type Column, type Comment, type Person, type Priority } from "@kardboard/shared";
 import { useCard, useCreateComment, useDeleteCard, useDeleteComment, useMarkCardRead, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
@@ -13,15 +13,11 @@ import { useFileDrop } from "../../lib/fileInput";
 import { toast } from "../../lib/toast";
 import { Composer, type ComposerHandle } from "./Composer";
 import { COLUMN_TONES } from "./columns";
-import { WorkingDot } from "./CardTile";
-import { SessionBanner } from "./SessionBanner";
 import { ApiError } from "../../lib/errors";
 import { Attachments } from "./AttachmentView";
-import { PreviewLink } from "./PreviewLink";
 import { canDeleteCard } from "./cardDeletion";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
 import { isInnermostModal, useModalFocus } from "../../components/focus";
-import { ReviewBlock } from "./ReviewBlock";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
 
@@ -87,12 +83,6 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   useEffect(() => {
     markCardRead(cardId);
   }, [cardId, markCardRead]);
-  // Request changes in the Review block hands over to the comment composer, with a prompt for what to write.
-  const [composerHint, setComposerHint] = useState<string | null>(null);
-  const requestChanges = () => {
-    setComposerHint("What should change?");
-    composer.current?.focus();
-  };
 
   if (!card) {
     if (detail.isError) {
@@ -187,15 +177,11 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
         </div>
         <BlockedQuestion card={card} comments={detail.data?.comments} agent={view.agent} handles={handles} onReply={() => composer.current?.focus()} />
 
-        {/* Sessions and Approval belong to a Board that runs Sessions. Without them, what an earlier
-            Session left behind has nothing to offer: Try again and Approve would both be refused. */}
-        {view.board.sessionsEnabled ? <SessionBanner slug={slug} card={card} agentName={view.agent.name} isAdmin={isAdmin} /> : null}
-
         <div className="px-6 pt-5">
           <DescriptionEditor card={card} handles={handles} onSave={(description, base) => saveField("description", description, base)} />
         </div>
 
-        {card.branch || card.prUrl || card.previewUrl ? (
+        {card.branch || card.prUrl ? (
           <div className="mx-6 mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-line bg-bg px-3.5 py-2.5 text-[12.5px]">
             {card.branch ? (
               <span className="inline-flex items-center gap-1.5 font-mono text-ink-muted">
@@ -210,23 +196,10 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
                 <ArrowUpRight className="size-3" strokeWidth={1.75} />
               </a>
             ) : null}
-            <PreviewLink card={card} />
           </div>
         ) : null}
 
-        {card.column === "review" && view.board.sessionsEnabled ? (
-          <ReviewBlock
-            slug={slug}
-            card={card}
-            agentName={view.agent.name}
-            approvals={detail.data?.approvals ?? []}
-            members={people}
-            isAdmin={isAdmin}
-            onRequestChanges={requestChanges}
-          />
-        ) : null}
-
-        {detail.data?.children.length ? <ChildCards slug={slug} cards={detail.data.children} agentName={view.agent.name} sessionsEnabled={view.board.sessionsEnabled} /> : null}
+        {detail.data?.children.length ? <ChildCards slug={slug} cards={detail.data.children} /> : null}
 
         <div className="px-6 pb-2 pt-6">
           <h3 className="mb-3 text-[12px] font-semibold uppercase tracking-wide text-ink-faint">Comments</h3>
@@ -239,7 +212,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           )}
         </div>
         <div className="px-6 pb-4">
-          <NewComment ref={composer} cardId={card.id} members={view.members} known={view.people} agent={view.agent} placeholder={composerHint ?? undefined} onPosted={() => setComposerHint(null)} />
+          <NewComment ref={composer} cardId={card.id} members={view.members} known={view.people} agent={view.agent} />
         </div>
         <Activity entries={detail.data?.activity ?? []} people={people} agentName={view.agent.name} />
       </div>
@@ -248,9 +221,9 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   );
 }
 
-// The pieces a session split this request into. They run on their own, so this is where a person
-// sees how far the whole request has got without opening each child in turn.
-function ChildCards({ slug, cards, agentName, sessionsEnabled }: { slug: string; cards: Card[]; agentName: string; sessionsEnabled: boolean }) {
+// The pieces this request was split into, so a person sees how far the whole request has got
+// without opening each child in turn.
+function ChildCards({ slug, cards }: { slug: string; cards: Card[] }) {
   const navigate = useNavigate();
   const open = cards.filter((c) => c.column !== "done").length;
   return (
@@ -265,7 +238,6 @@ function ChildCards({ slug, cards, agentName, sessionsEnabled }: { slug: string;
               className="flex w-full items-center gap-2 rounded-card border border-line bg-bg px-3 py-2 text-left text-[13px] text-ink transition-colors hover:border-line-strong"
             >
               <span className="min-w-0 flex-1 truncate">{c.title}</span>
-              {c.activeSession ? <WorkingDot /> : null}
               <Chip tone={c.column === "done" && c.outcome === "closed" ? "neutral" : COLUMN_TONES[c.column]}>
                 {c.column === "done" ? (c.outcome === "closed" ? "Closed" : "Merged") : COLUMN_LABELS[c.column]}
               </Chip>
@@ -274,7 +246,7 @@ function ChildCards({ slug, cards, agentName, sessionsEnabled }: { slug: string;
         ))}
       </ul>
       <p className="mt-2 text-[12px] text-ink-faint">
-        {open === 0 ? (sessionsEnabled ? `Every piece is finished, so ${agentName} picks this card up again.` : "Every piece is finished.") : `${open} of ${cards.length} still open. This card waits until the last one is done.`}
+        {open === 0 ? "Every piece is finished." : `${open} of ${cards.length} still open.`}
       </p>
     </div>
   );
@@ -488,7 +460,7 @@ function CommentList({
       {comments.length === 0 ? <p className="text-[13px] text-ink-faint">No comments yet.</p> : null}
       <ol ref={list} tabIndex={-1} aria-label="Comments" className="flex flex-col gap-5 outline-none">
         {comments.map((c) => {
-          // A kardboard notice, such as a Session that stopped short, is signed by kardboard itself.
+          // A notice kardboard posted itself, from when it ran Sessions, is signed by kardboard.
           const author = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? people.get(c.authorId) : undefined;
           const mine = c.authorKind === "user" && c.authorId === meId;
           const canDelete = mine || isAdmin;
@@ -743,44 +715,20 @@ function ClampedMarkdown({ body, handles, children }: { body: string; handles: M
   );
 }
 
-const PROVIDER_LABELS: Record<Provider, string> = { claude: "Claude Code", codex: "Codex" };
-
-function pieces(p: Record<string, unknown>): string {
-  const n = Array.isArray(p.children) ? p.children.length : 0;
-  return n === 1 ? "the one piece of this request is finished" : `all ${n} pieces of this request are finished`;
-}
-
+// Comments show on their own, so their events stay out of the trail. So does anything left over
+// from when kardboard ran Sessions, which the log still holds but nothing here explains.
 const ACTIVITY_LABEL: Record<string, (p: Record<string, unknown>) => string> = {
   "card.created": () => "created this card",
   "card.edited": (p) => `edited the ${(p.fields as string[] | undefined)?.join(" and ") ?? "card"}`,
   "card.moved": (p) => `moved it from ${COLUMN_LABELS[p.from as Column] ?? p.from} to ${COLUMN_LABELS[p.to as Column] ?? p.to}`,
-  "card.approved": () => "approved the change",
-  "comment.posted": () => "commented",
-  "comment.edited": () => "edited a comment",
-  "session.queued": () => "queued a session",
-  "session.started": () => "started a session",
-  "session.succeeded": (p) => `finished a session${p.outcomeSummary ? `: ${p.outcomeSummary as string}` : ""}`,
-  "session.failed": (p) => `session failed${p.outcomeSummary ? `: ${p.outcomeSummary as string}` : ""}`,
-  "session.cancelled": () => "cancelled the session",
-  "session.timed_out": () => "session hit its time limit",
-  "session.cancel_requested": () => "asked to cancel the session",
-  "card.retry_requested": () => "asked to try again",
-  "card.merge_refused": (p) => `could not merge the pull request${p.error ? `: ${p.error as string}` : ""}`,
-  "card.merge_retried": () => "tried the merge again",
-  "pull_request.closed": (p) => `saw pull request #${p.prNumber as number} closed on GitHub without a merge`,
-  "pull_request.head_changed": (p) => `saw new commits on pull request #${p.prNumber as number}`,
-  "session.reported": (p) => `reported${p.summary ? `: ${p.summary as string}` : ""}`,
-  "session.provider_fallback": (p) => `moved the work from ${PROVIDER_LABELS[p.from as Provider] ?? p.from} to ${PROVIDER_LABELS[p.to as Provider] ?? p.to}, which had usage left`,
-  "preview.requested": () => "started building a preview",
   "card.merged": (p) => `merged pull request${p.prNumber ? ` #${p.prNumber as number}` : ""}`,
   "card.pr_linked": (p) => `linked pull request #${p.prNumber as number}`,
-  "card.children_done": (p) => `noted that ${pieces(p)}`,
   "comment.deleted": () => "deleted a comment",
 };
 
 function Activity({ entries, people, agentName }: { entries: ActivityEntry[]; people: Map<string, Person>; agentName: string }) {
   const [open, setOpen] = useState(false);
-  const visible = entries.filter((e) => e.type !== "comment.posted" && e.type !== "comment.edited");
+  const visible = entries.filter((e) => e.type in ACTIVITY_LABEL);
   if (visible.length === 0) return null;
   return (
     <div className="border-t border-line px-6 py-4">
@@ -794,7 +742,7 @@ function Activity({ entries, people, agentName }: { entries: ActivityEntry[]; pe
         <ol className="mt-3 flex flex-col gap-1.5 text-[12.5px] text-ink-muted">
           {visible.map((e) => {
             const who = e.actorKind === "agent" ? agentName : e.actorKind === "system" ? "kardboard" : e.actorId ? (people.get(e.actorId)?.name ?? "Someone") : "Someone";
-            const label = ACTIVITY_LABEL[e.type]?.(e.payload) ?? e.type;
+            const label = ACTIVITY_LABEL[e.type]!(e.payload);
             return (
               <li key={e.id} className="flex gap-2">
                 <span className="w-16 shrink-0 font-mono text-[11px] text-ink-faint" title={absoluteTime(e.createdAt)}>

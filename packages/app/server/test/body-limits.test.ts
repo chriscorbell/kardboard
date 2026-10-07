@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -13,7 +12,6 @@ import { serve } from "@hono/node-server";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-body-limits-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
@@ -31,20 +29,25 @@ after(() => {
 });
 
 const BOARD = "board-1";
+const ADMIN = "root@example.com";
 const MEMBER = "ada@example.com";
-const TOKEN = "token-session-1";
 const MB = 1024 * 1024;
 
+// The Access token the agent calls the MCP server with, made afresh for each test.
+let token = "";
+
 beforeEach(async () => {
-  for (const t of [schema.attachments, schema.sessions, schema.triggers, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.accessTokens, schema.attachments, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
-    { id: "admin", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active" },
+    { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" },
   ]);
   await db.insert(schema.boardMembers).values({ boardId: BOARD, userId: "ada" });
   await db.insert(schema.cards).values({ id: "card-1", boardId: BOARD, title: "A card", column: "ready", creatorKind: "user", creatorId: "ada" });
-  await db.insert(schema.sessions).values({ id: "session-1", boardId: BOARD, cardId: "card-1", kind: "card", provider: "claude", status: "running", tokenHash: createHash("sha256").update(TOKEN).digest("hex") });
+  const made = await call(ADMIN, "POST", `/admin/boards/${BOARD}/tokens`, { name: "Laptop" });
+  assert.equal(made.status, 201);
+  token = ((await made.json()) as { secret: string }).secret;
 });
 
 function call(as: string, method: string, url: string, body?: unknown) {
@@ -55,19 +58,19 @@ function call(as: string, method: string, url: string, body?: unknown) {
   });
 }
 
-// A tool call whose comment is `size` bytes of text, sent by the running Session.
+// A tool call whose comment is `size` bytes of text, sent by the agent holding the token.
 function toolCall(size: number) {
   return JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "post_comment", arguments: { card_id: "card-1", body: "x".repeat(size) } } });
 }
 
-const mcpHeaders = { Authorization: `Bearer ${TOKEN}`, "content-type": "application/json", accept: "application/json, text/event-stream" };
+const mcpHeaders = () => ({ Authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" });
 // The server drops a connection whose body it refused without reading, half a second after
 // answering, so a refused request keeps its connection to itself rather than leave it to the next.
-const refusedHeaders = { ...mcpHeaders, connection: "close" };
+const refusedHeaders = () => ({ ...mcpHeaders(), connection: "close" });
 
 describe("the MCP server", () => {
-  it("refuses a body over 1 MB from a Session", async () => {
-    const res = await fetch(mcpUrl, { method: "POST", headers: refusedHeaders, body: toolCall(2 * MB) });
+  it("refuses a body over 1 MB from an agent", async () => {
+    const res = await fetch(mcpUrl, { method: "POST", headers: refusedHeaders(), body: toolCall(2 * MB) });
     assert.equal(res.status, 413);
     assert.deepEqual(await res.json(), { error: "request body exceeds 1 MB" });
   });
@@ -86,7 +89,7 @@ describe("the MCP server", () => {
     });
     // The server answers 413 and closes while the client is still writing, so the client sees either
     // that answer or, when the close wins the race, its own write fail. Both are the refusal.
-    const res = await fetch(mcpUrl, { method: "POST", headers: refusedHeaders, body, duplex: "half" } as RequestInit).catch((err: Error & { cause?: { code?: string } }) => {
+    const res = await fetch(mcpUrl, { method: "POST", headers: refusedHeaders(), body, duplex: "half" } as RequestInit).catch((err: Error & { cause?: { code?: string } }) => {
       if (err.cause?.code === "EPIPE" || err.cause?.code === "ECONNRESET") return null;
       throw err;
     });
@@ -95,7 +98,7 @@ describe("the MCP server", () => {
   });
 
   it("still takes the largest call a tool accepts", async () => {
-    const res = await fetch(mcpUrl, { method: "POST", headers: mcpHeaders, body: toolCall(20_000) });
+    const res = await fetch(mcpUrl, { method: "POST", headers: mcpHeaders(), body: toolCall(20_000) });
     assert.equal(res.status, 200);
     assert.match(await res.text(), /"result"/);
   });

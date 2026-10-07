@@ -1,13 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { extractMentionHandles, mimeEssence, type Attachment, type Comment, type User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
 import { recordEvent, type Actor } from "./events.js";
-import { enqueueTrigger } from "./orchestrator.js";
 import { getCard } from "./cards.js";
 import { findUsersByHandles } from "./users.js";
 import { canBeNotified, forgetCommentTraces, notifyMentions } from "./notifications.js";
@@ -33,7 +32,6 @@ async function hydrate(rows: (typeof schema.comments.$inferSelect)[]): Promise<C
     cardId: r.cardId,
     authorKind: r.authorKind,
     authorId: r.authorId,
-    sessionId: r.sessionId,
     body: r.body,
     editedAt: r.editedAt,
     createdAt: r.createdAt,
@@ -80,8 +78,6 @@ export async function createComment(input: {
   cardId: string;
   body: string;
   actor: Actor;
-  sessionId?: string | null;
-  silent?: boolean;
 }): Promise<Comment> {
   const card = await getCard(input.cardId);
   if (!card) throw new Error("card not found");
@@ -91,7 +87,6 @@ export async function createComment(input: {
     cardId: input.cardId,
     authorKind: input.actor.kind,
     authorId: input.actor.id,
-    sessionId: input.sessionId ?? null,
     body: input.body,
   });
   let comment = (await getComment(id))!;
@@ -109,9 +104,6 @@ export async function createComment(input: {
   publish(card.boardId, { type: "comment.upserted", comment });
   publish(card.boardId, { type: "card.upserted", card: (await getCard(card.id))! });
   await notifyMentions(card, comment, newlyMentioned, input.actor);
-  if (input.actor.kind === "user" && !input.silent) {
-    await enqueueTrigger({ card, kind: "comment_posted", actorUserId: input.actor.id, payload: { commentId: id } });
-  }
   return comment;
 }
 
@@ -133,9 +125,6 @@ export async function updateComment(id: string, input: { body: string; actor: Ac
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "comment.edited", payload: { commentId: id } });
   publish(card.boardId, { type: "comment.upserted", comment });
   await notifyMentions(card, comment, newlyMentioned, input.actor);
-  if (input.actor.kind === "user") {
-    await enqueueTrigger({ card, kind: "comment_edited", actorUserId: input.actor.id, payload: { commentId: id } });
-  }
   return comment;
 }
 
@@ -192,7 +181,7 @@ export async function removeUnusedUploads(hashes: Iterable<string>, opts: { offD
  * Attachments, and each uploaded file no other Attachment still points at. A pasted secret is the
  * usual reason, so the mention notifications that quoted it go as well; an email already sent
  * cannot be recalled. The event log records that the Comment was deleted and whose it was, never
- * what it said. Not a Trigger: taking words back is not a request for work.
+ * what it said.
  */
 export async function deleteComment(id: string, actor: Actor): Promise<void> {
   const current = await getComment(id);
@@ -205,10 +194,6 @@ export async function deleteComment(id: string, actor: Actor): Promise<void> {
   await db.delete(schema.mentions).where(eq(schema.mentions.commentId, id));
   await db.delete(schema.comments).where(eq(schema.comments.id, id));
   await forgetCommentTraces(id, card.id, [current.body, ...revisions.map((r) => r.body)]);
-  // A Session not yet started for this Comment has nothing left to read: its Trigger goes with it.
-  await db
-    .delete(schema.triggers)
-    .where(and(eq(schema.triggers.cardId, card.id), eq(schema.triggers.status, "pending"), sql`json_extract(${schema.triggers.payload}, '$.commentId') = ${id}`));
   await removeUnusedUploads(hashes, { offDiskCopy: true });
   await recordEvent({
     boardId: card.boardId,

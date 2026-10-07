@@ -1,8 +1,7 @@
 import { forwardRef, type HTMLAttributes } from "react";
-import { GitPullRequest, MessageCircleQuestion, MessageSquare, Pause, RotateCcw } from "lucide-react";
-import type { AgentProfile, Card, Person, WaitingReason } from "@kardboard/shared";
+import { GitPullRequest, MessageCircleQuestion, MessageSquare } from "lucide-react";
+import type { AgentProfile, Card, Person } from "@kardboard/shared";
 import { Avatar, cx } from "../../components/ui";
-import { tileWaiting } from "./sessionStatus";
 
 const PRIORITY: Record<Card["priority"], { label: string; className: string } | null> = {
   none: null,
@@ -10,23 +9,6 @@ const PRIORITY: Record<Card["priority"], { label: string; className: string } | 
   medium: { label: "Medium", className: "text-warn" },
   high: { label: "High", className: "text-danger" },
 };
-
-export function WorkingDot({ className }: { className?: string }) {
-  return (
-    <span className={cx("relative inline-flex size-2", className)} aria-hidden="true">
-      <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-60 [animation-duration:1.8s]" />
-      <span className="relative inline-flex size-2 rounded-full bg-accent" />
-    </span>
-  );
-}
-
-// The working dot's quieter sibling: a hollow ring for a Card that will start, in the accent while
-// its batch collects and faint while it waits on a slot or a retry, and the pause glyph on a paused
-// Board. Still rather than pulsing, since nothing is running yet.
-export function WaitingMark({ reason, className }: { reason: WaitingReason; className?: string }) {
-  if (reason === "paused") return <Pause className={cx("size-3 text-ink-muted", className)} strokeWidth={2.25} aria-hidden="true" />;
-  return <span className={cx("inline-flex size-2 shrink-0 rounded-full border-[1.5px]", reason === "coalescing" ? "border-accent" : "border-ink-faint", className)} aria-hidden="true" />;
-}
 
 type Props = HTMLAttributes<HTMLDivElement> & {
   card: Card;
@@ -40,9 +22,6 @@ type Props = HTMLAttributes<HTMLDivElement> & {
 
 export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ card, creator, agent, questionIsMine = false, dragging, overlay, className, ...rest }, ref) {
   const priority = PRIORITY[card.priority];
-  const working = card.activeSession && card.activeSession.status !== "queued";
-  const queued = card.activeSession?.status === "queued";
-  const waiting = tileWaiting(card, agent.name);
   return (
     <div
       ref={ref}
@@ -76,23 +55,6 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
           </span>
         ) : null}
         <span className="ml-auto flex items-center gap-2">
-          {working ? (
-            <span className="inline-flex items-center gap-1.5 text-accent">
-              <WorkingDot />
-              {agent.name}
-            </span>
-          ) : queued ? (
-            <span className="text-ink-muted">Starting</span>
-          ) : waiting ? (
-            <span className="inline-flex size-3.5 items-center justify-center" title={waiting.label}>
-              <WaitingMark reason={waiting.reason} />
-              <span className="sr-only">{waiting.label}</span>
-            </span>
-          ) : card.pendingRerun ? (
-            <span className="inline-flex items-center gap-1 text-ink-muted" title="Changes queued for the next session">
-              <RotateCcw className="size-3.5" strokeWidth={1.75} />
-            </span>
-          ) : null}
           {creator ? <Avatar name={creator.name} url={creator.avatarUrl} size={20} /> : card.creatorKind === "agent" ? <Avatar name={agent.name} url={agent.avatarUrl} size={20} tone="agent" /> : null}
         </span>
       </div>

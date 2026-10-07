@@ -1,6 +1,6 @@
 # First implementation pass
 
-Status: complete, archived 2026-09-14. Its close condition was met: the stack runs on minicore behind `cardboard.xode.cc` and Sessions have completed against two repositories. Durable facts moved to `context/cardboard-production-operations.md` and `lessons/docker-image-and-compose-gotchas.md`; open items continue in `work/2026-09-14-v1-gaps.md`.
+Status: complete, archived 2026-09-14. Its close condition was met: the stack runs on minicore behind `cardboard.xode.cc` and Sessions have completed against two repositories. Durable facts moved to `context/cardboard-production-operations.md` and `lessons/docker-image-and-compose-gotchas.md`; open items continue in `archive/2026-09-14-v1-gaps.md`.
 Objective: bring Cardboard from design to a deployable v1. Overnight on 2026-09-13/14 the scaffold, server, client, MCP endpoint, runner, egress, preview-router, images, compose file, and CI were written; see [README.md](../../../README.md) for what runs and the "Status" section for what is missing.
 Branch: `main`, pushed to `github.com/chriscorbell/cardboard` (public since 2026-09-14). CI publishes five images to GHCR on every push to main; the first green run was 2026-09-14.
 

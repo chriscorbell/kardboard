@@ -14,17 +14,15 @@ import { attachmentOnlyBody, FileChips } from "./Composer";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
 
-// Files picked here go up after the Card exists, on one Comment by its creator. That Comment is
-// written within moments of the Card, so its Trigger joins the Card's own in the same coalesced
-// dispatch and the Session sees the request and its files together.
+// Files picked here go up after the Card exists, on one Comment by its creator, posted within
+// moments of the Card.
 type Upload = { card: Card; progress: PostProgress<File> | null; fractions: ReadonlyMap<File, number>; error: string | null };
 
-export function NewCardDialog({ slug, open, onClose, isAdmin, sessionsEnabled, onCreated }: { slug: string; open: boolean; onClose: () => void; isAdmin: boolean; sessionsEnabled: boolean; onCreated: (id: string) => void }) {
+export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slug: string; open: boolean; onClose: () => void; isAdmin: boolean; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>("none");
   const [column, setColumn] = useState<Column>("inbox");
-  const [silent, setSilent] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   // Set once the Card exists and files are going up. A failed upload keeps it, so trying again
@@ -50,7 +48,6 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, sessionsEnabled, o
       setDescription("");
       setPriority("none");
       setColumn("inbox");
-      setSilent(false);
       setFiles([]);
       setNotice(null);
       setUpload(null);
@@ -84,7 +81,6 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, sessionsEnabled, o
     setUpload({ ...state, error: null });
     let progress = state.progress;
     const requests = commentRequests(state.card.id, {
-      silent: silent || undefined,
       onProgress: (file, fraction) => setUpload((u) => u && { ...u, fractions: new Map(u.fractions).set(file, fraction) }),
     });
     try {
@@ -112,7 +108,7 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, sessionsEnabled, o
     submitting.current = true;
     try {
       if (upload) return await sendFiles(upload, at);
-      const card = await create.mutateAsync({ title, description, priority, column, silent: silent || undefined });
+      const card = await create.mutateAsync({ title, description, priority, column });
       if (files.length === 0) return finish(card, at);
       await sendFiles({ card, progress: null, fractions: new Map(), error: null }, at);
     } catch {
@@ -200,13 +196,6 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, sessionsEnabled, o
             </Field>
           ) : null}
         </div>
-        {/* Without sessions every card is silent already. */}
-        {isAdmin && sessionsEnabled ? (
-          <label className="flex items-center gap-2 text-[13px] text-ink-muted">
-            <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} className="accent-accent" disabled={locked} />
-            Silent: don't start a session for this card yet
-          </label>
-        ) : null}
         {create.isError ? (
           <p role="alert" className="text-[13px] text-danger">
             Could not create the card. {create.error.message}

@@ -2,12 +2,12 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { BoardEvent, BoardView, CardDetail } from "@kardboard/shared";
-import { keys, upsertCardInBoard, upsertSessionInBoard } from "./api";
+import { keys, upsertCardInBoard } from "./api";
 import { useAuth } from "./auth";
 import { reconnectDelay } from "./backoff";
 import { toast } from "./toast";
 
-const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comment.removed", "session.updated", "board.updated", "board.deleted"] as const;
+const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comment.removed", "board.updated", "board.deleted"] as const;
 
 // Server-sent events keep the board query fresh without polling. Clerk mode cannot set headers on
 // EventSource, so it falls back to a token query parameter over the same origin.
@@ -58,10 +58,6 @@ export function useBoardEvents(slug: string | undefined) {
         // Dropped from the open sheet at once: a deleted Comment is often one nobody should keep reading.
         case "comment.removed":
           qc.setQueryData<CardDetail>(keys.card(event.cardId), (d) => (d ? { ...d, comments: d.comments.filter((c) => c.id !== event.commentId) } : d));
-          break;
-        case "session.updated":
-          upsertSessionInBoard(qc, slug, event.session);
-          if (event.session.cardId) void qc.invalidateQueries({ queryKey: keys.card(event.session.cardId) });
           break;
         case "board.updated":
           qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, board: event.board } : v));

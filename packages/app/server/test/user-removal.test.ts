@@ -10,7 +10,6 @@ import { eq } from "drizzle-orm";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-user-removal-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
@@ -22,8 +21,8 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 const ADMIN = "root@example.com";
 
 beforeEach(async () => {
-  for (const t of [schema.previewCodes, schema.previews, schema.notifications, schema.outboundEmails, schema.mentions, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ sessionsEnabled: true, id: "board-1", slug: "board-one", name: "Board one" });
+  for (const t of [schema.notifications, schema.outboundEmails, schema.mentions, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "ada", email: "ada@example.com", handle: "ada", name: "Ada Lovelace", role: "member", status: "revoked", clerkUserId: "clerk_ada", avatarUrl: "https://img.example/ada.png" },
@@ -36,8 +35,6 @@ beforeEach(async () => {
     { id: "pending", toUserId: "ada", subject: "s", html: "h", status: "pending" },
     { id: "sent", toUserId: "ada", subject: "s", html: "h", status: "sent" },
   ]);
-  await db.insert(schema.previews).values({ id: "preview-1", boardId: "board-1", cardId: "card-1", host: "card-1.kardboard.cc", branch: "b" });
-  await db.insert(schema.previewCodes).values({ code: "code-1", previewId: "preview-1", userId: "ada", expiresAt: new Date(Date.now() + 60_000).toISOString() });
 });
 
 function call(method: string, url: string, as = ADMIN) {
@@ -62,7 +59,6 @@ describe("removing a user", () => {
 
     assert.deepEqual(await db.select().from(schema.boardMembers).where(eq(schema.boardMembers.userId, "ada")), []);
     assert.deepEqual(await db.select().from(schema.notifications).where(eq(schema.notifications.userId, "ada")), []);
-    assert.deepEqual(await db.select().from(schema.previewCodes).where(eq(schema.previewCodes.userId, "ada")), []);
     assert.deepEqual((await db.select().from(schema.outboundEmails)).map((e) => e.id), ["sent"]);
 
     // Their Card and Comment stay, and the Board still names them.

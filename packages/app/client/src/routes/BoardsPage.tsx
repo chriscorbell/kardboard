@@ -1,5 +1,5 @@
 import { Link, Navigate } from "react-router";
-import { ArrowRight, Bot, GitBranch } from "lucide-react";
+import { ArrowRight, GitBranch } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { useBoards, useMe } from "../lib/api";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui";
@@ -51,10 +51,6 @@ export function BoardsPage() {
                         {b.repoUrl.replace(/^https?:\/\/(www\.)?github\.com\//, "")}
                       </span>
                     ) : null}
-                    <span className="inline-flex items-center gap-1">
-                      <Bot className="size-3.5" strokeWidth={1.75} />
-                      {b.provider === "claude" ? "Claude Code" : "Codex"}
-                    </span>
                   </p>
                 </div>
                 <ArrowRight className="size-4 text-ink-faint transition-transform duration-200 ease-out-expo group-hover:translate-x-0.5 group-hover:text-ink" strokeWidth={1.75} />

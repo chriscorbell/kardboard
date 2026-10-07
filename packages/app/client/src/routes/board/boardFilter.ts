@@ -43,11 +43,11 @@ export function filterActive(filter: BoardFilter): boolean {
 export type Viewer = { id: string; isAdmin: boolean };
 
 // Waiting on this viewer. A question counts when the Card is theirs, or for the Admin, whom the
-// Agent asks about anything risky. A Card in Review counts for anyone, since every Member can
-// approve, once no Session is still at work on it.
+// Agent asks about anything risky. A Card in Review counts for anyone: its pull request is open for
+// a look.
 export function waitsOn(card: Card, viewer: Viewer): boolean {
   if (card.column === "blocked" && card.awaitingReply) return viewer.isAdmin || (card.creatorKind === "user" && card.creatorId === viewer.id);
-  return card.column === "review" && !card.activeSession;
+  return card.column === "review";
 }
 
 // Every word must appear in the title or the details, or start the Card's id (as the sheet shows it).

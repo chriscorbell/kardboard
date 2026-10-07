@@ -134,6 +134,13 @@
       "when": 1790644725796,
       "tag": "0018_access-tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1791415506486,
+      "tag": "0019_remove-sessions",
+      "breakpoints": true
     }
   ]
 }

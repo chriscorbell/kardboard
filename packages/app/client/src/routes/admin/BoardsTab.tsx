@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pause, Plus, Trash2 } from "lucide-react";
-import { REASONING_LEVELS, type Board, type BoardDeletionImpact, type Reasoning } from "@kardboard/shared";
+import { Plus, Trash2 } from "lucide-react";
+import type { Board, BoardDeletionImpact } from "@kardboard/shared";
 import { keys, request, useAdminBoards, useAdminUsers, useMe, type AdminBoard } from "../../lib/api";
-import { Avatar, Button, Chip, cx, ErrorState, Field, Input, Reveal, Select, Skeleton, Textarea } from "../../components/ui";
+import { Avatar, Button, cx, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./AdminPage";
 import { AccessTokensPanel } from "./AccessTokensPanel";
@@ -16,24 +15,13 @@ type Draft = {
   name: string;
   slug: string;
   repoUrl: string;
-  provider: "claude" | "codex";
-  model: string;
-  reasoning: "" | Reasoning;
-  previewMode: "external" | "runner";
-  agentImage: string;
-  maxConcurrentSessions: number;
-  promptAppend: string;
-  paused: boolean;
-  sessionsEnabled: boolean;
   memberIds: string[];
 };
 
-const REASONING_LABELS: Record<Reasoning, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
-
-const empty: Draft = { name: "", slug: "", repoUrl: "", provider: "claude", model: "", reasoning: "", previewMode: "external", agentImage: "", maxConcurrentSessions: 3, promptAppend: "", paused: false, sessionsEnabled: false, memberIds: [] };
+const empty: Draft = { name: "", slug: "", repoUrl: "", memberIds: [] };
 
 function fromBoard(b: AdminBoard): Draft {
-  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "", provider: b.provider, model: b.model ?? "", reasoning: b.reasoning ?? "", previewMode: b.previewMode, agentImage: b.agentImage ?? "", maxConcurrentSessions: b.maxConcurrentSessions, promptAppend: b.promptAppend, paused: b.paused, sessionsEnabled: b.sessionsEnabled, memberIds: b.memberIds };
+  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "", memberIds: b.memberIds };
 }
 
 export function BoardsTab() {
@@ -58,18 +46,6 @@ export function BoardsTab() {
         name: draft.name,
         slug: slugify(draft.slug),
         repoUrl: draft.repoUrl || null,
-        provider: draft.provider,
-        model: draft.model.trim() || null,
-        reasoning: draft.reasoning || null,
-        previewMode: draft.previewMode,
-        agentImage: draft.agentImage || null,
-        maxConcurrentSessions: draft.maxConcurrentSessions,
-        promptAppend: draft.promptAppend,
-        // Sent only when the box changed here, so saving an unrelated edit never undoes a pause made
-        // from the Board page since this dialog opened.
-        ...(editing === "new" || draft.paused !== (editing as AdminBoard).paused ? { paused: draft.paused } : {}),
-        // Likewise, and switching it is refused while a session runs, which should not block a rename.
-        ...(editing === "new" || draft.sessionsEnabled !== (editing as AdminBoard).sessionsEnabled ? { sessionsEnabled: draft.sessionsEnabled } : {}),
       };
       const board = editing === "new" ? await request<Board>("/admin/boards", { method: "POST", body: JSON.stringify(body) }) : await request<Board>(`/admin/boards/${(editing as AdminBoard).id}`, { method: "PATCH", body: JSON.stringify(body) });
       await request(`/admin/boards/${board.id}/members`, { method: "PUT", body: JSON.stringify({ userIds: draft.memberIds }) });
@@ -87,7 +63,7 @@ export function BoardsTab() {
     <>
       <TabHeader
         title="Boards"
-        body="One board per project. Each board holds its repository, provider, and the members who may open it."
+        body="One board per project. Each board holds its repository and the members who may open it."
         action={
           <Button variant="primary" icon={<Plus className="size-4" strokeWidth={1.75} />} onClick={() => setEditing("new")}>
             New board
@@ -109,23 +85,8 @@ export function BoardsTab() {
                   </p>
                   <p className="mt-0.5 truncate font-mono text-[12px] text-ink-muted">{b.repoUrl ?? "No repository yet"}</p>
                 </div>
-                {/* Unlike the settings detail, a pause shows on a phone too: it is why nothing happens on the board. */}
-                {b.paused ? (
-                  <Chip tone="warn" className="shrink-0">
-                    <Pause className="size-3" strokeWidth={2.25} aria-hidden="true" />
-                    Paused
-                  </Chip>
-                ) : null}
-                {/* Settings detail; the dialog shows all of it, so a phone keeps the row to name and repository. */}
+                {/* Members; the dialog shows all of them, so a phone keeps the row to name and repository. */}
                 <span className="hidden shrink-0 items-center gap-4 sm:flex">
-                  {b.sessionsEnabled ? (
-                    <>
-                      <Chip>{b.provider === "claude" ? "Claude Code" : "Codex"}</Chip>
-                      <Chip>{b.previewMode} preview</Chip>
-                    </>
-                  ) : (
-                    <Chip>Sessions off</Chip>
-                  )}
                   <span className="flex -space-x-1.5">
                     {b.memberIds.slice(0, 4).map((id) => {
                       const u = users.data?.find((x) => x.id === id);
@@ -164,81 +125,15 @@ export function BoardsTab() {
               />
             </Field>
           </div>
-          <Field label="Repository URL" hint={draft.sessionsEnabled ? "GitHub only. Both kardboard GitHub Apps must be installed on it." : "GitHub only. Optional while sessions are off."}>
+          <Field label="Repository URL" hint="GitHub only. Optional.">
             <Input type="url" value={draft.repoUrl} onChange={(e) => setDraft({ ...draft, repoUrl: e.target.value })} placeholder="https://github.com/org/repo" />
           </Field>
-          {editing !== "new" && editing && draft.sessionsEnabled ? <GitHubStatus boardId={editing.id} /> : null}
           <div>
-            <label className="flex items-start gap-2 text-[13px] text-ink-muted">
-              <input type="checkbox" checked={draft.sessionsEnabled} onChange={(e) => setDraft({ ...draft, sessionsEnabled: e.target.checked })} className="mt-[3px] accent-accent" />
-              <span>
-                <span className="font-medium text-ink">Sessions.</span> Every change people make starts a session, where {agentName} does the work or asks about it, and members approve what it
-                merges. Off, changes start nothing, and you work the board from your own agent.
-              </span>
-            </label>
-            {/* What only a board with sessions uses, tucked under the switch that gives it meaning. */}
-            <Reveal open={draft.sessionsEnabled}>
-              <div className="ml-[6px] mt-4 flex flex-col gap-4 border-l border-line pl-4">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <Field label="Provider">
-                    <Select value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value as Draft["provider"] })}>
-                      <option value="claude">Claude Code</option>
-                      <option value="codex">Codex</option>
-                    </Select>
-                  </Field>
-                  <Field label="Preview mode">
-                    <Select value={draft.previewMode} onChange={(e) => setDraft({ ...draft, previewMode: e.target.value as Draft["previewMode"] })}>
-                      <option value="external">External (project CI)</option>
-                      <option value="runner">Runner (Dockerfile)</option>
-                    </Select>
-                  </Field>
-                  <Field label="Max sessions">
-                    <Input type="number" min={1} max={10} value={draft.maxConcurrentSessions} onChange={(e) => setDraft({ ...draft, maxConcurrentSessions: Number(e.target.value) })} />
-                  </Field>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Model" hint={draft.provider === "claude" ? "Claude Code --model. Empty uses its default. Examples: opus, sonnet." : "Codex -m. Empty uses its default. Example: gpt-5.5."}>
-                    <Input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} placeholder="provider default" className="font-mono text-[13px]" />
-                  </Field>
-                  <Field label="Reasoning" hint={draft.provider === "claude" ? "Claude Code effort level. A model without Extra high or Max runs the highest level it has." : "Codex reasoning effort. Max runs as Extra high."}>
-                    <Select value={draft.reasoning} onChange={(e) => setDraft({ ...draft, reasoning: e.target.value as Draft["reasoning"] })}>
-                      <option value="">Provider default</option>
-                      {REASONING_LEVELS.map((level) => (
-                        <option key={level} value={level}>
-                          {REASONING_LABELS[level]}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                </div>
-                <Field label="Agent image override" hint="Leave empty for the default image.">
-                  <Input value={draft.agentImage} onChange={(e) => setDraft({ ...draft, agentImage: e.target.value })} placeholder="ghcr.io/org/image:tag" className="font-mono text-[13px]" />
-                </Field>
-                <Field label="Extra instructions for the agent" hint="Appended to the global workflow prompt for this board only.">
-                  <Textarea rows={3} value={draft.promptAppend} onChange={(e) => setDraft({ ...draft, promptAppend: e.target.value })} />
-                </Field>
-                <label className="flex items-start gap-2 text-[13px] text-ink-muted">
-                  <input type="checkbox" checked={draft.paused} onChange={(e) => setDraft({ ...draft, paused: e.target.checked })} className="mt-[3px] accent-accent" />
-                  <span>
-                    <span className="font-medium text-ink">Paused.</span> {agentName} starts no new sessions on this board and skips its nightly sweep. Sessions already running finish, and changes wait until you
-                    resume it.
-                  </span>
-                </label>
-              </div>
-            </Reveal>
-            {/* The other way to work a board: the Admin's own agent, with a token. Only for a board
-                saved without sessions, since a token is refused on one that runs them. */}
-            <Reveal open={!draft.sessionsEnabled}>
-              <div className="mt-4">
-                {editing && editing !== "new" && !editing.sessionsEnabled ? (
-                  <AccessTokensPanel boardId={editing.id} agentName={agentName} />
-                ) : (
-                  <p className="text-[12.5px] text-ink-faint">
-                    {editing === "new" ? "Once the board exists, its settings can make an access token for your own agent." : "Save with sessions off to make an access token for your own agent."}
-                  </p>
-                )}
-              </div>
-            </Reveal>
+            {editing && editing !== "new" ? (
+              <AccessTokensPanel boardId={editing.id} agentName={agentName} />
+            ) : (
+              <p className="text-[12.5px] text-ink-faint">Once the board exists, its settings can make an access token for your own agent.</p>
+            )}
           </div>
           <div>
             <p className="mb-1.5 text-[13px] font-medium text-ink-muted">Members</p>
@@ -295,19 +190,6 @@ export function BoardsTab() {
   );
 }
 
-function GitHubStatus({ boardId }: { boardId: string }) {
-  const q = useQuery({ queryKey: ["admin", "board-github", boardId], queryFn: () => request<{ repo: string | null; sessions: string; merge: string }>(`/admin/boards/${boardId}/github`) });
-  if (!q.data || !q.data.repo) return null;
-  const tone = (s: string) => (s === "installed" ? "ok" : s === "missing" ? "danger" : "neutral") as "ok" | "danger" | "neutral";
-  return (
-    <div className="-mt-2 flex flex-wrap items-center gap-2 text-[12px] text-ink-muted">
-      <span>GitHub Apps on {q.data.repo}:</span>
-      <Chip tone={tone(q.data.sessions)}>sessions {q.data.sessions}</Chip>
-      <Chip tone={tone(q.data.merge)}>merge {q.data.merge}</Chip>
-    </div>
-  );
-}
-
 // Deleting names the Board twice: once by opening this from its settings, once by typing its slug.
 function DeleteBoardDialog({ board, onClose, onDeleted }: { board: AdminBoard | null; onClose: () => void; onDeleted: () => void }) {
   // The last Board shown stays through the closing animation, so the dialog does not empty as it
@@ -332,21 +214,20 @@ function DeleteBoardForm({ board, onClose, onDeleted }: { board: AdminBoard; onC
   const impact = useQuery({
     queryKey: ["admin", "board-deletion", board.id],
     queryFn: () => request<BoardDeletionImpact>(`/admin/boards/${board.id}/deletion`),
-    // Asked again at every opening: a Session may have started or ended since.
+    // Asked again at every opening: cards may have come or gone since.
     gcTime: 0,
   });
   const remove = useMutation({
     mutationFn: () => request(`/admin/boards/${board.id}`, { method: "DELETE", body: JSON.stringify({ slug: typed.trim() }) }),
     onSuccess: () => {
       qc.removeQueries({ queryKey: keys.board(board.slug) });
-      for (const key of [keys.adminBoards, keys.boards, keys.adminSessions, keys.adminUsage, keys.adminBackups]) void qc.invalidateQueries({ queryKey: key });
+      for (const key of [keys.adminBoards, keys.boards, keys.adminBackups]) void qc.invalidateQueries({ queryKey: key });
       toast(`Deleted ${board.name}.`);
       onDeleted();
     },
   });
   const ready = canDelete(impact.data, typed, board.slug);
   const contents = impact.data ? deletionContents(impact.data) : null;
-  const running = impact.data?.activeSessions ?? 0;
   return (
     <form
       className="flex flex-col gap-4"
@@ -363,20 +244,11 @@ function DeleteBoardForm({ board, onClose, onDeleted }: { board: AdminBoard; onC
         <div className="flex flex-col gap-2 text-[13.5px] leading-relaxed text-ink-muted">
           <p>
             <span className="font-medium text-ink">{board.name}</span>{" "}
-            {contents ? <>will be deleted with everything on it: {contents}, and its sessions and activity.</> : <>has no cards yet. Its settings and members will be deleted.</>}
+            {contents ? <>will be deleted with everything on it: {contents}, and its activity.</> : <>has no cards yet. Its settings and members will be deleted.</>}
           </p>
           <p>A snapshot is taken first, so it can be restored from Backups. The repository on GitHub is not touched.</p>
         </div>
       )}
-      {running > 0 ? (
-        <p className="rounded-control border border-warn/30 bg-[rgba(217,178,108,0.07)] px-3 py-2.5 text-[13px] leading-relaxed text-ink">
-          {running === 1 ? "A session is" : `${running} sessions are`} still running here.{" "}
-          <Link to={`/admin/sessions?board=${encodeURIComponent(board.id)}&status=active`} className="text-accent underline decoration-accent/40 underline-offset-[3px] hover:decoration-accent">
-            Cancel {running === 1 ? "it" : "them"} in Sessions
-          </Link>{" "}
-          or wait for {running === 1 ? "it" : "them"} to finish.
-        </p>
-      ) : null}
       <Field
         label={
           <>

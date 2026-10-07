@@ -19,62 +19,14 @@ export const PRIORITIES = ["none", "low", "medium", "high"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 export const prioritySchema = z.enum(PRIORITIES);
 
-export const PROVIDERS = ["claude", "codex"] as const;
-export type Provider = (typeof PROVIDERS)[number];
-export const providerSchema = z.enum(PROVIDERS);
-
-// Claude Code takes all five, and runs a level the model lacks as the highest one it has at or below
-// it. Codex has no "max" for its models, so the entrypoint runs it as "xhigh".
-export const REASONING_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
-export type Reasoning = (typeof REASONING_LEVELS)[number];
-export const reasoningSchema = z.enum(REASONING_LEVELS);
-
-export const PREVIEW_MODES = ["external", "runner"] as const;
-export type PreviewMode = (typeof PREVIEW_MODES)[number];
-
 export const USER_ROLES = ["admin", "member"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 export const USER_STATUSES = ["invited", "active", "revoked"] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
 
-export const SESSION_KINDS = ["card", "sweep"] as const;
-export type SessionKind = (typeof SESSION_KINDS)[number];
-
-export const SESSION_STATUSES = [
-  "queued",
-  "starting",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "timed_out",
-] as const;
-export type SessionStatus = (typeof SESSION_STATUSES)[number];
-export const ACTIVE_SESSION_STATUSES: readonly SessionStatus[] = ["queued", "starting", "running"];
-
-export const TRIGGER_KINDS = [
-  "card_created",
-  "card_edited",
-  "card_moved",
-  "comment_posted",
-  "comment_edited",
-  "approval",
-  // Not raised by a person: the orchestrator raises one when a Session ran out of Provider usage,
-  // so the Card is picked up again on the other Provider with the same work in front of it.
-  "provider_fallback",
-  // Also not raised by a person. A Session that splits a request into child Cards leaves work
-  // nobody would otherwise start, and a parent that nothing would otherwise wake.
-  "child_card_created",
-  "children_done",
-  // A person pressed Try again on a Card whose last Session failed or timed out. It starts at once
-  // rather than waiting out the batching window.
-  "retry_requested",
-] as const;
-export type TriggerKind = (typeof TRIGGER_KINDS)[number];
-
-// What a Card in Done turned out to be. A child Card that was merged carries its parent's work
-// forward; one closed as a duplicate, or as work that was not needed, does not.
+// What a Card in Done turned out to be: `implemented` when the agent that merged its pull request
+// said so as it closed the Card, `closed` for anything else, a duplicate or work that was not needed.
 export const CARD_OUTCOMES = ["implemented", "closed"] as const;
 export type CardOutcome = (typeof CARD_OUTCOMES)[number];
 
@@ -106,7 +58,7 @@ export interface User {
 /**
  * Enough of a User to say who did something: a name, a face, and the handle a Mention uses. A
  * Board lists everyone who ever appeared on it this way, so a Member who was removed or revoked
- * keeps their name on their Cards, Comments, and Approvals, without their email going with it.
+ * keeps their name on their Cards and Comments, without their email going with it.
  */
 export type Person = Pick<User, "id" | "handle" | "name" | "avatarUrl">;
 
@@ -121,32 +73,7 @@ export interface Board {
   slug: string;
   name: string;
   repoUrl: string | null;
-  provider: Provider;
-  model: string | null;
-  reasoning: Reasoning | null;
-  previewMode: PreviewMode;
-  agentImage: string | null;
-  maxConcurrentSessions: number;
-  promptAppend: string;
-  /** Set by the Admin: no new Session starts on this Board, and its Triggers wait until it is resumed. */
-  paused: boolean;
-  /**
-   * Whether human changes to this Board summon Sessions. Off by default; a Board without them is
-   * worked by the Admin's own agent through an Access token, and nothing on it is a Trigger.
-   */
-  sessionsEnabled: boolean;
   createdAt: string;
-}
-
-// Why a Card with Triggers waiting has no Session yet. `coalescing`: its batching window is still
-// open. `slot`: the Board's or the global cap is full. `paused`: the Admin paused its Board.
-// `retrying`: its last Session could not start, and kardboard tries again in a few minutes.
-export const WAITING_REASONS = ["coalescing", "slot", "paused", "retrying"] as const;
-export type WaitingReason = (typeof WAITING_REASONS)[number];
-export interface CardWaiting {
-  reason: WaitingReason;
-  /** When the oldest Trigger still waiting was raised. */
-  since: string;
 }
 
 export interface Card {
@@ -166,116 +93,11 @@ export interface Card {
   branch: string | null;
   prUrl: string | null;
   prNumber: number | null;
-  /** The pull request head a Member is shown and approves. Approve sends it back. */
-  prHeadSha: string | null;
-  /** The branch the pull request merges into, as GitHub last reported it. */
-  prBaseRef: string | null;
-  /** CI on the pull request, as kardboard last read it from GitHub. */
-  checks: ChecksSummary | null;
-  previewUrl: string | null;
-  /** A runner-hosted Preview's build, or null in external preview mode and before one is requested. */
-  preview: CardPreview | null;
   commentCount: number;
-  activeSession: SessionSummary | null;
-  /** The most recent card Session on this Card that has ended, whatever its outcome. */
-  lastSession: SessionSummary | null;
-  /** Set while the Card has Triggers waiting and no Session: what it is waiting for. */
-  waiting: CardWaiting | null;
-  pendingRerun: boolean;
   /** In Blocked with the Agent's question as the last word on it, so a person owes it an answer. */
   awaitingReply: boolean;
   createdAt: string;
   updatedAt: string;
-}
-
-// A pull request's CI, summed up: `failing` when anything failed, `pending` while anything is still
-// running, `none` when nothing ran, and `unknown` when GitHub would not say, for want of the Merge
-// app's Checks or Commit statuses permission or because it did not answer.
-export const CHECK_STATES = ["passing", "failing", "pending", "none", "unknown"] as const;
-export type CheckState = (typeof CHECK_STATES)[number];
-
-export interface ChecksSummary {
-  state: CheckState;
-  total: number;
-  failed: number;
-  pending: number;
-  /** The head these checks ran on. Once the Card's `prHeadSha` moves on they describe old code. */
-  sha: string;
-  updatedAt: string;
-}
-
-/** "2 of 7 checks failed": a summary in words, the same on the Card and in what the server says. */
-export function describeChecks(summary: Pick<ChecksSummary, "state" | "total" | "failed" | "pending">): string {
-  const { total, failed, pending } = summary;
-  switch (summary.state) {
-    case "failing":
-      return total === 1 ? "The check failed" : `${failed} of ${total} checks failed`;
-    case "pending":
-      return total === 1 ? "The check is still running" : `${pending} of ${total} checks ${pending === 1 ? "is" : "are"} still running`;
-    case "passing":
-      return total === 1 ? "The check passed" : `All ${total} checks passed`;
-    case "none":
-      return "No checks ran on this commit";
-    case "unknown":
-      return "GitHub did not say how the checks went";
-  }
-}
-
-export const PREVIEW_STATUSES = ["building", "running", "failed"] as const;
-export type PreviewStatus = (typeof PREVIEW_STATUSES)[number];
-
-export interface CardPreview {
-  status: PreviewStatus;
-  /** Why the latest build did not replace what is served; on a running Preview, an interrupted rebuild. */
-  error: string | null;
-  /** The commit being served. A rebuild, and a failed one, leave the previous build serving. */
-  sha: string | null;
-  /** The commit a failed build failed on, while the Preview is failed. */
-  failedSha: string | null;
-  updatedAt: string;
-}
-
-export interface SessionSummary {
-  id: string;
-  kind: SessionKind;
-  status: SessionStatus;
-  provider: Provider;
-  /** Set when this Session runs on the other Provider because `provider` ran out of usage. */
-  fallbackFrom: Provider | null;
-  intent: string | null;
-  branch: string | null;
-  cardId: string | null;
-  startedAt: string | null;
-  endedAt: string | null;
-  outcomeSummary: string | null;
-  createdAt: string;
-}
-
-// ---- session transcripts ----
-// A Session's container log is the transcript. The runner keeps the bytes; the app parses them
-// into entries so the admin panel can render a run as it happens instead of a wall of JSON.
-export const TRANSCRIPT_ENTRY_KINDS = ["system", "thinking", "text", "tool", "tool_result", "result", "log"] as const;
-export type TranscriptEntryKind = (typeof TRANSCRIPT_ENTRY_KINDS)[number];
-
-export interface TranscriptEntry {
-  at: string | null;
-  kind: TranscriptEntryKind;
-  label: string | null;
-  body: string;
-  truncated: boolean;
-  isError: boolean;
-}
-
-export interface SessionTranscript {
-  // false when the runner has no log for this session: it never ran, or the log has been pruned.
-  available: boolean;
-  entries: TranscriptEntry[];
-  // Byte offset to ask for next. Pass it back to get only what has been written since.
-  nextOffset: number;
-  size: number;
-  // The requested offset was too far behind the head, so entries start mid-run.
-  skipped: boolean;
-  note: string | null;
 }
 
 export interface Attachment {
@@ -315,7 +137,6 @@ export interface Comment {
   cardId: string;
   authorKind: ActorKind;
   authorId: string | null;
-  sessionId: string | null;
   body: string;
   editedAt: string | null;
   createdAt: string;
@@ -330,26 +151,6 @@ export interface ActivityEntry {
   actorId: string | null;
   payload: Record<string, unknown>;
   createdAt: string;
-}
-
-export interface Approval {
-  id: string;
-  cardId: string;
-  userId: string;
-  prNumber: number | null;
-  headSha: string | null;
-  createdAt: string;
-  invalidatedAt: string | null;
-  // Why GitHub last refused to merge on this Approval, for a refusal the Approval survives.
-  mergeError: string | null;
-}
-
-/**
- * The Approval waiting on a merge that GitHub refused for a reason the Approval survives, so the
- * Card offers a retry rather than asking for a second sign-off. Newest first, as the server lists.
- */
-export function approvalAwaitingRetry(approvals: Approval[]): Approval | null {
-  return approvals.find((a) => !a.invalidatedAt && a.mergeError) ?? null;
 }
 
 export interface Notification {
@@ -383,7 +184,6 @@ export interface BoardView {
   members: BoardMember[];
   /** Everyone who can open the Board or appears on it, former Members included. For names only. */
   people: Person[];
-  sessions: SessionSummary[];
   agent: AgentProfile;
 }
 
@@ -391,7 +191,6 @@ export interface CardDetail {
   card: Card;
   comments: Comment[];
   activity: ActivityEntry[];
-  approvals: Approval[];
   children: Card[];
 }
 
@@ -411,7 +210,6 @@ export const createCardSchema = z.object({
   description: z.string().max(20_000).default(""),
   priority: prioritySchema.default("none"),
   column: columnSchema.default("inbox"),
-  silent: z.boolean().optional(),
 });
 export type CreateCardInput = z.infer<typeof createCardSchema>;
 
@@ -420,7 +218,6 @@ export const updateCardSchema = z.object({
   description: z.string().max(20_000).optional(),
   priority: prioritySchema.optional(),
   revision: z.number().int().nonnegative(),
-  silent: z.boolean().optional(),
 });
 export type UpdateCardInput = z.infer<typeof updateCardSchema>;
 
@@ -428,13 +225,11 @@ export const moveCardSchema = z.object({
   column: columnSchema,
   position: z.number(),
   revision: z.number().int().nonnegative(),
-  silent: z.boolean().optional(),
 });
 export type MoveCardInput = z.infer<typeof moveCardSchema>;
 
 export const createCommentSchema = z.object({
   body: z.string().trim().min(1).max(20_000),
-  silent: z.boolean().optional(),
 });
 export const updateCommentSchema = z.object({
   body: z.string().trim().min(1).max(20_000),
@@ -462,17 +257,6 @@ export const upsertBoardSchema = z.object({
     .max(48)
     .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "lowercase letters, digits, and hyphens"),
   repoUrl: z.string().url().nullable().optional(),
-  provider: providerSchema.default("claude"),
-  model: z.string().trim().max(80).nullable().optional(),
-  reasoning: reasoningSchema.nullable().optional(),
-  previewMode: z.enum(PREVIEW_MODES).default("external"),
-  agentImage: z.string().trim().max(200).nullable().optional(),
-  maxConcurrentSessions: z.number().int().min(1).max(10).default(3),
-  promptAppend: z.string().max(10_000).default(""),
-  // Left out, a new Board starts unpaused and an update leaves the switch where it was.
-  paused: z.boolean().optional(),
-  // Left out, a new Board starts without Sessions and an update leaves the switch where it was.
-  sessionsEnabled: z.boolean().optional(),
 });
 
 export const boardMembersSchema = z.object({ userIds: z.array(z.string()) });
@@ -497,23 +281,15 @@ export const createAccessTokenSchema = z.object({ name: z.string().trim().min(1)
 // Deleting a Board names it again, so a request meant for another Board, or sent by mistake, fails.
 export const deleteBoardSchema = z.object({ slug: z.string() });
 
-// What deleting a Board would take with it, shown before the Admin confirms. A Board with an active
-// Session cannot be deleted until the Session ends.
+// What deleting a Board would take with it, shown before the Admin confirms.
 export interface BoardDeletionImpact {
   cards: number;
   comments: number;
   attachments: number;
-  previews: number;
-  activeSessions: number;
 }
 
 // No ids means "mark everything read".
 export const markNotificationsReadSchema = z.object({ ids: z.array(z.string()).optional() });
-
-// A Session's GitHub token is minted once, at start, and lasts one hour, so a Session allowed to
-// run longer would lose the ability to push before its wall clock stopped it.
-export const MIN_WALL_CLOCK_MINUTES = 5;
-export const MAX_WALL_CLOCK_MINUTES = 55;
 
 export const settingsSchema = z.object({
   agentName: z.string().trim().min(1).max(40).optional(),
@@ -522,17 +298,10 @@ export const settingsSchema = z.object({
     .refine((v) => v.startsWith("/") || /^https?:\/\//.test(v), "an absolute URL or a path on this site")
     .nullable()
     .optional(),
-  globalMaxConcurrentSessions: z.number().int().min(1).max(20).optional(),
-  sessionWallClockMinutes: z.number().int().min(MIN_WALL_CLOCK_MINUTES).max(MAX_WALL_CLOCK_MINUTES).optional(),
-  providerFallback: z.boolean().optional(),
 });
 export type Settings = {
   agentName: string;
   agentAvatarUrl: string | null;
-  globalMaxConcurrentSessions: number;
-  sessionWallClockMinutes: number;
-  /** Move a Card to the other Provider when the one it was running on is out of usage. */
-  providerFallback: boolean;
 };
 
 // A SQLite snapshot on the data bind mount, written with VACUUM INTO and verified before it counts.
@@ -574,80 +343,12 @@ export interface BackupsView {
   lastCopy: BackupCopy | null;
 }
 
-// ---- admin: sessions, usage, providers ----
-
-// What Claude Code's final `result` event says a Session used. Codex prints no such event, so a
-// Codex Session has none.
-export interface SessionUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  costUsd: number | null;
-  numTurns: number | null;
-  durationMs: number | null;
-}
-
-// A Session as the Admin's Sessions tab lists it. Usage stays out of `SessionSummary`, which
-// Members receive with their Board.
-export interface AdminSessionSummary extends SessionSummary {
-  boardId: string;
-  cardTitle: string | null;
-  usage: SessionUsage | null;
-}
-
-export const ADMIN_SESSIONS_PAGE = 50;
-
-export interface AdminSessionsPage {
-  sessions: AdminSessionSummary[];
-  /** Pass back as `before` for the next, older page; null when there is none. */
-  nextCursor: string | null;
-}
-
-export interface BoardUsageTotal {
-  boardId: string;
-  /** Sessions created in the window, and how many of them reported usage. */
-  sessions: number;
-  measured: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  costUsd: number;
-}
-
-export interface UsageTotalsView {
-  days: number;
-  since: string;
-  boards: BoardUsageTotal[];
-}
-
-// What the egress proxy last saw of each Provider. Only the proxy sees a provider's own answers.
-export interface ProviderStatus {
-  provider: Provider;
-  /** Whether the proxy holds a credential for it; null when the proxy did not say. */
-  credentialLoaded: boolean | null;
-  /** The last refusal for want of usage, and when the provider said the window reopens. */
-  limit: { at: string; until: string | null } | null;
-  /** The provider rejecting the credential. Cleared by the next turn it accepts. */
-  authFailure: { at: string; status: number | null; reason: string } | null;
-}
-
-export interface ProvidersView {
-  egress: "unconfigured" | "reachable" | "unreachable";
-  checkedAt: string;
-  providers: ProviderStatus[];
-  /** Calls a Session made that are not on the proxy's allowlist, since the proxy started. */
-  refusals: { count: number; last: { at: string; provider: Provider; method: string; path: string } | null };
-}
-
 // ---- realtime ----
 export type BoardEvent =
   | { type: "card.upserted"; card: Card }
   | { type: "card.removed"; cardId: string }
   | { type: "comment.upserted"; comment: Comment }
   | { type: "comment.removed"; commentId: string; cardId: string }
-  | { type: "session.updated"; session: SessionSummary }
   | { type: "board.updated"; board: Board }
   | { type: "board.deleted"; boardId: string };
 
@@ -684,13 +385,4 @@ export function extractMentionHandles(body: string): string[] {
   const out = new Set<string>();
   for (const m of body.matchAll(MENTION_RE)) out.add(m[2]!.toLowerCase());
   return [...out];
-}
-
-export function slugifyBranch(cardId: string, title: string): string {
-  const base = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return `kardboard/${cardId.slice(0, 8)}-${base || "card"}`;
 }

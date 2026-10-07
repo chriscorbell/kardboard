@@ -2,14 +2,12 @@ import type { Context, MiddlewareHandler } from "hono";
 import crypto from "node:crypto";
 
 /**
- * Headers every response carries. A Preview runs branch-controlled code on a host of the app's own
- * site, so it could otherwise frame the app, where Clerk's Lax cookies still arrive and the Member is
- * signed in, and steer their click onto Approve. The app is never framed, by anyone. A route that
- * already chose one of these headers keeps its own: the attachment route's sandbox policy is
- * stricter than this one.
+ * Headers every response carries. The app is never framed, by anyone, so no page can steer a
+ * signed-in click. A route that already chose one of these headers keeps its own: the attachment
+ * route's sandbox policy is stricter than this one.
  *
  * HSTS is sent only from a production app behind https. A browser that has seen it refuses plain
- * http to the host, and to every Preview under it, for a year, which a local or http deployment must
+ * http to the host for a year, which a local or http deployment must
  * not ask for. It is not `preload`: that list is slow to leave, and joining it is a decision about the
  * domain rather than about this app.
  */

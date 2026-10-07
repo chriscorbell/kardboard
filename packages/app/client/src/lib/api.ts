@@ -1,8 +1,6 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AccessToken,
-  AdminSessionSummary,
-  AdminSessionsPage,
   BackupsView,
   Board,
   BoardView,
@@ -14,13 +12,9 @@ import type {
   Me,
   MoveCardInput,
   NotificationsView,
-  ProvidersView,
-  SessionSummary,
-  SessionTranscript,
   Settings,
   UpdateCardInput,
   UpdateMeInput,
-  UsageTotalsView,
   User,
 } from "@kardboard/shared";
 import { useRef } from "react";
@@ -109,9 +103,6 @@ export const keys = {
   adminUsers: ["admin", "users"] as const,
   adminBoards: ["admin", "boards"] as const,
   adminSettings: ["admin", "settings"] as const,
-  adminSessions: ["admin", "sessions"] as const,
-  adminUsage: ["admin", "usage"] as const,
-  adminLimits: ["admin", "limits"] as const,
   adminBackups: ["admin", "backups"] as const,
   accessTokens: (boardId: string) => ["admin", "access-tokens", boardId] as const,
 };
@@ -193,84 +184,12 @@ export function useMoveCard(slug: string) {
   });
 }
 
-// Approval names the pull request head the card showed; the server refuses it if that has moved on,
-// and may record the newer head, so the card is re-read either way.
-export function useApproveCard(slug: string) {
-  const qc = useQueryClient();
-  const refresh = (id: string) => {
-    void qc.invalidateQueries({ queryKey: keys.card(id) });
-    void qc.invalidateQueries({ queryKey: keys.board(slug) });
-  };
-  return useMutation({
-    mutationFn: ({ id, headSha, overrideChecks }: { id: string; headSha: string | null; overrideChecks?: boolean }) =>
-      request(`/cards/${id}/approve`, { method: "POST", body: JSON.stringify({ headSha, ...(overrideChecks ? { overrideChecks } : {}) }) }),
-    onSuccess: (_r, { id }) => refresh(id),
-    onError: (_e, { id }) => refresh(id),
-  });
-}
-
-// A refused retry can still have changed the Card: a moved pull request voids the Approval.
-export function useRetryMerge(slug: string) {
-  const qc = useQueryClient();
-  const refresh = (id: string) => {
-    void qc.invalidateQueries({ queryKey: keys.card(id) });
-    void qc.invalidateQueries({ queryKey: keys.board(slug) });
-  };
-  return useMutation({
-    mutationFn: ({ id, overrideChecks }: { id: string; overrideChecks?: boolean }) => request(`/cards/${id}/retry-merge`, { method: "POST", body: JSON.stringify(overrideChecks ? { overrideChecks } : {}) }),
-    onSuccess: (_r, { id }) => refresh(id),
-    onError: (_e, { id }) => refresh(id),
-  });
-}
-
-// Opening a Card in Review asks the server to read its pull request and checks from GitHub again.
-// Anything that changed also arrives over the event stream; the answer just lands it sooner here.
-export function useSyncCard(slug: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => request<Card>(`/cards/${id}/sync`, { method: "POST" }),
-    onSuccess: (card) => {
-      upsertCardInBoard(qc, slug, card);
-      qc.setQueryData<CardDetail>(keys.card(card.id), (d) => (d ? { ...d, card } : d));
-    },
-  });
-}
-
-// Try again after a Session failed or ran out of time. The Session starts at once, so the board's
-// event stream usually reports it before this answer arrives; the answer is re-read rather than
-// written into the cache, where it would put back the wait the Session already ended.
-export function useRetryCard(slug: string) {
-  const qc = useQueryClient();
-  const refresh = (id: string) => {
-    void qc.invalidateQueries({ queryKey: keys.card(id) });
-    void qc.invalidateQueries({ queryKey: keys.board(slug) });
-  };
-  return useMutation({
-    mutationFn: (id: string) => request<Card>(`/cards/${id}/retry`, { method: "POST" }),
-    onSuccess: (_card, id) => refresh(id),
-    onError: (_e, id) => refresh(id),
-  });
-}
-
-// The Admin's pause switch for one Board. The Board's event stream carries the change to everyone
-// else; this writes it into the caller's own view at once.
-export function useSetBoardPaused(slug: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ boardId, paused }: { boardId: string; paused: boolean }) => request<Board>(`/admin/boards/${boardId}/pause`, { method: "POST", body: JSON.stringify({ paused }) }),
-    onSuccess: (board) => {
-      qc.setQueryData<BoardView>(keys.board(slug), (v) => (v ? { ...v, board } : v));
-      void qc.invalidateQueries({ queryKey: keys.adminBoards });
-    },
-  });
-}
-
 export type UploadProgress = (file: File, fraction: number) => void;
 
 // The requests that post a Comment on a Card and upload its files, reporting each file's progress.
-export function commentRequests(cardId: string, opts: { silent?: boolean; onProgress?: UploadProgress } = {}): CommentRequests<File> {
+export function commentRequests(cardId: string, opts: { onProgress?: UploadProgress } = {}): CommentRequests<File> {
   return {
-    create: (text) => request<Comment>(`/cards/${cardId}/comments`, { method: "POST", body: JSON.stringify({ body: text, ...(opts.silent ? { silent: true } : {}) }) }),
+    create: (text) => request<Comment>(`/cards/${cardId}/comments`, { method: "POST", body: JSON.stringify({ body: text }) }),
     edit: (id, text) => request<Comment>(`/comments/${id}`, { method: "PATCH", body: JSON.stringify({ body: text }) }),
     upload: (id, file) => uploadFile(`/comments/${id}/attachments`, file, (fraction) => opts.onProgress?.(file, fraction)),
   };
@@ -354,14 +273,6 @@ export function upsertCardInBoard(qc: ReturnType<typeof useQueryClient>, slug: s
   });
 }
 
-export function upsertSessionInBoard(qc: ReturnType<typeof useQueryClient>, slug: string, session: SessionSummary) {
-  qc.setQueryData<BoardView>(keys.board(slug), (v) => {
-    if (!v) return v;
-    const exists = v.sessions.some((s) => s.id === session.id);
-    return { ...v, sessions: exists ? v.sessions.map((s) => (s.id === session.id ? session : s)) : [session, ...v.sessions] };
-  });
-}
-
 // ---- admin ----
 export type AdminBoard = Board & { memberIds: string[] };
 export function useAdminUsers() {
@@ -390,38 +301,6 @@ export function useRevokeAccessToken(boardId: string) {
 export function useAdminSettings() {
   return useQuery({ queryKey: keys.adminSettings, queryFn: () => request<Settings>("/admin/settings") });
 }
-// Newest first, a page at a time, narrowed by `filters` (board, status, kind; empty means any). Every
-// loaded page is refreshed on the interval, so a running Session's status keeps up.
-export function useAdminSessionPages(filters: Record<string, string>) {
-  return useInfiniteQuery({
-    queryKey: [...keys.adminSessions, "list", filters],
-    queryFn: ({ pageParam }) => {
-      const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== ""));
-      if (pageParam) query.set("before", pageParam);
-      const text = query.toString();
-      return request<AdminSessionsPage>(`/admin/sessions${text ? `?${text}` : ""}`);
-    },
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.nextCursor,
-    refetchInterval: 10_000,
-  });
-}
-// A single Session, for a link to one that is not on a loaded page.
-export function useAdminSession(id: string | null) {
-  return useQuery({ queryKey: [...keys.adminSessions, "one", id], queryFn: () => request<AdminSessionSummary>(`/admin/sessions/${id}`), enabled: Boolean(id), refetchInterval: 10_000 });
-}
-export function useAdminUsage() {
-  return useQuery({ queryKey: keys.adminUsage, queryFn: () => request<UsageTotalsView>("/admin/usage"), refetchInterval: 60_000 });
-}
-export function useAdminLimits() {
-  return useQuery({ queryKey: keys.adminLimits, queryFn: () => request<ProvidersView>("/admin/limits"), refetchInterval: 60_000 });
-}
-// Transcripts are tailed by byte offset rather than cached by react-query: each call returns only
-// what the session has written since `offset`, and the caller keeps the running list.
-export function fetchSessionTranscript(sessionId: string, offset: number) {
-  return request<SessionTranscript>(`/admin/sessions/${sessionId}/transcript?offset=${offset}`);
-}
-
 export function useAdminBackups() {
   return useQuery({ queryKey: keys.adminBackups, queryFn: () => request<BackupsView>("/admin/backups") });
 }

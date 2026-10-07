@@ -8,17 +8,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "./env.js";
 import { appShell, securityHeaders } from "./headers.js";
-import { hasBearer } from "./secrets.js";
 import { client, runMigrations } from "./db/index.js";
 import { api } from "./routes/api.js";
 import { mcp } from "./routes/mcp.js";
-import { internal } from "./routes/internal.js";
-import { recoverOnBoot, startDispatchPump } from "./services/orchestrator.js";
-import { startSweepScheduler } from "./services/sweep.js";
 import { copySnapshotOffDisk, snapshotBeforeMigrations, startBackupScheduler } from "./services/backup.js";
-import { startPreviewReaper } from "./services/previews.js";
-import { startPullRequestReconciler } from "./services/reconcile.js";
-import { monitorSnapshot, startMonitor } from "./services/monitor.js";
 import { redactTokens, startLogFile } from "./services/logfile.js";
 import { ensureSeed } from "./seed.js";
 
@@ -33,20 +26,16 @@ app.use("*", securityHeaders({ production: env.isProduction, publicUrl: env.publ
 // seconds, does not fill the log.
 //
 // The app is healthy when it can read its database; that is the one thing it cannot serve without.
-// The runner and the egress proxy are reported as last seen, for a person reading the answer, and
-// never fail the check: restarting the app would not bring either of them back. The route is public
-// through the tunnel, so those details are only for a caller holding the runner token.
 app.get("/healthz", async (c) => {
-  const detail = hasBearer(c.req.header("authorization"), env.runnerToken) ? monitorSnapshot() : {};
   try {
     await Promise.race([
       client.execute("SELECT count(*) FROM sqlite_master"),
       new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), 2_000).unref()),
     ]);
   } catch {
-    return c.json({ ok: false, db: "unavailable", ...detail }, 503);
+    return c.json({ ok: false, db: "unavailable" }, 503);
   }
-  return c.json({ ok: true, db: "ok", ...detail });
+  return c.json({ ok: true, db: "ok" });
 });
 // The board event stream authenticates with `?token=`, a Clerk session token, which must not sit in
 // a log for two weeks. The rest of the query stays: it says which page or offset was asked for.
@@ -63,8 +52,6 @@ app.use("*", async (c, next) => {
   }
   await next();
 });
-// Internal routes are registered before the user API so its auth middleware never sees them.
-app.route("/api/internal", internal);
 app.route("/api", api);
 app.route("/mcp", mcp);
 
@@ -94,13 +81,7 @@ app.onError((err, c) => {
 const preMigrate = await snapshotBeforeMigrations();
 await runMigrations();
 await ensureSeed();
-await recoverOnBoot();
-startDispatchPump();
-startSweepScheduler();
 startBackupScheduler();
-startPreviewReaper();
-startPullRequestReconciler();
-startMonitor();
 
 serve({ fetch: app.fetch, port: env.port }, (info) => {
   console.log(`kardboard app listening on http://localhost:${info.port} (auth=${env.authMode})`);

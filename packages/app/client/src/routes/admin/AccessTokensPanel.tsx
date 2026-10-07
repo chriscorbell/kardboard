@@ -8,7 +8,7 @@ import { relativeTime } from "../../lib/format";
 import { toast } from "../../lib/toast";
 import { claudeMcpAddCommand } from "./accessTokens";
 
-// The Admin's tokens for their own agent on a Board without Sessions. A new token's secret lives only
+// The Admin's tokens for their own agent on a Board. A new token's secret lives only
 // in this component's state until the Admin is done with it: the server never shows it again. This
 // sits inside the board settings form, so every button here is `type="button"` and Enter in the name
 // field creates a token rather than saving the board.

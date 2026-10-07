@@ -132,9 +132,9 @@ export class RemoveRefused extends Error {}
 
 /**
  * Removes a revoked User for good, keeping only what signs their work: the row stays, still revoked,
- * with its name and handle, so their Cards, Comments, and Approvals keep their name and an old
+ * with its name and handle, so their Cards and Comments keep their name and an old
  * Mention of them still means them. Their email address, sign-in, and avatar are cleared, and with
- * them their Board memberships, notifications, Preview codes, and any email still waiting to be sent
+ * them their Board memberships, notifications, and any email still waiting to be sent
  * to them. The address is free to be invited again, as a new User with a handle of its own.
  */
 export async function removeUser(id: string): Promise<void> {
@@ -144,7 +144,6 @@ export async function removeUser(id: string): Promise<void> {
   await db.batch([
     db.delete(schema.boardMembers).where(eq(schema.boardMembers.userId, id)),
     db.delete(schema.notifications).where(eq(schema.notifications.userId, id)),
-    db.delete(schema.previewCodes).where(eq(schema.previewCodes.userId, id)),
     db.delete(schema.outboundEmails).where(and(eq(schema.outboundEmails.toUserId, id), eq(schema.outboundEmails.status, "pending"))),
     db
       .update(schema.users)

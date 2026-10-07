@@ -13,7 +13,6 @@ import type { Attachment, Card, Comment } from "@kardboard/shared";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-attachments-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
@@ -27,8 +26,8 @@ const SVG = `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.doma
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
 beforeEach(async () => {
-  for (const t of [schema.triggers, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" });
+  for (const t of [schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values({ id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" });
   await db.insert(schema.boardMembers).values({ boardId: BOARD, userId: "ada" });
 });

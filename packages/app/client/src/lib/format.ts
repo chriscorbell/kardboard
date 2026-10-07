@@ -15,11 +15,6 @@ export function absoluteTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-// Transcript lines are minutes apart at most, so the clock alone is enough to follow a run.
-export function clockTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour12: false });
-}
-
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const kb = bytes / 1024;

@@ -12,7 +12,6 @@ import type { BoardView, Card, Comment, Me } from "@kardboard/shared";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-member-view-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
@@ -29,8 +28,8 @@ const OTHER = "grace@example.com";
 const AGENT = { kind: "agent" as const, id: null };
 
 beforeEach(async () => {
-  for (const t of [schema.notifications, schema.triggers, schema.events, schema.approvals, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" });
+  for (const t of [schema.notifications, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" },
@@ -74,21 +73,16 @@ async function boardView(as = MEMBER): Promise<BoardView> {
   return (await res.json()) as BoardView;
 }
 
-async function triggerKinds(cardId: string): Promise<string[]> {
-  return (await db.select().from(schema.triggers).where(eq(schema.triggers.cardId, cardId))).map((t) => t.kind).sort();
-}
-
 function uploadExists(sha256: string): boolean {
   return fs.existsSync(path.join(root, "uploads", sha256.slice(0, 2), sha256));
 }
 
 describe("deleting a comment", () => {
-  it("removes it with its revisions, mentions, and attachments, records who, and starts nothing", async () => {
+  it("removes it with its revisions, mentions, and attachments, and records who", async () => {
     const card = await newCard();
     const comment = await post(MEMBER, card.id, "the password is hunter2, @grace");
     assert.equal((await call(MEMBER, "PATCH", `/comments/${comment.id}`, { body: "the password is hunter3, @grace" })).status, 200);
     assert.equal((await upload(MEMBER, comment.id, "secret.txt", "hunter2")).status, 201);
-    assert.deepEqual(await triggerKinds(card.id), ["card_created", "comment_edited", "comment_posted"]);
 
     const res = await call(MEMBER, "DELETE", `/comments/${comment.id}`);
 
@@ -101,9 +95,6 @@ describe("deleting a comment", () => {
     assert.deepEqual(deleted.payload, { commentId: comment.id, authorKind: "user", authorId: "ada" });
     assert.equal(deleted.actorId, "ada");
     assert.equal(JSON.stringify(deleted.payload).includes("hunter"), false);
-    // Taking a comment back is not a request for work, and a Session not yet started for it has
-    // nothing left to read.
-    assert.deepEqual(await triggerKinds(card.id), ["card_created"]);
     assert.equal((await getCard(card.id))!.commentCount, 0);
   });
 
@@ -216,19 +207,16 @@ describe("the people a Board names", () => {
     assert.equal(forAdmin.find((m) => m.id === "grace")!.email, OTHER);
   });
 
-  it("names someone who only appears in the activity or an Approval", async () => {
+  it("names someone who only appears in the activity", async () => {
     const card = await newCard();
     await db.insert(schema.users).values([
-      { id: "old-approver", email: "old@example.com", handle: "old", name: "Old Approver", role: "member", status: "active" },
       { id: "mover", email: "mover@example.com", handle: "mover", name: "Mover", role: "member", status: "active" },
       { id: "stranger", email: "stranger@example.com", handle: "stranger", name: "Stranger", role: "member", status: "active" },
     ]);
-    await db.insert(schema.approvals).values({ id: "ap-1", cardId: card.id, userId: "old-approver" });
     await db.insert(schema.events).values({ id: "ev-1", boardId: BOARD, cardId: card.id, actorKind: "user", actorId: "mover", type: "card.moved", payload: {} });
 
     const ids = (await boardView()).people.map((p) => p.id);
 
-    assert.equal(ids.includes("old-approver"), true);
     assert.equal(ids.includes("mover"), true);
     assert.equal(ids.includes("stranger"), false);
   });

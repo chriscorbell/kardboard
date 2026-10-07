@@ -3,14 +3,12 @@ import { cx } from "../../components/ui";
 import { UsersTab } from "./UsersTab";
 import { BoardsTab } from "./BoardsTab";
 import { AgentTab } from "./AgentTab";
-import { SessionsTab } from "./SessionsTab";
 import { BackupsTab } from "./BackupsTab";
 
 const TABS = [
   { to: "/admin/users", label: "Users" },
   { to: "/admin/boards", label: "Boards" },
   { to: "/admin/agent", label: "Agent" },
-  { to: "/admin/sessions", label: "Sessions" },
   { to: "/admin/backups", label: "Backups" },
 ];
 
@@ -42,7 +40,6 @@ export function AdminPage() {
             <Route path="users" element={<UsersTab />} />
             <Route path="boards" element={<BoardsTab />} />
             <Route path="agent" element={<AgentTab />} />
-            <Route path="sessions" element={<SessionsTab />} />
             <Route path="backups" element={<BackupsTab />} />
           </Routes>
         </div>
