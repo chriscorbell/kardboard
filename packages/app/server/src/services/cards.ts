@@ -1,31 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
-import type { Card, CardPreview, CardWaiting, ChecksSummary, Column, Priority, SessionSummary } from "@kardboard/shared";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import type { Card, Column, Priority } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
 import { recordEvent, type Actor } from "./events.js";
-import { activeCount, closeCardWork, dispatchPlanned, enqueueTrigger, latestEndedSessions } from "./orchestrator.js";
-import { getAgentProfile, getSettings } from "./settings.js";
-import { waitingState } from "./waiting.js";
 import { notifyCardMoved } from "./notifications.js";
-import { outcomeOnDone, startsItsOwnSession, wakeParentIfSettled } from "./children.js";
-
-export function toSessionSummary(row: typeof schema.sessions.$inferSelect): SessionSummary {
-  return {
-    id: row.id,
-    kind: row.kind,
-    status: row.status,
-    provider: row.provider,
-    fallbackFrom: row.fallbackFrom,
-    intent: row.intent,
-    branch: row.branch,
-    cardId: row.cardId,
-    startedAt: row.startedAt,
-    endedAt: row.endedAt,
-    outcomeSummary: row.outcomeSummary,
-    createdAt: row.createdAt,
-  };
-}
 
 async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card[]> {
   if (rows.length === 0) return [];
@@ -36,20 +15,6 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     .where(inArray(schema.comments.cardId, ids))
     .groupBy(schema.comments.cardId);
   const countMap = new Map(counts.map((c) => [c.cardId, Number(c.n)]));
-  const active = await db
-    .select()
-    .from(schema.sessions)
-    .where(
-      and(
-        inArray(schema.sessions.cardId, ids),
-        inArray(schema.sessions.status, ["queued", "starting", "running"]),
-      ),
-    );
-  const activeMap = new Map(active.map((s) => [s.cardId!, toSessionSummary(s)]));
-  const lastMap = await latestEndedSessions(ids);
-  const waitingMap = await waitingFor(rows, activeMap, lastMap);
-  const previews = await db.select().from(schema.previews).where(inArray(schema.previews.cardId, ids));
-  const previewMap = new Map<string, CardPreview>(previews.map((p) => [p.cardId, { status: p.status, error: p.error, sha: p.sha, failedSha: p.failedSha, updatedAt: p.updatedAt }]));
   const awaiting = await awaitingReply(rows.filter((r) => r.column === "blocked").map((r) => r.id));
   return rows.map((r) => ({
     id: r.id,
@@ -67,60 +32,11 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     branch: r.branch,
     prUrl: r.prUrl,
     prNumber: r.prNumber,
-    prHeadSha: r.prHeadSha,
-    prBaseRef: r.prBaseRef,
-    checks: r.checks ?? null,
-    previewUrl: r.previewUrl,
-    preview: previewMap.get(r.id) ?? null,
     commentCount: countMap.get(r.id) ?? 0,
-    activeSession: activeMap.get(r.id) ?? null,
-    lastSession: lastMap.get(r.id) ?? null,
-    waiting: waitingMap.get(r.id) ?? null,
-    pendingRerun: r.pendingRerun,
     awaitingReply: awaiting.has(r.id),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   }));
-}
-
-/**
- * What each of these Cards is waiting for, for those with Triggers pending and no Session. The caps
- * and pause switches are read only when some Card is waiting, which on most reads none is.
- */
-async function waitingFor(
-  rows: (typeof schema.cards.$inferSelect)[],
-  activeMap: Map<string, SessionSummary>,
-  lastMap: Map<string, SessionSummary>,
-): Promise<Map<string, CardWaiting>> {
-  const out = new Map<string, CardWaiting>();
-  const idle = rows.filter((r) => !activeMap.has(r.id)).map((r) => r.id);
-  if (idle.length === 0) return out;
-  const pending = await db
-    .select({ cardId: schema.triggers.cardId, oldest: sql<string>`min(${schema.triggers.createdAt})` })
-    .from(schema.triggers)
-    .where(and(inArray(schema.triggers.cardId, idle), eq(schema.triggers.status, "pending")))
-    .groupBy(schema.triggers.cardId);
-  if (pending.length === 0) return out;
-  const oldest = new Map(pending.map((p) => [p.cardId, p.oldest]));
-  const boardIds = [...new Set(rows.filter((r) => oldest.has(r.id)).map((r) => r.boardId))];
-  const boards = await db.select().from(schema.boards).where(inArray(schema.boards.id, boardIds));
-  const settings = await getSettings();
-  const globalFull = (await activeCount()) >= settings.globalMaxConcurrentSessions;
-  const full = new Map<string, boolean>();
-  for (const b of boards) full.set(b.id, globalFull || (await activeCount(b.id)) >= b.maxConcurrentSessions);
-  const paused = new Map(boards.map((b) => [b.id, b.paused]));
-  for (const r of rows) {
-    const state = waitingState({
-      oldestPendingAt: oldest.get(r.id) ?? null,
-      active: activeMap.has(r.id),
-      paused: paused.get(r.boardId) ?? false,
-      slotsFull: full.get(r.boardId) ?? false,
-      dispatchPlanned: dispatchPlanned(r.id),
-      lastSession: lastMap.get(r.id) ?? null,
-    });
-    if (state) out.set(r.id, state);
-  }
-  return out;
 }
 
 // Of these Blocked Cards, the ones whose last word is the Agent's: its question, still unanswered.
@@ -203,7 +119,6 @@ export async function createCard(input: {
   column: Column;
   actor: Actor;
   parentCardId?: string | null;
-  silent?: boolean;
   // Where in its Column the Card goes. A new Card joins the bottom unless its creator puts it first.
   at?: "top" | "bottom";
 }): Promise<Card> {
@@ -229,13 +144,6 @@ export async function createCard(input: {
     payload: { column: card.column },
   });
   publish(card.boardId, { type: "card.upserted", card });
-  if (input.actor.kind === "user" && !input.silent) {
-    await enqueueTrigger({ card, kind: "card_created", actorUserId: input.actor.id, payload: {} });
-  } else if (startsItsOwnSession(card)) {
-    // A Session split a request into this piece, so this piece starts its own Session: no person
-    // asked for it Card by Card, and nobody should have to touch it for the work to begin.
-    await enqueueTrigger({ card, kind: "child_card_created", actorUserId: null, payload: { parentCardId: card.parentCardId } });
-  }
   return card;
 }
 
@@ -247,7 +155,6 @@ export async function updateCard(
     priority?: Priority;
     revision: number;
     actor: Actor;
-    silent?: boolean;
   },
 ): Promise<Card> {
   const current = await getCard(id);
@@ -278,61 +185,16 @@ export async function updateCard(
     payload: { fields: Object.keys(changed), previous },
   });
   publish(card.boardId, { type: "card.upserted", card });
-  // Priority alone is a signal to the next Session, not a reason to start one.
-  const substantive = "title" in changed || "description" in changed;
-  if (input.actor.kind === "user" && substantive && !input.silent) {
-    await enqueueTrigger({
-      card,
-      kind: "card_edited",
-      actorUserId: input.actor.id,
-      payload: { fields: Object.keys(changed) },
-    });
-  }
   return card;
 }
 
-/** When kardboard recorded the merge of this pull request of the Card, or null if it never did. */
-export async function mergeRecordedAt(cardId: string, prNumber: number | null): Promise<string | null> {
-  if (!prNumber) return null;
-  const merges = await db
-    .select({ payload: schema.events.payload, createdAt: schema.events.createdAt })
-    .from(schema.events)
-    .where(and(eq(schema.events.cardId, cardId), eq(schema.events.type, "card.merged")));
-  return merges.find((e) => e.payload.prNumber === prNumber)?.createdAt ?? null;
-}
-
-// Everything a Card records of its pull request, forgotten together.
-const NO_PULL_REQUEST = { prUrl: null, prNumber: null, prHeadSha: null, prBaseRef: null, checks: null };
-
-async function voidStandingApprovals(cardId: string): Promise<void> {
-  await db.update(schema.approvals).set({ invalidatedAt: new Date().toISOString() }).where(and(eq(schema.approvals.cardId, cardId), isNull(schema.approvals.invalidatedAt)));
-}
-
 /**
- * What moveCard forgets of a reopened Card, for a Card that left Done before it did so: one still
- * naming the pull request it merged, which the poll would otherwise read as merged and close again.
- * Only while the Card still names that pull request, so a new one a Session has just reported stays.
- */
-export async function forgetMergedPullRequest(cardId: string, prNumber: number): Promise<void> {
-  const written = await db
-    .update(schema.cards)
-    .set({ ...NO_PULL_REQUEST, updatedAt: new Date().toISOString() })
-    .where(and(eq(schema.cards.id, cardId), eq(schema.cards.prNumber, prNumber)))
-    .returning({ id: schema.cards.id });
-  if (written.length === 0) return;
-  await voidStandingApprovals(cardId);
-  const card = (await getCard(cardId))!;
-  publish(card.boardId, { type: "card.upserted", card });
-}
-
-/**
- * `merged` is for a move to Done by whoever merged the Card's pull request outside kardboard: the
- * Admin's own agent on a Board without Sessions. It records the merge, as kardboard records its own,
- * so the Card closes as implemented and a reopened Card lets go of the merged pull request.
+ * `merged` is for a move to Done by the agent that merged the Card's pull request. It records the
+ * merge, so the Card closes as implemented rather than merely closed.
  */
 export async function moveCard(
   id: string,
-  input: { column: Column; position: number; revision: number; actor: Actor; silent?: boolean; merged?: boolean },
+  input: { column: Column; position: number; revision: number; actor: Actor; merged?: boolean },
 ): Promise<Card> {
   const current = await getCard(id);
   if (!current) throw new Error("card not found");
@@ -340,10 +202,6 @@ export async function moveCard(
   const columnChanged = current.column !== input.column;
   const enteringDone = columnChanged && input.column === "done";
   const leavingDone = columnChanged && current.column === "done";
-  // A reopened Card whose pull request was merged opens a new one from its own branch, so the merged
-  // one is forgotten: left on the Card, the poll would read it as merged and close the Card again,
-  // ending the Session that reopened it. One closed without a merge stays; the work may go on there.
-  const forgetPullRequest = leavingDone && (await mergeRecordedAt(id, current.prNumber)) !== null;
   // As in updateCard: of two moves made from the same revision, only the first is written.
   const written = await db
     .update(schema.cards)
@@ -353,15 +211,12 @@ export async function moveCard(
       revision: current.revision + 1,
       updatedAt: new Date().toISOString(),
       // What the Card came to is recorded as it closes, and forgotten when it is reopened.
-      ...(enteringDone ? { outcome: input.merged ? "implemented" : await outcomeOnDone(id) } : leavingDone ? { outcome: null } : {}),
+      ...(enteringDone ? { outcome: input.merged ? "implemented" : "closed" } : leavingDone ? { outcome: null } : {}),
     })
     .where(and(eq(schema.cards.id, id), eq(schema.cards.revision, input.revision)))
     .returning({ id: schema.cards.id });
   if (written.length === 0) throw new ConflictError("card changed since you loaded it");
-  // Apart from the move, and only while the Card still names the merged pull request: a Session
-  // that reported a new one in the meantime keeps it, since reporting does not change the revision.
-  if (forgetPullRequest && current.prNumber) await forgetMergedPullRequest(id, current.prNumber);
-  let card = (await getCard(id))!;
+  const card = (await getCard(id))!;
   if (columnChanged) {
     if (enteringDone && input.merged) {
       await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "card.merged", payload: { prNumber: current.prNumber, prUrl: current.prUrl } });
@@ -373,57 +228,10 @@ export async function moveCard(
       type: "card.moved",
       payload: { from: current.column, to: input.column },
     });
-    // Leaving Review for anything but Done voids a standing Approval, and Done is where an Approval
-    // ends: spent by its merge, or withdrawn by closing the Card. A reopened Card is approved afresh.
-    if ((current.column === "review" && input.column !== "done") || leavingDone) await voidStandingApprovals(id);
-    // A human move to Done closes the card: the active Session is cancelled and nothing re-runs.
-    if (input.column === "done" && input.actor.kind === "user") {
-      await closeCardWork(id, input.actor);
-      card = (await getCard(id))!;
-    }
   }
   publish(card.boardId, { type: "card.upserted", card });
-  // The last child of a split request reaching Done is what wakes its parent.
-  if (enteringDone) await wakeParentIfSettled(card).catch((err) => console.error("[children] could not wake the parent", err));
   if (columnChanged) void notifyCardMoved(card, current.column, input.actor).catch((err) => console.error("[notify] card moved", err));
-  if (columnChanged && input.actor.kind === "user" && input.column !== "done" && !input.silent) {
-    await enqueueTrigger({
-      card,
-      kind: "card_moved",
-      actorUserId: input.actor.id,
-      payload: { from: current.column, to: input.column },
-    });
-  }
   return card;
-}
-
-export class RetryRefused extends Error {
-  status = 409 as const;
-}
-
-/**
- * Try again: a `retry_requested` Trigger that starts a Session at once rather than after the
- * batching window, since pressing the button is the whole request. Refused unless the Card's last
- * Session failed or ran out of time, while a Session holds the Card, which would make it a pending re-run nobody asked for, and in Done, where a Comment is
- * how a closed Card is reopened. The Trigger carries the Session it follows, so the next one can
- * read what went wrong.
- */
-export async function retryCard(id: string, actor: Actor): Promise<Card> {
-  const card = await getCard(id);
-  if (!card) throw new Error("card not found");
-  const agent = await getAgentProfile();
-  const board = await db.select({ sessionsEnabled: schema.boards.sessionsEnabled }).from(schema.boards).where(eq(schema.boards.id, card.boardId)).get();
-  if (!board?.sessionsEnabled) throw new RetryRefused("This board has sessions turned off, so there is nothing to try again.");
-  if (card.activeSession) throw new RetryRefused(`${agent.name} is already working on this card.`);
-  if (card.column === "done") throw new RetryRefused("This card is done. Add a comment to reopen it.");
-  const last = card.lastSession;
-  // Try again follows a run that stopped short, and the next Session is told so; anything else is
-  // a request for new work, which a Comment makes.
-  if (!last || (last.status !== "failed" && last.status !== "timed_out")) throw new RetryRefused(`${agent.name}'s last session on this card did not fail. Add a comment to ask for more.`);
-  const payload = last ? { sessionId: last.id, status: last.status, outcomeSummary: last.outcomeSummary } : {};
-  await recordEvent({ boardId: card.boardId, cardId: card.id, actor, type: "card.retry_requested", payload });
-  await enqueueTrigger({ card, kind: "retry_requested", actorUserId: actor.id, payload, promptly: true });
-  return (await getCard(id))!;
 }
 
 export async function setCardWorkState(
@@ -432,10 +240,6 @@ export async function setCardWorkState(
     branch?: string | null;
     prUrl?: string | null;
     prNumber?: number | null;
-    prHeadSha?: string | null;
-    prBaseRef?: string | null;
-    checks?: ChecksSummary | null;
-    previewUrl?: string | null;
   },
 ): Promise<Card> {
   await db

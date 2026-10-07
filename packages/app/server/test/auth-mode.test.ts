@@ -14,25 +14,21 @@ const { resolveAuthMode } = await import("../src/env.js");
 
 describe("which authentication the app runs", () => {
   it("is dev outside production when nothing is set, so local work and tests need no keys", () => {
-    assert.equal(resolveAuthMode({ auth: "", production: false, preview: false }), "dev");
+    assert.equal(resolveAuthMode({ auth: "", production: false }), "dev");
   });
 
   it("is clerk when asked for, however it is written", () => {
-    assert.equal(resolveAuthMode({ auth: "clerk", production: true, preview: false }), "clerk");
-    assert.equal(resolveAuthMode({ auth: " Clerk ", production: true, preview: false }), "clerk");
+    assert.equal(resolveAuthMode({ auth: "clerk", production: true }), "clerk");
+    assert.equal(resolveAuthMode({ auth: " Clerk ", production: true }), "clerk");
   });
 
   it("refuses dev in production, whether it was left unset or asked for", () => {
-    assert.throws(() => resolveAuthMode({ auth: "", production: true, preview: false }), /Refusing to start/);
-    assert.throws(() => resolveAuthMode({ auth: "dev", production: true, preview: false }), /Refusing to start/);
-  });
-
-  it("allows dev in a Preview container, which sits behind the preview router's membership check", () => {
-    assert.equal(resolveAuthMode({ auth: "", production: true, preview: true }), "dev");
+    assert.throws(() => resolveAuthMode({ auth: "", production: true }), /Refusing to start/);
+    assert.throws(() => resolveAuthMode({ auth: "dev", production: true }), /Refusing to start/);
   });
 
   it("refuses a value it does not know rather than falling back to dev", () => {
-    assert.throws(() => resolveAuthMode({ auth: "clerck", production: false, preview: false }), /must be "clerk" or "dev"/);
+    assert.throws(() => resolveAuthMode({ auth: "clerck", production: false }), /must be "clerk" or "dev"/);
   });
 });
 
@@ -51,9 +47,9 @@ describe("starting the app in production", () => {
     assert.match(run.stderr, /Refusing to start/);
   });
 
-  it("still starts a Preview", () => {
-    const run = start({ KARDBOARD_PREVIEW_HOST: "abcd1234.kardboard.cc" });
+  it("starts with Clerk", () => {
+    const run = start({ KARDBOARD_AUTH: "clerk" });
     assert.equal(run.status, 0, run.stderr);
-    assert.equal(run.stdout.trim(), "dev");
+    assert.equal(run.stdout.trim(), "clerk");
   });
 });

@@ -5,15 +5,10 @@ import { newId } from "../ids.js";
 export interface Actor {
   kind: ActorKind;
   id: string | null;
-  // The Session acting as the Agent. Every Session shares the Agent's identity, so this is what
-  // tells them apart on the record: which Session created a Card, say, and may therefore edit it.
-  sessionId?: string;
   // The Access token an agent outside kardboard acted through as the Agent. Which token is on the
   // record, so what one did can be told apart after it is revoked.
   accessTokenId?: string;
 }
-
-export const SYSTEM_ACTOR: Actor = { kind: "system", id: null };
 
 export async function recordEvent(input: {
   boardId: string;
@@ -29,7 +24,6 @@ export async function recordEvent(input: {
     actorKind: input.actor.kind,
     actorId: input.actor.id,
     type: input.type,
-    // A payload that names a Session of its own keeps it.
-    payload: { ...(input.actor.sessionId ? { sessionId: input.actor.sessionId } : {}), ...(input.actor.accessTokenId ? { accessTokenId: input.actor.accessTokenId } : {}), ...(input.payload ?? {}) },
+    payload: { ...(input.actor.accessTokenId ? { accessTokenId: input.actor.accessTokenId } : {}), ...(input.payload ?? {}) },
   });
 }

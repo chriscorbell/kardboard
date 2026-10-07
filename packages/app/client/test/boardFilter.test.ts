@@ -22,16 +22,7 @@ function card(over: Partial<Card> = {}): Card {
     branch: null,
     prUrl: null,
     prNumber: null,
-    prHeadSha: null,
-    prBaseRef: null,
-    checks: null,
-    previewUrl: null,
-    preview: null,
     commentCount: 0,
-    activeSession: null,
-    lastSession: null,
-    waiting: null,
-    pendingRerun: false,
     awaitingReply: false,
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
@@ -94,10 +85,8 @@ describe("waiting on the viewer", () => {
     assert.equal(waitsOn(card({ column: "blocked", awaitingReply: false }), ada), false);
   });
 
-  it("counts a card in Review for anyone, unless a Session is still at work on it", () => {
+  it("counts a card in Review for anyone", () => {
     assert.equal(waitsOn(card({ column: "review", creatorId: "someone" }), grace), true);
-    const busy = card({ column: "review", activeSession: { id: "s", kind: "card", status: "running", provider: "claude", fallbackFrom: null, intent: null, branch: null, cardId: null, startedAt: null, endedAt: null, outcomeSummary: null, createdAt: "" } });
-    assert.equal(waitsOn(busy, grace), false);
   });
 });
 

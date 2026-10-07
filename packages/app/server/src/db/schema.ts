@@ -1,5 +1,4 @@
 import { sqliteTable, text, integer, real, primaryKey, index } from "drizzle-orm/sqlite-core";
-import type { ChecksSummary } from "@kardboard/shared";
 
 const now = () => new Date().toISOString();
 
@@ -29,22 +28,6 @@ export const boards = sqliteTable("boards", {
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   repoUrl: text("repo_url"),
-  provider: text("provider", { enum: ["claude", "codex"] }).notNull().default("claude"),
-  model: text("model"),
-  reasoning: text("reasoning", { enum: ["low", "medium", "high", "xhigh", "max"] }),
-  previewMode: text("preview_mode", { enum: ["external", "runner"] }).notNull().default("external"),
-  // Bumped whenever this Board's membership narrows. A Preview cookie carries the epoch it was
-  // issued under, so losing membership invalidates every outstanding cookie for the Board at once.
-  previewEpoch: integer("preview_epoch").notNull().default(1),
-  agentImage: text("agent_image"),
-  maxConcurrentSessions: integer("max_concurrent_sessions").notNull().default(3),
-  promptAppend: text("prompt_append").notNull().default(""),
-  // The Admin's pause switch. A paused Board starts no Session and skips the nightly sweep; its
-  // Triggers stay pending and are dispatched when it is resumed.
-  paused: integer("paused", { mode: "boolean" }).notNull().default(false),
-  // Whether human changes to this Board summon Sessions. Off by default: a Board without Sessions is
-  // worked by the Admin's own agent through an Access token, and its changes are never Triggers.
-  sessionsEnabled: integer("sessions_enabled", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull().$defaultFn(now),
 });
 
@@ -73,23 +56,13 @@ export const cards = sqliteTable(
     creatorKind: text("creator_kind", { enum: ["user", "agent", "system"] }).notNull().default("user"),
     creatorId: text("creator_id"),
     parentCardId: text("parent_card_id"),
-    // How a Card in Done ended: `implemented` when kardboard merged its pull request, `closed`
-    // otherwise. A parent reading its finished children needs to tell the two apart.
+    // How a Card in Done ended: `implemented` when the agent that merged its pull request said so as
+    // it closed the Card, `closed` otherwise.
     outcome: text("outcome", { enum: ["implemented", "closed"] }),
     revision: integer("revision").notNull().default(0),
     branch: text("branch"),
     prUrl: text("pr_url"),
     prNumber: integer("pr_number"),
-    // The pull request head a Member is shown and approves. Read from GitHub when a Session reports
-    // the pull request or moves the Card to Review, never taken from the Session's word.
-    prHeadSha: text("pr_head_sha"),
-    // The branch the pull request merges into, so Approve can say where the change lands.
-    prBaseRef: text("pr_base_ref"),
-    // CI on the pull request, summed up from GitHub's check runs and commit statuses by the
-    // reconciliation poll, on Approve, and when someone opens the Card in Review.
-    checks: text("checks", { mode: "json" }).$type<ChecksSummary>(),
-    previewUrl: text("preview_url"),
-    pendingRerun: integer("pending_rerun", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull().$defaultFn(now),
     updatedAt: text("updated_at").notNull().$defaultFn(now),
   },
@@ -103,7 +76,6 @@ export const comments = sqliteTable(
     cardId: text("card_id").notNull().references(() => cards.id, { onDelete: "cascade" }),
     authorKind: text("author_kind", { enum: ["user", "agent", "system"] }).notNull(),
     authorId: text("author_id"),
-    sessionId: text("session_id"),
     body: text("body").notNull(),
     editedAt: text("edited_at"),
     createdAt: text("created_at").notNull().$defaultFn(now),
@@ -136,73 +108,6 @@ export const mentions = sqliteTable(
     notifiedAt: text("notified_at"),
   },
   (t) => [primaryKey({ columns: [t.commentId, t.userId] })],
-);
-
-export const approvals = sqliteTable("approvals", {
-  id: text("id").primaryKey(),
-  cardId: text("card_id").notNull().references(() => cards.id, { onDelete: "cascade" }),
-  userId: text("user_id").notNull(),
-  prNumber: integer("pr_number"),
-  headSha: text("head_sha"),
-  createdAt: text("created_at").notNull().$defaultFn(now),
-  invalidatedAt: text("invalidated_at"),
-  // Why GitHub last refused to merge on this Approval. Set only for a refusal the Approval
-  // survives, so the Card can offer Retry merge; cleared once the merge lands or the Approval is
-  // invalidated.
-  mergeError: text("merge_error"),
-});
-
-export const sessions = sqliteTable(
-  "sessions",
-  {
-    id: text("id").primaryKey(),
-    boardId: text("board_id").notNull().references(() => boards.id, { onDelete: "cascade" }),
-    cardId: text("card_id"),
-    kind: text("kind", { enum: ["card", "sweep"] }).notNull().default("card"),
-    provider: text("provider", { enum: ["claude", "codex"] }).notNull(),
-    // The Provider this Session was moved off because it had no usage left. Also the stop on a
-    // fallback loop: a Session that already fell back does not fall back again.
-    fallbackFrom: text("fallback_from", { enum: ["claude", "codex"] }),
-    status: text("status", {
-      enum: ["queued", "starting", "running", "succeeded", "failed", "cancelled", "timed_out"],
-    })
-      .notNull()
-      .default("queued"),
-    intent: text("intent"),
-    branch: text("branch"),
-    containerId: text("container_id"),
-    tokenHash: text("token_hash"),
-    startedAt: text("started_at"),
-    endedAt: text("ended_at"),
-    outcomeSummary: text("outcome_summary"),
-    // Read from Claude Code's final `result` event when the Session ends; null for a Codex Session,
-    // one that never ran, or one stopped before it finished.
-    inputTokens: integer("input_tokens"),
-    outputTokens: integer("output_tokens"),
-    cacheReadTokens: integer("cache_read_tokens"),
-    cacheCreationTokens: integer("cache_creation_tokens"),
-    costUsd: real("cost_usd"),
-    numTurns: integer("num_turns"),
-    durationMs: integer("duration_ms"),
-    createdAt: text("created_at").notNull().$defaultFn(now),
-  },
-  (t) => [index("sessions_board_status_idx").on(t.boardId, t.status), index("sessions_created_idx").on(t.createdAt), index("sessions_card_created_idx").on(t.cardId, t.createdAt)],
-);
-
-export const triggers = sqliteTable(
-  "triggers",
-  {
-    id: text("id").primaryKey(),
-    boardId: text("board_id").notNull(),
-    cardId: text("card_id").notNull(),
-    kind: text("kind").notNull(),
-    actorUserId: text("actor_user_id"),
-    payload: text("payload", { mode: "json" }).notNull().$type<Record<string, unknown>>(),
-    status: text("status", { enum: ["pending", "consumed"] }).notNull().default("pending"),
-    sessionId: text("session_id"),
-    createdAt: text("created_at").notNull().$defaultFn(now),
-  },
-  (t) => [index("triggers_card_status_idx").on(t.cardId, t.status)],
 );
 
 export const events = sqliteTable(
@@ -242,55 +147,8 @@ export const notifications = sqliteTable(
   (t) => [index("notifications_user_idx").on(t.userId, t.createdAt)],
 );
 
-// One runner-hosted Preview per Card: the branch's own Dockerfile, built and run by the runner and
-// reached at its own hostname through the preview router.
-export const previews = sqliteTable(
-  "previews",
-  {
-    id: text("id").primaryKey(),
-    boardId: text("board_id").notNull().references(() => boards.id, { onDelete: "cascade" }),
-    cardId: text("card_id").notNull().references(() => cards.id, { onDelete: "cascade" }).unique(),
-    host: text("host").notNull().unique(),
-    status: text("status", { enum: ["building", "running", "failed"] }).notNull().default("building"),
-    branch: text("branch").notNull(),
-    port: integer("port").notNull().default(3000),
-    containerId: text("container_id"),
-    // Where the router proxies to, on the preview network: `http://kardboard-preview-<id>:<port>`.
-    target: text("target"),
-    // Why the latest build did not replace what is served. On a running Preview, a rebuild that was
-    // interrupted and left the previous container serving.
-    error: text("error"),
-    // The commit being served: set only when a build reports its container running. A rebuild, and a
-    // failed one, leave the previous container up, so through both this is still what `target` serves.
-    sha: text("sha"),
-    // The commit a failed build failed on, while the Preview is failed. Null when the clone itself
-    // failed, or the runner refused the build, since no commit was checked out.
-    failedSha: text("failed_sha"),
-    // The build the runner was last asked for. Its reports carry it back, and a report from any other
-    // build is stale and ignored. Null when the runner refused the latest request, so no report of it
-    // will come and the runner's build log is still an earlier build's.
-    buildId: text("build_id"),
-    // Drives the seven-idle-day removal: touched whenever someone is let through to the Preview,
-    // and whenever it is rebuilt.
-    lastAccessAt: text("last_access_at").notNull().$defaultFn(now),
-    createdAt: text("created_at").notNull().$defaultFn(now),
-    updatedAt: text("updated_at").notNull().$defaultFn(now),
-  },
-  (t) => [index("previews_board_idx").on(t.boardId)],
-);
-
-// Single-use authorization codes that carry a signed-in Member from the app to a Preview host.
-// Short-lived, bound to one host and one User, and deleted as they are spent.
-export const previewCodes = sqliteTable("preview_codes", {
-  code: text("code").primaryKey(),
-  previewId: text("preview_id").notNull().references(() => previews.id, { onDelete: "cascade" }),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  expiresAt: text("expires_at").notNull(),
-  createdAt: text("created_at").notNull().$defaultFn(now),
-});
-
-// The Admin's credentials for an agent running outside kardboard, each good for one Board without
-// Sessions, where whoever holds it acts as the Agent. Only the hash is kept; the token is shown once.
+// The Admin's credentials for their own coding agent, each good for one Board, where whoever holds
+// it acts as the Agent. Only the hash is kept; the token is shown once.
 export const accessTokens = sqliteTable(
   "access_tokens",
   {

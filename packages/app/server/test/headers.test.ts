@@ -11,7 +11,6 @@ import { Hono } from "hono";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-headers-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
@@ -36,8 +35,8 @@ function appFor(production: boolean, publicUrl: string) {
 const app = appFor(false, "http://localhost:5173");
 
 beforeEach(async () => {
-  for (const t of [schema.attachments, schema.triggers, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ sessionsEnabled: true, id: "board-1", slug: "board-one", name: "Board one" });
+  for (const t of [schema.attachments, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values({ id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" });
   await db.insert(schema.boardMembers).values({ boardId: "board-1", userId: "ada" });
 });

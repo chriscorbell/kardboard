@@ -8,7 +8,6 @@ import type { Card } from "@kardboard/shared";
 // The database module opens its file at import time, so point it at a scratch directory first.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-revisions-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { ConflictError, createCard, getCard, moveCard, updateCard } = await import("../src/services/cards.js");
@@ -21,8 +20,8 @@ const AGENT = { kind: "agent" as const, id: null };
 const PERSON = { kind: "user" as const, id: null };
 
 beforeEach(async () => {
-  for (const t of [schema.triggers, schema.events, schema.cards, schema.boards]) await db.delete(t);
-  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-1", name: "Board one" });
+  for (const t of [schema.events, schema.cards, schema.boards]) await db.delete(t);
+  await db.insert(schema.boards).values({ id: BOARD, slug: "board-1", name: "Board one" });
 });
 
 async function card(): Promise<Card> {

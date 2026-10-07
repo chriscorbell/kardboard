@@ -1,4 +1,4 @@
-// What `read_attachment` hands a Session. Images go to the model as vision input and text as
+// What `read_attachment` hands an agent. Images go to the model as vision input and text as
 // text. Anything else used to be decoded as UTF-8 too, so a client's PDF brief arrived as a page of
 // replacement characters that cost tokens and said nothing; now it is named and left alone.
 
@@ -55,7 +55,7 @@ export function sniffImage(bytes: Uint8Array): VisionType | null {
 }
 
 // Claude refuses an image whose base64 is over 5 MB, and the refused image stays in the conversation,
-// so every later turn of the Session fails the same way. The limit is on the encoded size, which is
+// so every later turn of the conversation fails the same way. The limit is on the encoded size, which is
 // four thirds of the file's: 3.75 MB of image.
 export const INLINE_IMAGE_LIMIT = 5 * 1024 * 1024;
 const encodedSize = (bytes: number) => Math.ceil(bytes / 3) * 4;

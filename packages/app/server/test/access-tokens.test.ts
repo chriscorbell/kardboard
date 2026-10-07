@@ -10,17 +10,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 // Access tokens: made by the Admin through the REST API, used by an agent outside kardboard over MCP,
-// the way Claude Code on the Admin's own machine would use one. Triggers are held back so a stray
-// one would show as a row rather than start anything.
+// the way Claude Code on the Admin's own machine would use one.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-access-tokens-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
 const { mcp } = await import("../src/routes/mcp.js");
-const { SESSION_WRITE_LIMITS } = await import("../src/services/session-writes.js");
 
 await runMigrations();
 
@@ -43,7 +40,7 @@ afterEach(async () => {
 });
 
 beforeEach(async () => {
-  for (const t of [schema.accessTokens, schema.notifications, schema.outboundEmails, schema.triggers, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.accessTokens, schema.notifications, schema.outboundEmails, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values([
     { id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets" },
     { id: "board-2", slug: "board-two", name: "Board two" },
@@ -114,17 +111,10 @@ describe("making an access token", () => {
     const res = await call(MEMBER, "POST", `/admin/boards/${BOARD}/tokens`, { name: "Mine" });
     assert.equal(res.status, 403);
   });
-
-  it("is refused on a Board that runs Sessions", async () => {
-    await db.update(schema.boards).set({ sessionsEnabled: true }).where(eq(schema.boards.id, BOARD));
-    const res = await call(ADMIN, "POST", `/admin/boards/${BOARD}/tokens`, { name: "Laptop" });
-    assert.equal(res.status, 409);
-    assert.match(((await res.json()) as { error: string }).error, /runs sessions/);
-  });
 });
 
 describe("an agent holding an access token", () => {
-  it("works the Board as the Agent, and nothing it does is a Trigger", async () => {
+  it("works the Board as the Agent", async () => {
     const { id, secret } = await makeToken();
     const client = await connect(secret);
     const board = json(await tool(client, "get_board"));
@@ -138,7 +128,6 @@ describe("an agent holding an access token", () => {
     assert.equal(moved.column, "in_progress");
     await tool(client, "post_comment", { card_id: made.id, body: "Starting on this." });
 
-    assert.deepEqual(await db.select().from(schema.triggers), []);
     const [comment] = await db.select().from(schema.comments);
     assert.equal(comment?.authorKind, "agent");
     const events = await db.select().from(schema.events).where(eq(schema.events.cardId, made.id));
@@ -264,7 +253,7 @@ describe("an agent holding an access token", () => {
     assert.equal(linked.prNumber, 4);
     const c1 = await row("c1");
     assert.equal(c1.branch, "dark-mode");
-    assert.equal(c1.prHeadSha, null, "kardboard asked GitHub nothing");
+    assert.equal(c1.prUrl, "https://github.com/Acme/Widgets/pull/4");
   });
 
   it("does not tell the Admin about their own card moving, but does tell a Member", async () => {
@@ -279,41 +268,12 @@ describe("an agent holding an access token", () => {
       [["ada", "adas"]],
     );
   });
-
-  it("is not held to a Session's caps on comments, cards, and moves, being the Admin's own agent", async () => {
-    await card("c1");
-    const client = await connect((await makeToken()).secret);
-    for (let i = 0; i <= SESSION_WRITE_LIMITS.comment; i++) {
-      const posted = await tool(client, "post_comment", { card_id: "c1", body: `Note ${i}` });
-      assert.notEqual(posted.isError, true, text(posted));
-    }
-    for (let i = 0; i <= SESSION_WRITE_LIMITS.card; i++) {
-      const made = await tool(client, "create_card", { title: `Card ${i}` });
-      assert.notEqual(made.isError, true, text(made));
-    }
-    let revision = 0;
-    for (let i = 0; i <= SESSION_WRITE_LIMITS.move; i++) {
-      const moved = await tool(client, "move_card", { card_id: "c1", column: i % 2 === 0 ? "in_progress" : "ready", revision });
-      assert.notEqual(moved.isError, true, text(moved));
-      revision = json(moved).revision as number;
-    }
-  });
 });
 
 describe("an access token's standing", () => {
-  it("is turned away while its Board runs Sessions, and works again once they are off", async () => {
-    const { secret } = await makeToken();
-    await db.update(schema.boards).set({ sessionsEnabled: true }).where(eq(schema.boards.id, BOARD));
-    const refused = await initialize(secret);
-    assert.equal(refused.status, 403);
-    assert.equal(((await refused.json()) as { error: string }).error, "sessions_on");
-
-    await db.update(schema.boards).set({ sessionsEnabled: false }).where(eq(schema.boards.id, BOARD));
-    assert.equal((await initialize(secret)).status, 200);
-  });
-
   it("ends when the Admin revokes it", async () => {
     const { id, secret } = await makeToken();
+    assert.equal((await initialize(secret)).status, 200);
     assert.equal((await call(ADMIN, "DELETE", `/admin/boards/${BOARD}/tokens/${id}`)).status, 200);
     assert.equal((await initialize(secret)).status, 401);
     const [revoked] = await db.select().from(schema.events).where(eq(schema.events.type, "access_token.revoked"));
@@ -332,8 +292,8 @@ describe("an access token's standing", () => {
     assert.deepEqual(await db.select().from(schema.accessTokens), []);
   });
 
-  it("is not mistaken for a Session's token, nor a Session's for it", async () => {
+  it("turns away a token it never made, and anything that is not one", async () => {
     assert.equal((await initialize("kbat_not-a-real-token")).status, 401);
-    assert.equal((await initialize("some-session-token")).status, 401);
+    assert.equal((await initialize("some-other-token")).status, 401);
   });
 });

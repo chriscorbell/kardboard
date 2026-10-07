@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { MAX_WALL_CLOCK_MINUTES, MIN_WALL_CLOCK_MINUTES, type Settings } from "@kardboard/shared";
+import type { Settings } from "@kardboard/shared";
 import { keys, request, useAdminSettings } from "../../lib/api";
 import { Avatar, Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { TabHeader } from "./AdminPage";
-import { ProvidersStatus } from "./ProvidersStatus";
 
 export function AgentTab() {
   const settings = useAdminSettings();
@@ -27,7 +26,7 @@ export function AgentTab() {
   }
   return (
     <>
-      <TabHeader title="Agent" body="One identity acts on every board. Members will address it by this name, so pick something you're happy to see in comment history." />
+      <TabHeader title="Agent" body="Every agent you connect with an access token acts under this one identity, so its cards and comments are told apart from yours." />
       <form
         className="flex max-w-lg flex-col gap-5"
         onSubmit={(e) => {
@@ -46,26 +45,6 @@ export function AgentTab() {
             </Field>
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Global concurrent sessions" hint="Across all boards. Protects your own interactive use of the subscription.">
-            <Input type="number" min={1} max={20} value={draft.globalMaxConcurrentSessions} onChange={(e) => setDraft({ ...draft, globalMaxConcurrentSessions: Number(e.target.value) })} />
-          </Field>
-          <Field label="Session wall clock (minutes)" hint={`A session that runs longer is stopped. At most ${MAX_WALL_CLOCK_MINUTES}, since the session's GitHub token lasts one hour.`}>
-            <Input type="number" min={MIN_WALL_CLOCK_MINUTES} max={MAX_WALL_CLOCK_MINUTES} value={draft.sessionWallClockMinutes} onChange={(e) => setDraft({ ...draft, sessionWallClockMinutes: Number(e.target.value) })} />
-          </Field>
-        </div>
-        <label className="flex items-start gap-2 text-[13px] text-ink-muted">
-          <input
-            type="checkbox"
-            checked={draft.providerFallback}
-            onChange={(e) => setDraft({ ...draft, providerFallback: e.target.checked })}
-            className="mt-[3px] accent-accent"
-          />
-          <span>
-            Provider fallback: when a session's provider runs out of usage, pick the card up again on the other one. Both subscriptions keep their credential in the egress
-            proxy, so a fallback does not move a token anywhere. The board's model is left to the other provider's default, since a model name belongs to one of them.
-          </span>
-        </label>
         {save.isError ? <p className="text-[13px] text-danger">{save.error.message}</p> : null}
         <div>
           <Button type="submit" variant="primary" loading={save.isPending}>
@@ -74,7 +53,6 @@ export function AgentTab() {
           {save.isSuccess ? <span className="ml-3 text-[12.5px] text-ink-muted">Saved.</span> : null}
         </div>
       </form>
-      <ProvidersStatus />
     </>
   );
 }

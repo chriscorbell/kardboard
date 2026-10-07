@@ -10,7 +10,6 @@ import { after, afterEach, beforeEach, describe, it } from "node:test";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-board-events-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 process.env.KARDBOARD_EVENTS_PING_MS = "20";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
@@ -24,7 +23,7 @@ const ADMIN = "root@example.com";
 const MEMBER = "ada@example.com";
 
 beforeEach(async () => {
-  for (const t of [schema.triggers, schema.events, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.events, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },

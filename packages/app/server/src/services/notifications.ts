@@ -155,33 +155,6 @@ export async function notifyCardMoved(card: Card, from: Card["column"], actor: A
   });
 }
 
-// A Session on the Card failed or ran out of time. Its creator and the Admin hear about it, since
-// otherwise the request would end with nobody knowing; the Card's own notice says the same. A person
-// whose own action caused the end is not told of it.
-export async function notifySessionFailed(card: Card, notice: { title: string; reason: string; next: string }, actor: Actor): Promise<void> {
-  const board = await getBoardById(card.boardId);
-  if (!board) return;
-  const recipients = new Set<string>();
-  if (card.creatorKind === "user" && card.creatorId) recipients.add(card.creatorId);
-  const admins = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.role, "admin"));
-  for (const a of admins) recipients.add(a.id);
-  if (actor.kind === "user" && actor.id) recipients.delete(actor.id);
-  const agent = await getAgentProfile();
-  for (const userId of recipients) {
-    await notify({
-      userId,
-      card,
-      board,
-      kind: "session_failed",
-      title: notice.title,
-      body: `${notice.reason}\n\n${notice.next}`,
-      actor: agent,
-      emailSubject: `${notice.title} "${card.title}"`,
-      emailHeading: `${notice.title} ${card.title}`,
-    });
-  }
-}
-
 // A Comment's words for the bell and an email, with each @handle shown as the name it stands for, as
 // the card shows it.
 async function withNames(body: string): Promise<string> {

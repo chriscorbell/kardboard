@@ -23,7 +23,7 @@ Deliberately kept: `cardboard.xode.cc` in `KARDBOARD_REDIRECT_HOSTS`, which is a
 
 ## Review that followed
 
-A full review of the project ran the same day. Its fixes shipped as PRs 19 to 24: Session lifecycle races and restarts, Approval bound to the reviewed head and authorization gaps, client fixes (attachments under Clerk, realtime reconnect, focus, touch), and runner, preview router, and egress hardening. A second verification Session after PR 23 confirmed the gateway fix and an egress allowlist with no refusals. What is still unobserved is in [the v1 gaps note](../work/2026-09-14-v1-gaps.md).
+A full review of the project ran the same day. Its fixes shipped as PRs 19 to 24: Session lifecycle races and restarts, Approval bound to the reviewed head and authorization gaps, client fixes (attachments under Clerk, realtime reconnect, focus, touch), and runner, preview router, and egress hardening. A second verification Session after PR 23 confirmed the gateway fix and an egress allowlist with no refusals. What is still unobserved is in [the v1 gaps note](2026-09-14-v1-gaps.md).
 
 ## Recovery
 

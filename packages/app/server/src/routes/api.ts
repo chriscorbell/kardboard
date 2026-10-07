@@ -22,40 +22,27 @@ import {
   upsertBoardSchema,
   isDisplayableImage,
   mimeEssence,
-  ACTIVE_SESSION_STATUSES,
   type BoardView,
   type CardDetail,
   type Me,
-  type ProvidersView,
-  type SessionTranscript,
   type User,
 } from "@kardboard/shared";
 import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { refreshFromClerk, requireAdmin, requireUser, type AuthVariables } from "../auth.js";
-import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardPeople, listBoardsForUser, listMembers, listMentionable, setBoardPaused, setMembers, updateBoard } from "../services/boards.js";
-import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, retryCard, RetryRefused, updateCard } from "../services/cards.js";
+import { canAccessBoard, createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardPeople, listBoardsForUser, listMembers, listMentionable, setMembers, updateBoard } from "../services/boards.js";
+import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, updateCard } from "../services/cards.js";
 import { addAttachment, createComment, deleteComment, getAttachment, getComment, listComments, underFileLock, updateComment } from "../services/comments.js";
 import { getAgentProfile, getSettings, updateSettings } from "../services/settings.js";
 import { getPreferences, getUser, inviteUser, isRemoved, listUsers, removeUser, RemoveRefused, setUserStatus, updatePreferences } from "../services/users.js";
 import { sendInvitation } from "../services/email.js";
 import { subscribe } from "../services/realtime.js";
-import { boardPauseChanged, cancelSession, getSession, listBoardSessions, SessionsSwitchRefused, setBoardSessions } from "../services/orchestrator.js";
-import { getAdminSession, listAdminSessions, sessionFilters } from "../services/admin-sessions.js";
-import { usageTotals } from "../services/usage.js";
-import { readEgressStatus } from "../services/provider-limits.js";
-import { runner } from "../services/runner-client.js";
-import { parseTranscript } from "../services/transcript.js";
-import { ApprovalError, approveCard, listApprovals, retryMerge } from "../services/approvals.js";
 import { listNotifications, markCardNotificationsRead, markNotificationsRead } from "../services/notifications.js";
 import { backupsView, takeSnapshot } from "../services/backup.js";
-import { installationStatus, parseRepoUrl } from "../services/github.js";
-import { reconcileOnDemand } from "../services/reconcile.js";
-import { bumpEveryPreviewEpoch, bumpPreviewEpoch, issuePreviewCode, PreviewError } from "../services/previews.js";
 import { BoardDeletionRefused, boardDeletionImpact, deleteBoard } from "../services/board-deletion.js";
-import { AccessTokenRefused, createAccessToken, listAccessTokens, revokeAccessToken } from "../services/access-tokens.js";
-import { CardDeletionRefused, deleteCard, mayDeleteCard } from "../services/card-deletion.js";
+import { createAccessToken, listAccessTokens, revokeAccessToken } from "../services/access-tokens.js";
+import { deleteCard, mayDeleteCard } from "../services/card-deletion.js";
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 // Every other body the API reads is a JSON document, the largest a Card's or a Comment's 20,000
@@ -90,16 +77,6 @@ function json<T extends z.ZodTypeAny>(schema: T) {
 
 function actorOf(c: { get: (k: "user") => { id: string } }) {
   return { kind: "user" as const, id: c.get("user").id };
-}
-
-// Merging over failing checks is the Admin's call alone; a Member's request to is ignored.
-function overrideFor(c: { get: (k: "user") => { role: string } }, requested: boolean | undefined): boolean {
-  return c.get("user").role === "admin" && requested === true;
-}
-
-// Silence is the Admin's option. A Member's change always reaches the Agent.
-function silentFor(c: { get: (k: "user") => { role: string } }, requested: boolean | undefined): boolean | undefined {
-  return c.get("user").role === "admin" ? requested : undefined;
 }
 
 async function boardForUser(c: Parameters<typeof actorOf>[0] & { json: (b: unknown, s: 403 | 404) => Response }, boardId: string) {
@@ -153,7 +130,6 @@ api.get("/boards/:slug", async (c) => {
     // See BoardMember: the emails go to the Admin alone.
     members: c.get("user").role === "admin" ? members : members.map(({ email: _email, ...member }) => member),
     people: await listBoardPeople(board.id),
-    sessions: await listBoardSessions(board.id, 20),
     agent: await getAgentProfile(),
   };
   return c.json(view);
@@ -189,7 +165,7 @@ api.post("/boards/:slug/cards", json(createCardSchema), async (c) => {
   if (!(await canAccessBoard(c.get("user"), board.id))) return c.json({ error: "forbidden" }, 403);
   const input = c.req.valid("json");
   const column = c.get("user").role === "admin" ? input.column : "inbox";
-  const card = await createCard({ boardId: board.id, ...input, column, silent: silentFor(c, input.silent), actor: actorOf(c) });
+  const card = await createCard({ boardId: board.id, ...input, column, actor: actorOf(c) });
   return c.json(card, 201);
 });
 
@@ -204,7 +180,6 @@ api.get("/cards/:id", async (c) => {
     activity: (
       await db.select().from(schema.events).where(eq(schema.events.cardId, card.id)).orderBy(desc(schema.events.createdAt)).limit(100)
     ).map((e) => ({ id: e.id, type: e.type, actorKind: e.actorKind, actorId: e.actorId, payload: e.payload, createdAt: e.createdAt })),
-    approvals: await listApprovals(card.id),
     children: await listChildren(card.id),
   };
   return c.json(detail);
@@ -226,7 +201,7 @@ api.patch("/cards/:id", json(updateCardSchema), async (c) => {
   if ("error" in access) return access.error;
   try {
     const input = c.req.valid("json");
-    return c.json(await updateCard(card.id, { ...input, silent: silentFor(c, input.silent), actor: actorOf(c) }));
+    return c.json(await updateCard(card.id, { ...input, actor: actorOf(c) }));
   } catch (err) {
     if (err instanceof ConflictError) return c.json({ error: "conflict", card: await getCard(card.id) }, 409);
     throw err;
@@ -240,74 +215,11 @@ api.post("/cards/:id/move", json(moveCardSchema), async (c) => {
   if ("error" in access) return access.error;
   try {
     const input = c.req.valid("json");
-    return c.json(await moveCard(card.id, { ...input, silent: silentFor(c, input.silent), actor: actorOf(c) }));
+    return c.json(await moveCard(card.id, { ...input, actor: actorOf(c) }));
   } catch (err) {
     if (err instanceof ConflictError) return c.json({ error: "conflict", card: await getCard(card.id) }, 409);
     throw err;
   }
-});
-
-// `headSha` is the pull request head the Card showed the Member. Approval is bound to it, and is
-// refused if the pull request has moved on since, while the Agent has work on the Card still to
-// start or finish, or while its checks are failing or cannot be read unless the Admin sends
-// `overrideChecks`. A refusal the client acts on carries a `reason` beside the sentence.
-api.post("/cards/:id/approve", json(z.object({ headSha: z.string().min(1).nullable().optional(), overrideChecks: z.boolean().optional() })), async (c) => {
-  const card = await getCard(c.req.param("id"));
-  if (!card) return c.json({ error: "not_found" }, 404);
-  const access = await boardForUser(c as never, card.boardId);
-  if ("error" in access) return access.error;
-  const input = c.req.valid("json");
-  try {
-    return c.json(await approveCard(card.id, actorOf(c), input.headSha ?? null, { overrideChecks: overrideFor(c, input.overrideChecks) }), 201);
-  } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message, ...(err.reason ? { reason: err.reason } : {}) }, err.status);
-    throw err;
-  }
-});
-
-// The Approval stands after a refusal GitHub gave for its own reasons, so the merge can simply be
-// tried again once the cause is fixed, without asking the Member to sign off a second time. The
-// body is optional.
-api.post("/cards/:id/retry-merge", async (c) => {
-  const card = await getCard(c.req.param("id"));
-  if (!card) return c.json({ error: "not_found" }, 404);
-  const access = await boardForUser(c as never, card.boardId);
-  if ("error" in access) return access.error;
-  const body = z.object({ overrideChecks: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
-  try {
-    return c.json(await retryMerge(card.id, actorOf(c), { overrideChecks: overrideFor(c, body.success ? body.data.overrideChecks : undefined) }));
-  } catch (err) {
-    if (err instanceof ApprovalError) return c.json({ error: err.message, ...(err.reason ? { reason: err.reason } : {}) }, err.status);
-    throw err;
-  }
-});
-
-// Try again, after a Session failed or ran out of time. Any User who can open the Board may ask.
-api.post("/cards/:id/retry", async (c) => {
-  const card = await getCard(c.req.param("id"));
-  if (!card) return c.json({ error: "not_found" }, 404);
-  const access = await boardForUser(c as never, card.boardId);
-  if ("error" in access) return access.error;
-  try {
-    return c.json(await retryCard(card.id, actorOf(c)), 201);
-  } catch (err) {
-    if (err instanceof RetryRefused) return c.json({ error: err.message }, err.status);
-    throw err;
-  }
-});
-
-// Someone opened a Card in Review: its pull request and CI are read from GitHub again, at most every
-// half minute per Card, and the Card is returned as it now stands. What GitHub says also reaches
-// everyone else on the Board through the event stream.
-api.post("/cards/:id/sync", async (c) => {
-  const card = await getCard(c.req.param("id"));
-  if (!card) return c.json({ error: "not_found" }, 404);
-  const access = await boardForUser(c as never, card.boardId);
-  if ("error" in access) return access.error;
-  if (card.column === "review" && card.prNumber) {
-    await reconcileOnDemand(card.id).catch((err: Error) => console.error(`[reconcile] could not read card ${card.id} from GitHub: ${err.message}`));
-  }
-  return c.json(await getCard(card.id));
 });
 
 api.post("/cards/:id/comments", json(createCommentSchema), async (c) => {
@@ -316,15 +228,15 @@ api.post("/cards/:id/comments", json(createCommentSchema), async (c) => {
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
   const input = c.req.valid("json");
-  const comment = await createComment({ cardId: card.id, ...input, silent: silentFor(c, input.silent), actor: actorOf(c) });
+  const comment = await createComment({ cardId: card.id, ...input, actor: actorOf(c) });
   return c.json(comment, 201);
 });
 
 api.patch("/comments/:id", json(updateCommentSchema), async (c) => {
   const comment = await getComment(c.req.param("id"));
   if (!comment) return c.json({ error: "not_found" }, 404);
-  // Authorship alone is not enough: an edit is a Trigger on the Board, and a Member who has lost
-  // the Board must not be able to start work there by editing an old Comment.
+  // Authorship alone is not enough: a Member who has lost the Board must not be able to change what
+  // it says by editing an old Comment.
   const card = (await getCard(comment.cardId))!;
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
@@ -343,12 +255,7 @@ api.delete("/cards/:id", async (c) => {
   const access = await boardForUser(c as never, card.boardId);
   if ("error" in access) return access.error;
   if (!mayDeleteCard(c.get("user"), card)) return c.json({ error: "Only the Admin, or the person who created this card, can delete it." }, 403);
-  try {
-    await deleteCard(card.id, actorOf(c));
-  } catch (err) {
-    if (err instanceof CardDeletionRefused) return c.json({ error: err.message }, err.status);
-    throw err;
-  }
+  await deleteCard(card.id, actorOf(c));
   return c.body(null, 204);
 });
 
@@ -424,31 +331,10 @@ api.get("/attachments/:id", async (c) => {
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'",
       // A page on another origin cannot embed the file, even if its request were to carry a
-      // credential. Not same-site: a Preview runs a branch's code on a subdomain of this site.
+      // credential.
       "Cross-Origin-Resource-Policy": "same-origin",
     },
   });
-});
-
-// ---- previews ----
-
-// A Member lands here from the preview router, which sent them away because they had no Preview
-// cookie. The page is behind the app's own sign-in, so by the time this runs the caller is known;
-// membership is checked against the Preview's Board and the answer is a single-use code that only
-// works on that one host.
-api.post("/previews/auth-code", json(z.object({ host: z.string().min(1), next: z.string().default("/") })), async (c) => {
-  const { host, next } = c.req.valid("json");
-  try {
-    const { code, redirectBase } = await issuePreviewCode(c.get("user"), host);
-    // `next` is a path on the preview host, never an absolute URL, so this cannot be an open redirect.
-    // Browsers read a backslash as a slash and drop tabs and newlines, so `/\evil.com` and
-    // `/<TAB>/evil.com` would both leave the host; neither is a path anyone meant.
-    const path = next.startsWith("/") && !next.startsWith("//") && !/[\\\u0000-\u001f\u007f]/.test(next) ? next : "/";
-    return c.json({ redirect: `${redirectBase}/__kardboard/auth?code=${encodeURIComponent(code)}&next=${encodeURIComponent(path)}` });
-  } catch (err) {
-    if (err instanceof PreviewError) return c.json({ error: err.message }, 403);
-    throw err;
-  }
 });
 
 // ---- admin ----
@@ -464,9 +350,6 @@ admin.post("/users", json(inviteUserSchema), async (c) => {
 admin.post("/users/:id/revoke", async (c) => {
   if (c.req.param("id") === c.get("user").id) return c.json({ error: "cannot revoke yourself" }, 400);
   await setUserStatus(c.req.param("id"), "revoked");
-  // The revoked user may hold Preview cookies on any Board, and a cookie is only checked against
-  // its Board's epoch, so every Board's epoch moves.
-  await bumpEveryPreviewEpoch();
   return c.json({ ok: true });
 });
 admin.post("/users/:id/reinstate", async (c) => {
@@ -509,36 +392,9 @@ admin.patch("/boards/:id", json(upsertBoardSchema), async (c) => {
   if (existing && existing.id !== c.req.param("id")) return c.json({ error: "slug already in use" }, 409);
   const before = await getBoardById(c.req.param("id"));
   if (!before) return c.json({ error: "not_found" }, 404);
-  // The Sessions switch goes first: it can be refused, and then nothing else is saved either.
-  const { sessionsEnabled } = c.req.valid("json");
-  if (sessionsEnabled !== undefined && sessionsEnabled !== before.sessionsEnabled) {
-    try {
-      await setBoardSessions(before.id, sessionsEnabled, actorOf(c));
-    } catch (err) {
-      if (err instanceof SessionsSwitchRefused) return c.json({ error: err.message }, err.status);
-      throw err;
-    }
-  }
-  const board = await updateBoard(before.id, c.req.valid("json"));
-  if (board.paused !== before.paused) await boardPauseChanged(board.id, board.paused, actorOf(c));
-  return c.json(board);
+  return c.json(await updateBoard(before.id, c.req.valid("json")));
 });
-// The pause switch alone, for the Board page.
-admin.post("/boards/:id/pause", json(z.object({ paused: z.boolean() })), async (c) => {
-  const before = await getBoardById(c.req.param("id"));
-  if (!before) return c.json({ error: "not_found" }, 404);
-  const board = (await setBoardPaused(before.id, c.req.valid("json").paused))!;
-  if (board.paused !== before.paused) await boardPauseChanged(board.id, board.paused, actorOf(c));
-  return c.json(board);
-});
-admin.get("/boards/:id/github", async (c) => {
-  const board = await getBoardById(c.req.param("id"));
-  if (!board) return c.json({ error: "not_found" }, 404);
-  const repo = parseRepoUrl(board.repoUrl);
-  if (!repo) return c.json({ repo: null, sessions: "unconfigured", merge: "unconfigured" });
-  return c.json({ repo: `${repo.owner}/${repo.repo}`, ...(await installationStatus(repo.owner, repo.repo)) });
-});
-// What deleting the Board would remove, and whether a running Session holds it back.
+// What deleting the Board would remove.
 admin.get("/boards/:id/deletion", async (c) => {
   const board = await getBoardById(c.req.param("id"));
   if (!board) return c.json({ error: "not_found" }, 404);
@@ -566,12 +422,7 @@ admin.get("/boards/:id/tokens", async (c) => {
 admin.post("/boards/:id/tokens", json(createAccessTokenSchema), async (c) => {
   const board = await getBoardById(c.req.param("id"));
   if (!board) return c.json({ error: "not_found" }, 404);
-  try {
-    return c.json(await createAccessToken(board.id, c.req.valid("json").name, actorOf(c)), 201);
-  } catch (err) {
-    if (err instanceof AccessTokenRefused) return c.json({ error: err.message }, err.status);
-    throw err;
-  }
+  return c.json(await createAccessToken(board.id, c.req.valid("json").name, actorOf(c)), 201);
 });
 admin.delete("/boards/:id/tokens/:tokenId", async (c) => {
   const revoked = await revokeAccessToken(c.req.param("id"), c.req.param("tokenId"), actorOf(c));
@@ -579,8 +430,6 @@ admin.delete("/boards/:id/tokens/:tokenId", async (c) => {
 });
 admin.put("/boards/:id/members", json(boardMembersSchema), async (c) => {
   await setMembers(c.req.param("id"), c.req.valid("json").userIds);
-  // Membership may have narrowed; outstanding Preview cookies for this Board stop working now.
-  await bumpPreviewEpoch(c.req.param("id"));
   return c.json({ ok: true });
 });
 
@@ -591,66 +440,6 @@ admin.get("/backups", (c) => c.json(backupsView()));
 admin.post("/backups", async (c) => {
   const { snapshot } = await takeSnapshot();
   return c.json({ ...backupsView(), snapshot }, 201);
-});
-
-// What the egress proxy last saw of each Provider, read live: usage windows, a rejected credential,
-// and the calls it refused. The app reads the same thing to decide a fallback and to alert.
-admin.get("/limits", async (c) => {
-  const { egress, checkedAt, providers, refusals } = await readEgressStatus();
-  const view: ProvidersView = { egress, checkedAt, providers, refusals };
-  return c.json(view);
-});
-
-// Filters: `board` (id), `status` (a status or `active`), `kind`; `before` is the previous page's
-// `nextCursor`.
-admin.get("/sessions", async (c) => c.json(await listAdminSessions(sessionFilters(c.req.query()))));
-
-// Token and cost totals per Board over the last `days` (30 unless given, at most a year).
-admin.get("/usage", async (c) => {
-  const days = Math.min(365, Math.max(1, Math.floor(Number(c.req.query("days") ?? "30")) || 30));
-  return c.json(await usageTotals(days));
-});
-
-// One Session, for a link straight to it that may be older than the first page.
-admin.get("/sessions/:id", async (c) => {
-  const session = await getAdminSession(c.req.param("id"));
-  return session ? c.json(session) : c.json({ error: "not_found" }, 404);
-});
-
-// The transcript is the Session's container log, tailed by byte offset: pass back `nextOffset` to
-// get only what has been written since. The runner holds the bytes; the app parses them.
-admin.get("/sessions/:id/transcript", async (c) => {
-  const session = await getSession(c.req.param("id"));
-  if (!session) return c.json({ error: "not_found" }, 404);
-  const requested = Number(c.req.query("offset") ?? "0");
-  const offset = Number.isFinite(requested) ? requested : 0;
-  const empty = (note: string): SessionTranscript => ({ available: false, entries: [], nextOffset: offset, size: 0, skipped: false, note });
-  if (runner.mode === "noop") return c.json(empty("No runner is configured, so nothing was recorded."));
-  let slice;
-  try {
-    slice = await runner.logSlice(session.id, offset);
-  } catch (err) {
-    console.error("[api] transcript unavailable", err);
-    return c.json(empty("The runner did not answer, so the transcript cannot be read right now."));
-  }
-  if (!slice.exists) {
-    return c.json(empty(ACTIVE_SESSION_STATUSES.includes(session.status) ? "Waiting for the session to write its first line." : "No log for this session. It never started, or the log has been pruned."));
-  }
-  const view: SessionTranscript = {
-    available: true,
-    entries: parseTranscript(slice.text),
-    nextOffset: slice.nextOffset,
-    size: slice.size,
-    skipped: slice.skipped,
-    note: null,
-  };
-  return c.json(view);
-});
-
-admin.post("/sessions/:id/cancel", async (c) => {
-  const rerun = c.req.query("rerun") === "1";
-  await cancelSession(c.req.param("id"), actorOf(c), rerun);
-  return c.json({ ok: true });
 });
 
 api.route("/admin", admin);

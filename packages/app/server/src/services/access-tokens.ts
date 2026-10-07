@@ -5,8 +5,7 @@ import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { recordEvent, type Actor } from "./events.js";
 
-// Every Access token starts with this, so it can be told from a Session's token at a glance, and so a
-// secret scanner can find one pasted where it should not be.
+// Every Access token starts with this, so a secret scanner can find one pasted where it should not be.
 export const ACCESS_TOKEN_PREFIX = "kbat_";
 
 // How stale the recorded last use may get before a request writes it again: an agent calls tools in
@@ -19,22 +18,15 @@ function toAccessToken(row: typeof schema.accessTokens.$inferSelect): AccessToke
   return { id: row.id, boardId: row.boardId, name: row.name, createdAt: row.createdAt, lastUsedAt: row.lastUsedAt };
 }
 
-export class AccessTokenRefused extends Error {
-  status = 409 as const;
-}
-
 export async function listAccessTokens(boardId: string): Promise<AccessToken[]> {
   const rows = await db.select().from(schema.accessTokens).where(eq(schema.accessTokens.boardId, boardId)).orderBy(desc(schema.accessTokens.createdAt));
   return rows.map(toAccessToken);
 }
 
-/** Makes a token for a Board without Sessions. The secret is returned here and never again. */
+/** Makes a token for a Board. The secret is returned here and never again. */
 export async function createAccessToken(boardId: string, name: string, actor: Actor): Promise<CreatedAccessToken> {
-  const board = await db.select({ sessionsEnabled: schema.boards.sessionsEnabled }).from(schema.boards).where(eq(schema.boards.id, boardId)).get();
+  const board = await db.select({ id: schema.boards.id }).from(schema.boards).where(eq(schema.boards.id, boardId)).get();
   if (!board) throw new Error("board not found");
-  // A Board that runs Sessions already has the Agent at work; a second one acting under its name
-  // would race the Sessions for its Cards. See ADR 0010.
-  if (board.sessionsEnabled) throw new AccessTokenRefused("This board runs sessions. Turn them off to work it from your own agent.");
   const secret = `${ACCESS_TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
   const id = newId();
   await db.insert(schema.accessTokens).values({ id, boardId, name, tokenHash: hash(secret) });

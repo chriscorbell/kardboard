@@ -3,16 +3,16 @@ import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { queueEmail } from "./email.js";
 
-// Things that go wrong where no one is looking: a nightly backup, a credential the provider stopped
-// accepting, a runner that stopped answering. Each is emailed to every active Admin. The same key
-// sends at most once in six hours, so a condition checked every minute cannot fill an inbox, and the
-// time it was last sent is a row, so a restart in between does not send it again.
+// Things that go wrong where no one is looking, such as a nightly backup. Each is emailed to every
+// active Admin. The same key sends at most once in six hours, so a condition checked every minute
+// cannot fill an inbox, and the time it was last sent is a row, so a restart in between does not send
+// it again.
 export const ALERT_DEDUPE_MS = 6 * 3_600_000;
 
 const keyFor = (key: string) => `alert:${key}`;
 
 export interface AdminAlert {
-  /** What makes two alerts the same one. Stable across restarts: `backup.failed`, `runner.unreachable`. */
+  /** What makes two alerts the same one. Stable across restarts: `backup.failed`. */
   key: string;
   subject: string;
   body: string;

@@ -12,7 +12,6 @@ import { documentTitle, useDocumentTitle } from "../lib/documentTitle";
 import { toast } from "../lib/toast";
 import { Button, cx, ErrorState, IconButton, Skeleton } from "../components/ui";
 import { CardTile } from "./board/CardTile";
-import { AgentPill } from "./board/AgentPill";
 import { NewCardDialog } from "./board/NewCardDialog";
 import { CardSheet } from "./board/CardSheet";
 import { columnHint } from "./board/columns";
@@ -121,7 +120,6 @@ function ColumnLane({
   onNew,
   canAdd,
   filtering,
-  sessionsEnabled,
   dragging,
   targeted,
   collapse,
@@ -136,7 +134,6 @@ function ColumnLane({
   onNew: () => void;
   canAdd: boolean;
   filtering: boolean;
-  sessionsEnabled: boolean;
   /** A card is being dragged, or its drop is settling: the drag library moves cards, not their own animations. */
   dragging: boolean;
   /** The column the dragged card would land in. */
@@ -231,7 +228,7 @@ function ColumnLane({
                 ))}
               </AnimatePresence>
             </SortableContext>
-            {cards.length === 0 ? <p className="px-2 py-6 text-center text-[12px] leading-relaxed text-ink-faint">{filtering ? "No matching cards." : columnHint(column, agent.name, sessionsEnabled)}</p> : null}
+            {cards.length === 0 ? <p className="px-2 py-6 text-center text-[12px] leading-relaxed text-ink-faint">{filtering ? "No matching cards." : columnHint(column)}</p> : null}
             {fold && (fold.hidden > 0 || fold.expanded) ? (
               <button
                 type="button"
@@ -365,7 +362,6 @@ export function BoardPage() {
     return { byColumn: map, doneHidden, waiting };
   }, [board.data?.cards, filter, filtering, viewer, doneExpanded]);
   const activeCard = activeId ? board.data?.cards.find((c) => c.id === activeId) : undefined;
-  const activeSessions = (board.data?.sessions ?? []).filter((s) => s.status === "running" || s.status === "starting");
   // What the columns show: the lanes while a drag holds them, the board data otherwise.
   const shown = useMemo(() => {
     if (!lanes) return byColumn;
@@ -548,13 +544,11 @@ export function BoardPage() {
                 </motion.button>
               ) : null}
             </AnimatePresence>
-            {/* The pill is the word on Sessions, and a Board without them has none to report. */}
-            {board.data.board.sessionsEnabled ? <AgentPill slug={slug} board={board.data.board} agent={agent} working={activeSessions.length} isAdmin={Boolean(isAdmin)} /> : null}
           </div>
           {helpButton("max-sm:hidden")}
         </div>
       </div>
-      <HowItWorks open={showHelp} agent={agent} sessionsEnabled={board.data.board.sessionsEnabled} onClose={closeHelp} />
+      <HowItWorks open={showHelp} agent={agent} onClose={closeHelp} />
       <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
@@ -580,7 +574,6 @@ export function BoardPage() {
               onNew={() => setCreating(true)}
               canAdd={column === "inbox"}
               filtering={filtering}
-              sessionsEnabled={board.data.board.sessionsEnabled}
               dragging={lanes !== null}
               targeted={targetColumn === column}
               collapse={column === "done" ? { open: doneOpen, onToggle: toggleDone, activeId: activeId ?? (lanes ? dropped.current : null), toggled: doneToggled } : undefined}
@@ -592,7 +585,7 @@ export function BoardPage() {
           {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay /> : null}
         </DragOverlay>
       </DndContext>
-      <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} sessionsEnabled={board.data.board.sessionsEnabled} onCreated={openCard} />
+      <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} onCreated={openCard} />
       <CardSheet slug={slug} cardId={cardId ?? null} view={board.data} onClose={closeCard} />
     </div>
   );

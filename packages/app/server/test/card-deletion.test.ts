@@ -7,11 +7,10 @@ import { after, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 
 // Deleting a Card through the REST API, the way the card sheet does. Dev authentication picks the
-// caller by email; Triggers are held back so a stray one would show as a row.
+// caller by email.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-card-deletion-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
-process.env.KARDBOARD_TRIGGER_COALESCE_MS = "600000";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
@@ -25,9 +24,9 @@ const ADA = "ada@example.com";
 const BEA = "bea@example.com";
 
 beforeEach(async () => {
-  for (const t of [schema.sessions, schema.triggers, schema.events, schema.notifications, schema.attachments, schema.comments, schema.approvals, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.events, schema.notifications, schema.attachments, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
   fs.rmSync(path.join(root, "uploads"), { recursive: true, force: true });
-  await db.insert(schema.boards).values({ sessionsEnabled: true, id: BOARD, slug: "board-one", name: "Board one" });
+  await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values([
     { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
     { id: "ada", email: ADA, handle: "ada", name: "Ada", role: "member", status: "active" },
@@ -79,15 +78,6 @@ describe("who may delete a card", () => {
     assert.equal((await del(ADA, "agents")).status, 403);
     assert.equal((await del(ADMIN, "agents")).status, 204);
   });
-
-  it("refuses while a session works on the card", async () => {
-    await card("busy");
-    await db.insert(schema.sessions).values({ id: "s1", boardId: BOARD, cardId: "busy", kind: "card", provider: "claude", status: "running" });
-    const res = await del(ADMIN, "busy");
-    assert.equal(res.status, 409);
-    assert.match(((await res.json()) as { error: string }).error, /working on this card/);
-    assert.equal(await exists("busy"), true);
-  });
 });
 
 describe("deleting a card", () => {
@@ -104,7 +94,6 @@ describe("deleting a card", () => {
     await card("other");
     await db.insert(schema.comments).values({ id: "c2", cardId: "other", authorKind: "user", authorId: "ada", body: "same file" });
     await db.insert(schema.attachments).values({ id: "a3", commentId: "c2", filename: "shared.txt", mime: "text/plain", size: 12, sha256: shared });
-    await db.insert(schema.triggers).values({ id: "t1", boardId: BOARD, cardId: "doomed", kind: "comment_posted", actorUserId: "ada", payload: {} });
     await db.insert(schema.events).values({ id: "e1", boardId: BOARD, cardId: "doomed", actorKind: "user", actorId: "ada", type: "card.edited", payload: { previous: { description: "the secret is hunter2" } } });
 
     assert.equal((await del(ADA, "doomed")).status, 204);
@@ -113,7 +102,6 @@ describe("deleting a card", () => {
     assert.deepEqual((await db.select().from(schema.attachments)).map((a) => a.id), ["a3"]);
     assert.equal(onDisk(own), false, "a file nothing else points at is removed");
     assert.equal(onDisk(shared), true, "a file another card still uses stays");
-    assert.deepEqual(await db.select().from(schema.triggers), []);
     const events = await db.select().from(schema.events).where(eq(schema.events.cardId, "doomed"));
     assert.deepEqual(
       events.map((e) => [e.type, e.actorId]),
@@ -128,13 +116,5 @@ describe("deleting a card", () => {
     assert.equal((await del(ADMIN, "parent")).status, 204);
     const child = (await db.select().from(schema.cards).where(eq(schema.cards.id, "child")).get())!;
     assert.equal(child.parentCardId, null);
-  });
-
-  it("wakes a parent whose last open child it was", async () => {
-    await card("parent", { column: "blocked" });
-    await card("finished", { parentCardId: "parent", column: "done", outcome: "implemented", creatorKind: "agent", creatorId: null });
-    await card("dropped", { parentCardId: "parent", creatorKind: "agent", creatorId: null });
-    assert.equal((await del(ADMIN, "dropped")).status, 204);
-    assert.equal((await db.select().from(schema.cards).where(eq(schema.cards.id, "parent")).get())!.column, "ready");
   });
 });
