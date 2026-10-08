@@ -3,8 +3,8 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { cx } from "./ui";
 import { FOCUSABLE } from "./focus";
 
-// A trigger and a panel that closes on an outside click or Escape. The Menu and the notification
-// panel share it so they open, animate, and dismiss the same way.
+// A trigger and a panel that closes on an outside click or Escape. Menus use it so they open,
+// animate, and dismiss the same way.
 export function Popover({
   trigger,
   align = "left",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { claudeMcpAddCommand } from "../src/routes/admin/accessTokens.js";
+import { claudeMcpAddCommand } from "../src/routes/settings/accessTokens.js";
 
 describe("the command that adds a Board to Claude Code", () => {
   it("points at this app's MCP endpoint with the token as a bearer header", () => {

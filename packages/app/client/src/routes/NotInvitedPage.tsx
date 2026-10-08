@@ -5,7 +5,7 @@ import { Wordmark } from "../components/Wordmark";
 export function NotInvitedPage({ reason }: { reason: "not_invited" | "unauthenticated" | "error" }) {
   const { signOut, mode } = useAuth();
   const copy = {
-    not_invited: { title: "This account isn't on the list", body: "kardboard is invite-only. If you were expecting access, the person who runs this board can add your email address." },
+    not_invited: { title: "This account isn't the one", body: "This kardboard belongs to one person and signs in with their address only. If that's you, sign out and use that address." },
     unauthenticated: { title: "Sign in to continue", body: "Your session has ended. Sign in again to open your boards." },
     error: { title: "kardboard can't reach its server", body: "The app loaded but the API did not answer. Try again in a moment." },
   }[reason];

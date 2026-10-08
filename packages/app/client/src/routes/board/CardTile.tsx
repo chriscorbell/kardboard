@@ -14,13 +14,11 @@ type Props = HTMLAttributes<HTMLDivElement> & {
   card: Card;
   creator: Person | undefined;
   agent: AgentProfile;
-  /** Whether the Agent's open question is this viewer's to answer: its creator's, or the Admin's. */
-  questionIsMine?: boolean;
   dragging?: boolean;
   overlay?: boolean;
 };
 
-export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ card, creator, agent, questionIsMine = false, dragging, overlay, className, ...rest }, ref) {
+export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ card, creator, agent, dragging, overlay, className, ...rest }, ref) {
   const priority = PRIORITY[card.priority];
   return (
     <div
@@ -38,7 +36,7 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
       {card.column === "blocked" && card.awaitingReply ? (
         <p className="mt-1.5 flex items-center gap-1 text-[12px] font-medium text-warn" title={`${agent.name} asked a question`}>
           <MessageCircleQuestion className="size-3.5 shrink-0" strokeWidth={1.75} />
-          {questionIsMine ? "Needs your answer" : "Question waiting"}
+          Needs your answer
         </p>
       ) : null}
       <div className="mt-2 flex items-center gap-2.5 text-[12px] text-ink-faint">

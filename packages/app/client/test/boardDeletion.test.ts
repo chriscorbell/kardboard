@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canDelete, deletionContents } from "../src/routes/admin/boardDeletion.js";
+import { canDelete, deletionContents } from "../src/routes/settings/boardDeletion.js";
 
 const EMPTY = { cards: 0, comments: 0, attachments: 0 };
 

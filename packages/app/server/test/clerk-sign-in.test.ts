@@ -27,12 +27,10 @@ const { signInEmail, verifySessionToken } = await import("../src/auth.js");
 await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
+// The User's row as the seed leaves it: an address to sign in with, and no Clerk identity yet.
 beforeEach(async () => {
   await db.delete(schema.users);
-  await db.insert(schema.users).values([
-    { id: "admin", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active", clerkUserId: "clerk_root" },
-    { id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "invited" },
-  ]);
+  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
 });
 
 async function row(id: string) {
@@ -64,53 +62,57 @@ describe("the address a Clerk user is matched by", () => {
 });
 
 describe("a first sign-in", () => {
-  it("links the invited row at a verified address and makes it active", async () => {
-    const user = await signIn("clerk_ada", "Ada@Example.com");
-    assert.equal(user?.id, "ada");
-    assert.equal(user?.status, "active");
-    assert.equal((await row("ada")).clerkUserId, "clerk_ada");
+  it("links the User's row at a verified address, however it is capitalised", async () => {
+    const user = await signIn("clerk_root", "Root@Example.com");
+    assert.equal(user?.id, "user");
+    assert.equal((await row("user")).clerkUserId, "clerk_root");
   });
 
-  it("is not invited without a verified address", async () => {
-    assert.equal(await signIn("clerk_ada", null), null);
-    assert.equal((await row("ada")).clerkUserId, null);
-    assert.equal((await row("ada")).status, "invited");
+  it("is refused without a verified address", async () => {
+    assert.equal(await signIn("clerk_root", null), null);
+    assert.equal((await row("user")).clerkUserId, null);
   });
 
-  it("never takes over a row another Clerk user holds, the Admin's included", async () => {
+  it("is refused at any other address, and makes no one new", async () => {
+    assert.equal(await signIn("clerk_stranger", "stranger@example.com"), null);
+    assert.equal((await row("user")).clerkUserId, null);
+    assert.equal((await db.select().from(schema.users)).length, 1);
+  });
+
+  it("never lets a second Clerk identity take the row once it is linked", async () => {
+    await signIn("clerk_root", "root@example.com");
     assert.equal(await signIn("clerk_newcomer", "root@example.com"), null);
-    const admin = await row("admin");
-    assert.equal(admin.clerkUserId, "clerk_root");
-    assert.equal(admin.role, "admin");
-
-    await signIn("clerk_ada", "ada@example.com");
-    assert.equal(await signIn("clerk_other", "ada@example.com"), null);
-    assert.equal((await row("ada")).clerkUserId, "clerk_ada");
+    assert.equal((await row("user")).clerkUserId, "clerk_root");
   });
 
-  it("is refused to a revoked User", async () => {
-    await db.update(schema.users).set({ status: "revoked" }).where(eq(schema.users.id, "ada"));
-    assert.equal(await signIn("clerk_ada", "ada@example.com"), null);
-    assert.equal((await row("ada")).clerkUserId, null);
-  });
-
-  it("lets the Admin seeded on a fresh deployment claim their row", async () => {
+  it("lets the User seeded on a fresh deployment claim their row", async () => {
     await db.delete(schema.users);
     await ensureSeed();
     const seeded = (await db.select().from(schema.users).get())!;
-    assert.equal(seeded.status, "invited");
+    assert.equal(seeded.clerkUserId, null);
     const user = await signIn("clerk_root", "root@example.com");
     assert.equal(user?.id, seeded.id);
-    assert.equal(user?.role, "admin");
-    assert.equal(user?.status, "active");
   });
 });
 
 describe("a linked User", () => {
+  beforeEach(async () => {
+    await db.update(schema.users).set({ clerkUserId: "clerk_root" }).where(eq(schema.users.id, "user"));
+  });
+
   it("signs in by Clerk id whatever addresses their account now has", async () => {
-    assert.equal((await signIn("clerk_root", null))?.id, "admin");
-    assert.equal((await signIn("clerk_root", "new-address@example.com"))?.id, "admin");
-    assert.equal((await row("admin")).email, "root@example.com");
+    assert.equal((await signIn("clerk_root", null))?.id, "user");
+    assert.equal((await signIn("clerk_root", "new-address@example.com"))?.id, "user");
+    assert.equal((await row("user")).email, "root@example.com");
+  });
+
+  it("takes a new name and avatar from Clerk, keeping the name when Clerk has none", async () => {
+    const renamed = await activateFromClerk({ clerkUserId: "clerk_root", email: null, name: "Chris", avatarUrl: "https://img.example/chris.png" });
+    assert.deepEqual([renamed?.name, renamed?.avatarUrl], ["Chris", "https://img.example/chris.png"]);
+
+    const unnamed = await activateFromClerk({ clerkUserId: "clerk_root", email: null, name: null, avatarUrl: null });
+    assert.deepEqual([unnamed?.name, unnamed?.avatarUrl], ["Chris", null], "an avatar removed in Clerk goes here too");
+    assert.equal((await row("user")).name, "Chris");
   });
 });
 

@@ -1,12 +1,11 @@
 import { Link, Navigate } from "react-router";
 import { ArrowRight, GitBranch } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
-import { useBoards, useMe } from "../lib/api";
+import { useBoards } from "../lib/api";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui";
 
 export function BoardsPage() {
   const boards = useBoards();
-  const me = useMe();
   const reduce = useReducedMotion();
   if (boards.isPending) {
     return (
@@ -34,8 +33,8 @@ export function BoardsPage() {
       {boards.data.length === 0 ? (
         <EmptyState
           title="No boards yet"
-          body={me.data?.user.role === "admin" ? "Create a board from the admin panel and grant members access to it." : "You have not been added to a board. Ask the person who invited you."}
-          action={me.data?.user.role === "admin" ? <Link to="/admin/boards" className="text-sm text-accent">Open admin</Link> : undefined}
+          body="Create one in Settings, one for each project, or ask your agent to create one for the repository it's working in."
+          action={<Link to="/settings/boards" className="text-sm text-accent">Open Settings</Link>}
         />
       ) : (
         <ul className="grid gap-2">

@@ -2,7 +2,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { ApiError, useMe } from "./lib/api";
 import { BoardsPage } from "./routes/BoardsPage";
 import { BoardPage } from "./routes/BoardPage";
-import { AdminPage } from "./routes/admin/AdminPage";
+import { SettingsPage } from "./routes/settings/SettingsPage";
 import { NotInvitedPage } from "./routes/NotInvitedPage";
 import { Shell } from "./components/Shell";
 import { Skeleton } from "./components/ui";
@@ -29,7 +29,9 @@ export function App() {
         <Route path="/" element={<BoardsPage />} />
         <Route path="/b/:slug" element={<BoardPage />} />
         <Route path="/b/:slug/c/:cardId" element={<BoardPage />} />
-        <Route path="/admin/*" element={me.data.user.role === "admin" ? <AdminPage /> : <Navigate to="/" replace />} />
+        <Route path="/settings/*" element={<SettingsPage />} />
+        {/* Where Settings lived when it was the admin panel, so old links and bookmarks still land. */}
+        <Route path="/admin/*" element={<Navigate to="/settings" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>

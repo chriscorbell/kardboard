@@ -11,7 +11,7 @@ import { inArray, sql } from "drizzle-orm";
 import { COLUMNS, COLUMN_LABELS, PRIORITIES } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
-import { getBoardById, listMembers } from "../services/boards.js";
+import { getBoardById } from "../services/boards.js";
 import { ConflictError, createCard, edgePosition, getCard, listCards, listChildren, moveCard, setCardWorkState, updateCard } from "../services/cards.js";
 import { createComment, getAttachment, listComments } from "../services/comments.js";
 import { getUsersByIds } from "../services/users.js";
@@ -26,18 +26,17 @@ import type { AccessToken, Board } from "@kardboard/shared";
 const DONE_SHOWN = 15;
 
 // What get_board sends. Done only grows, and every agent reads the Board, so by default it sends the
-// newest few. The members are who an agent may Mention: never their email, which it has no use for.
+// newest few.
 async function boardSnapshot(boardId: string, includeAllDone: boolean) {
   const board = await getBoardById(boardId);
   const cards = await listCards(boardId);
   const waiting = await repliesWaiting(cards.map((c) => c.id));
   const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
-  const members = (await listMembers(boardId)).filter((u) => u.status !== "revoked").map((u) => ({ id: u.id, name: u.name, handle: u.handle, role: u.role }));
   const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, replyWaiting: waiting.has(c.id), updatedAt: c.updatedAt });
   const done = cards.filter((c) => c.column === "done").sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   const shownDone = includeAllDone ? done : done.slice(0, DONE_SHOWN);
   const grouped = Object.fromEntries(COLUMNS.map((col) => [col, (col === "done" ? shownDone : cards.filter((c) => c.column === col)).map(summary)]));
-  return { board: { name: board?.name, repoUrl: board?.repoUrl }, columns: COLUMN_LABELS, members, cards: grouped, doneOmitted: done.length - shownDone.length };
+  return { board: { name: board?.name, repoUrl: board?.repoUrl }, columns: COLUMN_LABELS, cards: grouped, doneOmitted: done.length - shownDone.length };
 }
 
 // The Cards where a person has commented since the Agent last did: an answer to its question, or more
@@ -62,16 +61,16 @@ async function cardSnapshot(id: string) {
   const card = (await getCard(id))!;
   const comments = await listComments(id);
   const users = await getUsersByIds([card.creatorId, ...comments.map((c) => c.authorId)].filter((x): x is string => Boolean(x)));
-  // A name and handle to address someone by. The rest of a User record, email included, stays out.
+  // A name to call someone by. The rest of a User record, email included, stays out.
   const person = (userId: string | null) => {
     const u = userId ? users.get(userId) : undefined;
-    return u ? { name: u.name, handle: u.handle } : null;
+    return u ? { name: u.name } : null;
   };
   const children = await listChildren(id);
   return {
     ...card,
     creator: person(card.creatorId),
-    comments: comments.map((c) => ({ id: c.id, author: c.authorKind === "agent" ? "you" : c.authorKind === "system" ? "kardboard" : (users.get(c.authorId ?? "")?.name ?? "unknown"), authorHandle: users.get(c.authorId ?? "")?.handle ?? null, body: c.body, createdAt: c.createdAt, editedAt: c.editedAt, attachments: c.attachments })),
+    comments: comments.map((c) => ({ id: c.id, author: c.authorKind === "agent" ? "you" : c.authorKind === "system" ? "kardboard" : (users.get(c.authorId ?? "")?.name ?? "unknown"), body: c.body, createdAt: c.createdAt, editedAt: c.editedAt, attachments: c.attachments })),
     children: children.map((c) => ({ id: c.id, title: c.title, column: c.column, outcome: c.outcome })),
   };
 }
@@ -85,15 +84,15 @@ async function attachmentOnBoard(boardId: string, attachmentId: string) {
   return attachmentContent(att, fs.readFileSync(file));
 }
 
-// The agent-native interface, for the Admin's own coding agent holding an Access token (ADR 0010).
-// Whoever holds the token answers to the Admin, so it may edit and move any Card on its Board.
+// The agent-native interface, for the User's own coding agent holding an Access token (ADR 0010).
+// Whoever holds the token answers to the User, so it may edit and move any Card on its Board.
 // kardboard reads none of its pull requests; the agent merges them itself and says so when it closes
 // the Card.
 const TOKEN_INSTRUCTIONS = `This is a kardboard board: the shared record of work on one project, which you and the people on it read and change. You act on it as its agent. Nothing on this board starts on its own. You work it when the person running you asks, and people move cards by hand.
 
 Read get_board first, and read every card it marks replyWaiting: a person has commented there since you last did, often answering your question. The columns: Backlog, column inbox, holds new requests not yet looked at. Blocked holds cards waiting on a person's answer. Ready holds understood cards nobody has started. In Progress holds cards being worked on. Review holds cards whose pull request is open for a look. Done holds merged, closed, or duplicate cards.
 
-Keep the board true to the work. Move a card to In Progress when you start it. If you need a person's answer, ask in a comment that mentions them by @handle and move the card to Blocked. Once its pull request is open, record it with link_pull_request and move the card to Review. When you have merged the pull request, move the card to Done with merged set. Every edit and move takes the revision you last read: if the card changed since, read it again before deciding.`;
+Keep the board true to the work. Move a card to In Progress when you start it. If you need a person's answer, ask in a comment and move the card to Blocked. Once its pull request is open, record it with link_pull_request and move the card to Review. When you have merged the pull request, move the card to Done with merged set. Every edit and move takes the revision you last read: if the card changed since, read it again before deciding.`;
 
 function buildTokenServer(board: Board, token: AccessToken): McpServer {
   const server = new McpServer({ name: "kardboard", version: "0.1.0" }, { instructions: TOKEN_INSTRUCTIONS });
@@ -113,7 +112,7 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
   server.registerTool(
     "get_board",
     {
-      description: `The board's name and repository, its members with their @handles and roles, and every card on it grouped by column, with creator names and each card's revision. replyWaiting marks a card where a person has commented since you last did: read it with get_card. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
+      description: `The board's name and repository, and every card on it grouped by column, with creator names and each card's revision. replyWaiting marks a card where a person has commented since you last did: read it with get_card. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
       inputSchema: { include_all_done: z.boolean().default(false) },
     },
     async ({ include_all_done }) => ({ content: [{ type: "text", text: JSON.stringify(await boardSnapshot(board.id, include_all_done), null, 2) }] }),
@@ -122,7 +121,7 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
   server.registerTool(
     "get_card",
     {
-      description: "Full detail for one card: description, comments with author handles (yours are marked you), attachments, its branch and pull request, its parent and child cards, and the revision to pass to update_card and move_card.",
+      description: "Full detail for one card: description, comments with their authors (yours are marked you), attachments, its branch and pull request, its parent and child cards, and the revision to pass to update_card and move_card.",
       inputSchema: { card_id: z.string() },
     },
     async ({ card_id }) => {
@@ -217,7 +216,7 @@ function buildTokenServer(board: Board, token: AccessToken): McpServer {
 
   server.registerTool(
     "post_comment",
-    { description: "Post a comment on a card as the agent. Mention people with @handle, which notifies them. Keep it to what the reader needs.", inputSchema: { card_id: z.string(), body: z.string().min(1).max(20_000) } },
+    { description: "Post a comment on a card as the agent. Keep it to what the reader needs.", inputSchema: { card_id: z.string(), body: z.string().min(1).max(20_000) } },
     async ({ card_id, body }) => {
       await assertBoardCard(card_id);
       const comment = await createComment({ cardId: card_id, body, actor });

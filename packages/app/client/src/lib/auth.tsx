@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
-// Two auth modes. Dev: the server signs every request in as the seeded Admin. Clerk: the client
+// Two auth modes. Dev: the server signs every request in as the seeded User. Clerk: the client
 // obtains a session token and sends it as a bearer. The Clerk provider is only loaded when a key exists.
 // In production the server injects the key at request time; in dev Vite reads it from packages/app/.env.
 declare global {

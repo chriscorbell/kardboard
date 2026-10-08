@@ -4,9 +4,9 @@ import { PRIORITIES, type Card, type Priority } from "@kardboard/shared";
 // query so a reload, a shared link, or opening and closing a Card keeps them.
 export type BoardFilter = {
   q: string;
-  /** Cards the viewer created. */
+  /** Cards the User wrote, rather than the Agent. */
   mine: boolean;
-  /** Cards waiting on the viewer: a question for them, or a change to review. */
+  /** Cards waiting on the User: a question for them, or a change to review. */
   needsMe: boolean;
   priority: Priority | null;
 };
@@ -40,14 +40,11 @@ export function filterActive(filter: BoardFilter): boolean {
   return filter.q.trim() !== "" || filter.mine || filter.needsMe || filter.priority !== null;
 }
 
-export type Viewer = { id: string; isAdmin: boolean };
+export type Viewer = { id: string };
 
-// Waiting on this viewer. A question counts when the Card is theirs, or for the Admin, whom the
-// Agent asks about anything risky. A Card in Review counts for anyone: its pull request is open for
-// a look.
-export function waitsOn(card: Card, viewer: Viewer): boolean {
-  if (card.column === "blocked" && card.awaitingReply) return viewer.isAdmin || (card.creatorKind === "user" && card.creatorId === viewer.id);
-  return card.column === "review";
+// Waiting on the User: the Agent's question in Blocked, or a pull request in Review to look at.
+export function waitsOn(card: Card): boolean {
+  return (card.column === "blocked" && card.awaitingReply) || card.column === "review";
 }
 
 // Every word must appear in the title or the details, or start the Card's id (as the sheet shows it).
@@ -61,7 +58,7 @@ export function matchesQuery(card: Card, q: string): boolean {
 
 export function matchesFilter(card: Card, filter: BoardFilter, viewer: Viewer): boolean {
   if (filter.mine && !(card.creatorKind === "user" && card.creatorId === viewer.id)) return false;
-  if (filter.needsMe && !waitsOn(card, viewer)) return false;
+  if (filter.needsMe && !waitsOn(card)) return false;
   if (filter.priority && card.priority !== filter.priority) return false;
   return matchesQuery(card, filter.q);
 }

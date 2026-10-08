@@ -1,8 +1,8 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, GitBranch, GitPullRequest, History, Link2, Pencil, Reply, Trash2, Upload, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardMember, type BoardView, type Card, type Column, type Comment, type Person, type Priority } from "@kardboard/shared";
-import { useCard, useCreateComment, useDeleteCard, useDeleteComment, useMarkCardRead, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
+import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Person, type Priority } from "@kardboard/shared";
+import { useCard, useCreateComment, useDeleteCard, useDeleteComment, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
@@ -15,7 +15,6 @@ import { Composer, type ComposerHandle } from "./Composer";
 import { COLUMN_TONES } from "./columns";
 import { ApiError } from "../../lib/errors";
 import { Attachments } from "./AttachmentView";
-import { canDeleteCard } from "./cardDeletion";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
 import { isInnermostModal, useModalFocus } from "../../components/focus";
 
@@ -67,22 +66,10 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
   const detail = useCard(cardId);
   const update = useUpdateCard(slug);
   const move = useMoveCard(slug);
-  const markRead = useMarkCardRead();
-  // Names come from everyone the Board has seen, so a removed Member still signs their Comments.
   const people = useMemo(() => new Map<string, Person>(view.people.map((p) => [p.id, p])), [view.people]);
-  const handles = useMemo(() => {
-    const m = new Map(view.people.map((u) => [u.handle, u.name]));
-    m.set(view.agent.name.toLowerCase(), view.agent.name);
-    return m;
-  }, [view.people, view.agent.name]);
   const card = detail.data?.card ?? view.cards.find((c) => c.id === cardId);
-  const isAdmin = me.data?.user.role === "admin";
   const composer = useRef<ComposerHandle>(null);
   const drop = useFileDrop((files) => composer.current?.addFiles(files), Boolean(card));
-  const markCardRead = markRead.mutate;
-  useEffect(() => {
-    markCardRead(cardId);
-  }, [cardId, markCardRead]);
 
   if (!card) {
     if (detail.isError) {
@@ -161,7 +148,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
             onSelect: () => p !== card.priority && update.mutate({ id: card.id, priority: p, revision: card.revision }, { onError: (err) => toast(`The priority was not changed. ${err.message}`) }),
           }))}
         />
-        {canDeleteCard(card, { id: me.data?.user.id ?? null, isAdmin }) ? <DeleteCard slug={slug} card={card} onDeleted={onClose} /> : null}
+        <DeleteCard slug={slug} card={card} onDeleted={onClose} />
         <IconButton label="Close" onClick={onClose}>
           <X className="size-4" strokeWidth={1.75} />
         </IconButton>
@@ -175,10 +162,10 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
             {card.parentCardId ? <> as part of a larger request</> : null}
           </p>
         </div>
-        <BlockedQuestion card={card} comments={detail.data?.comments} agent={view.agent} handles={handles} onReply={() => composer.current?.focus()} />
+        <BlockedQuestion card={card} comments={detail.data?.comments} agent={view.agent} onReply={() => composer.current?.focus()} />
 
         <div className="px-6 pt-5">
-          <DescriptionEditor card={card} handles={handles} onSave={(description, base) => saveField("description", description, base)} />
+          <DescriptionEditor card={card} onSave={(description, base) => saveField("description", description, base)} />
         </div>
 
         {card.branch || card.prUrl ? (
@@ -208,11 +195,11 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           ) : !detail.data ? (
             <ErrorState compact title="Could not load comments." error={detail.error} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
           ) : (
-            <CommentList comments={detail.data.comments} people={people} mentionable={view.members} agent={view.agent} handles={handles} meId={me.data?.user.id ?? ""} isAdmin={Boolean(isAdmin)} cardId={card.id} />
+            <CommentList comments={detail.data.comments} people={people} agent={view.agent} meId={me.data?.user.id ?? ""} cardId={card.id} />
           )}
         </div>
         <div className="px-6 pb-4">
-          <NewComment ref={composer} cardId={card.id} members={view.members} known={view.people} agent={view.agent} />
+          <NewComment ref={composer} cardId={card.id} />
         </div>
         <Activity entries={detail.data?.activity ?? []} people={people} agentName={view.agent.name} />
       </div>
@@ -340,7 +327,7 @@ function TitleEditor({ card, labelId, onSave }: { card: Card; labelId: string; o
   );
 }
 
-function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map<string, string>; onSave: (d: string, base: EditBase) => Promise<void> }) {
+function DescriptionEditor({ card, onSave }: { card: Card; onSave: (d: string, base: EditBase) => Promise<void> }) {
   const [draft, setDraft] = useState<{ value: string; base: EditBase } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -398,7 +385,7 @@ function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map
   return (
     <div className="group relative">
       {card.description.trim() ? (
-        <Markdown body={card.description} handles={handles} />
+        <Markdown body={card.description} />
       ) : (
         <p className="text-[13px] italic text-ink-faint">No details yet.</p>
       )}
@@ -417,30 +404,23 @@ function DescriptionEditor({ card, handles, onSave }: { card: Card; handles: Map
   );
 }
 
-// Authors edit their own Comments. Authors and the Admin delete them; only the Admin can delete the
-// Agent's. The controls sit on the Comment's line and show on hover, or always on a touch screen.
+// The User edits their own Comments and deletes any, the Agent's included. The controls sit on the
+// Comment's line and show on hover, or always on a touch screen.
 function CommentList({
   comments,
   people,
-  mentionable,
   agent,
-  handles,
   meId,
-  isAdmin,
   cardId,
 }: {
   comments: Comment[];
   people: Map<string, Person>;
-  mentionable: BoardMember[];
   agent: AgentProfile;
-  handles: Map<string, string>;
   meId: string;
-  isAdmin: boolean;
   cardId: string;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Comment | null>(null);
-  const known = useMemo(() => [...people.values()], [people]);
   const updateComment = useUpdateComment(cardId);
   const deleteComment = useDeleteComment(cardId);
   const closeDelete = () => {
@@ -463,7 +443,6 @@ function CommentList({
           // A notice kardboard posted itself, from when it ran Sessions, is signed by kardboard.
           const author = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? people.get(c.authorId) : undefined;
           const mine = c.authorKind === "user" && c.authorId === meId;
-          const canDelete = mine || isAdmin;
           return (
             <li key={c.id} className="flex gap-3">
               <Avatar name={author?.name ?? "Unknown"} url={author?.avatarUrl} size={26} tone={c.authorKind === "agent" ? "agent" : "neutral"} className="mt-0.5" />
@@ -474,27 +453,22 @@ function CommentList({
                     {relativeTime(c.createdAt)}
                   </span>
                   {c.editedAt ? <span className="text-ink-faint">edited</span> : null}
-                  {editingId !== c.id && (mine || canDelete) ? (
+                  {editingId !== c.id ? (
                     <span className="ml-auto flex items-center gap-3">
                       {mine ? (
                         <button type="button" aria-label="Edit comment" className={control} onClick={() => setEditingId(c.id)}>
                           Edit
                         </button>
                       ) : null}
-                      {canDelete ? (
-                        <button type="button" aria-label="Delete comment" className={cx(control, "hover:text-danger")} onClick={() => setDeleting(c)}>
-                          Delete
-                        </button>
-                      ) : null}
+                      <button type="button" aria-label="Delete comment" className={cx(control, "hover:text-danger")} onClick={() => setDeleting(c)}>
+                        Delete
+                      </button>
                     </span>
                   ) : null}
                 </div>
                 {editingId === c.id ? (
                   <div className="mt-1.5">
                     <Composer
-                      members={mentionable}
-                      known={known}
-                      agent={agent}
                       initialBody={c.body}
                       submitLabel="Save"
                       allowFiles={false}
@@ -508,7 +482,7 @@ function CommentList({
                   </div>
                 ) : (
                   <div className="mt-1">
-                    <Markdown body={c.body} handles={handles} />
+                    <Markdown body={c.body} />
                     {c.attachments.length > 0 ? <Attachments attachments={c.attachments} /> : null}
                   </div>
                 )}
@@ -540,20 +514,13 @@ function CommentList({
   );
 }
 
-const NewComment = forwardRef<ComposerHandle, { cardId: string; members: BoardMember[]; known: Person[]; agent: AgentProfile; placeholder?: string; onPosted?: () => void }>(function NewComment(
-  { cardId, members, known, agent, placeholder, onPosted },
-  ref,
-) {
+const NewComment = forwardRef<ComposerHandle, { cardId: string }>(function NewComment({ cardId }, ref) {
   const create = useCreateComment(cardId);
   return (
     <div className="mt-5 border-t border-line pt-4">
       <Composer
         ref={ref}
-        members={members}
-        known={known}
-        agent={agent}
-        placeholder={placeholder}
-        onSubmit={(body, files, onProgress) => create.mutateAsync({ body, files, onProgress }).then(() => onPosted?.())}
+        onSubmit={(body, files, onProgress) => create.mutateAsync({ body, files, onProgress }).then(() => undefined)}
       />
     </div>
   );
@@ -648,7 +615,7 @@ function DropHint({ show }: { show: boolean }) {
 
 // When the Agent's question is the last word on a Blocked Card it comes first, where nobody can miss
 // it, with a way straight to the reply box. The same Comment stays in the thread below.
-function BlockedQuestion({ card, comments, agent, handles, onReply }: { card: Card; comments: Comment[] | undefined; agent: AgentProfile; handles: Map<string, string>; onReply: () => void }) {
+function BlockedQuestion({ card, comments, agent, onReply }: { card: Card; comments: Comment[] | undefined; agent: AgentProfile; onReply: () => void }) {
   const reduce = useReducedMotion();
   const question = card.column === "blocked" && card.awaitingReply ? [...(comments ?? [])].reverse().find((c) => c.authorKind === "agent") : undefined;
   return (
@@ -670,7 +637,7 @@ function BlockedQuestion({ card, comments, agent, handles, onReply }: { card: Ca
               {relativeTime(question.createdAt)}
             </span>
           </div>
-          <ClampedMarkdown body={question.body} handles={handles}>
+          <ClampedMarkdown body={question.body}>
             <Button size="sm" variant="primary" className="ml-auto" icon={<Reply className="size-3.5" strokeWidth={2} />} onClick={onReply}>
               Reply
             </Button>
@@ -683,7 +650,7 @@ function BlockedQuestion({ card, comments, agent, handles, onReply }: { card: Ca
 
 // A long question is cut to a few lines, fading out, with a control to read the rest in place. The
 // toggle sits under the text, on one row with whatever actions are passed in.
-function ClampedMarkdown({ body, handles, children }: { body: string; handles: Map<string, string>; children: ReactNode }) {
+function ClampedMarkdown({ body, children }: { body: string; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [open, setOpen] = useState(false);
@@ -700,7 +667,7 @@ function ClampedMarkdown({ body, handles, children }: { body: string; handles: M
   return (
     <>
       <div ref={box} className={cx("mt-2 overflow-hidden", !open && "max-h-40", !open && overflows && "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}>
-        <Markdown body={body} handles={handles} />
+        <Markdown body={body} />
       </div>
       <div className="mt-3 flex items-center gap-3">
         {overflows || open ? (

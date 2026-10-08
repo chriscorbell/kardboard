@@ -19,7 +19,6 @@ const { appShell, securityHeaders } = await import("../src/headers.js");
 await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
-const MEMBER = "ada@example.com";
 const template = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/index.html"), "utf8");
 const DEFAULT_POLICY = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
 
@@ -35,10 +34,9 @@ function appFor(production: boolean, publicUrl: string) {
 const app = appFor(false, "http://localhost:5173");
 
 beforeEach(async () => {
-  for (const t of [schema.attachments, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.attachments, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" });
-  await db.insert(schema.boardMembers).values({ boardId: "board-1", userId: "ada" });
+  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
 });
 
 function assertCommonHeaders(res: Response) {
@@ -85,7 +83,7 @@ describe("the app shell", () => {
 
 describe("an API response", () => {
   it("carries the same headers, and no script policy, since it is not a page", async () => {
-    const res = await app.request("/api/me", { headers: { "x-dev-user": MEMBER } });
+    const res = await app.request("/api/me");
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /application\/json/);
     assertCommonHeaders(res);
@@ -94,14 +92,14 @@ describe("an API response", () => {
   });
 
   it("keeps the attachment route's own policy", async () => {
-    const as = { "x-dev-user": MEMBER };
-    const card = (await (await app.request("/api/boards/board-one/cards", { method: "POST", headers: { ...as, "content-type": "application/json" }, body: JSON.stringify({ title: "A card" }) })).json()) as { id: string };
-    const comment = (await (await app.request(`/api/cards/${card.id}/comments`, { method: "POST", headers: { ...as, "content-type": "application/json" }, body: JSON.stringify({ body: "a file" }) })).json()) as { id: string };
+    const json = { "content-type": "application/json" };
+    const card = (await (await app.request("/api/boards/board-one/cards", { method: "POST", headers: json, body: JSON.stringify({ title: "A card" }) })).json()) as { id: string };
+    const comment = (await (await app.request(`/api/cards/${card.id}/comments`, { method: "POST", headers: json, body: JSON.stringify({ body: "a file" }) })).json()) as { id: string };
     const form = new FormData();
     form.append("file", new File(["hello"], "a.txt", { type: "text/plain" }));
-    const att = (await (await app.request(`/api/comments/${comment.id}/attachments`, { method: "POST", headers: as, body: form })).json()) as { id: string };
+    const att = (await (await app.request(`/api/comments/${comment.id}/attachments`, { method: "POST", body: form })).json()) as { id: string };
 
-    const res = await app.request(`/api/attachments/${att.id}`, { headers: as });
+    const res = await app.request(`/api/attachments/${att.id}`);
     assert.equal(res.status, 200);
     const policy = res.headers.get("content-security-policy") ?? "";
     assert.notEqual(policy, DEFAULT_POLICY);

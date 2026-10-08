@@ -23,13 +23,7 @@ after(() => {
 
 beforeEach(async () => {
   for (const t of [schema.outboundEmails, schema.settings, schema.users]) await db.delete(t);
-  await db.insert(schema.users).values([
-    { id: "admin", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active" },
-    { id: "admin-2", email: "second@example.com", handle: "second", name: "Second", role: "admin", status: "active" },
-    { id: "invited-admin", email: "later@example.com", handle: "later", name: "Later", role: "admin", status: "invited" },
-    { id: "revoked-admin", email: "gone@example.com", handle: "gone", name: "Gone", role: "admin", status: "revoked" },
-    { id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "active" },
-  ]);
+  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
 });
 
 async function recipients(): Promise<string[]> {
@@ -40,13 +34,13 @@ const NOW = new Date("2026-09-24T12:00:00.000Z");
 const later = (ms: number) => new Date(NOW.getTime() + ms);
 
 describe("alertAdmin", () => {
-  it("emails every active Admin and nobody else", async () => {
+  it("emails the User, with a link to Settings", async () => {
     assert.equal(await alertAdmin({ key: "test.one", subject: "Something broke", body: "Details." }, NOW), true);
-    assert.deepEqual(await recipients(), ["admin", "admin-2"]);
-    const email = (await db.select().from(schema.outboundEmails).where(eq(schema.outboundEmails.toUserId, "admin")).get())!;
+    assert.deepEqual(await recipients(), ["user"]);
+    const email = (await db.select().from(schema.outboundEmails).where(eq(schema.outboundEmails.toUserId, "user")).get())!;
     assert.equal(email.subject, "kardboard: Something broke");
     assert.match(email.html, /Details\./);
-    assert.match(email.html, /https:\/\/kardboard\.test\/admin/);
+    assert.match(email.html, /href="https:\/\/kardboard\.test\/settings"/);
   });
 
   it("sends the same key once in six hours, and again after", async () => {
@@ -55,7 +49,7 @@ describe("alertAdmin", () => {
     assert.equal(await alertAdmin({ key: "test.repeat", subject: "A", body: "a" }, later(ALERT_DEDUPE_MS - 1)), false);
     assert.equal(await alertAdmin({ key: "test.other", subject: "B", body: "b" }, later(60_000)), true, "another key is another alert");
     assert.equal(await alertAdmin({ key: "test.repeat", subject: "A", body: "a" }, later(ALERT_DEDUPE_MS)), true);
-    assert.equal((await recipients()).length, 6);
+    assert.equal((await recipients()).length, 3);
   });
 
   it("remembers what it sent in the database, so a restart does not send it again", async () => {
@@ -85,6 +79,6 @@ describe("alertAdmin", () => {
   it("sends once when two callers race on one key", async () => {
     const results = await Promise.all([1, 2, 3].map(() => alertAdmin({ key: "test.race", subject: "A", body: "a" }, NOW)));
     assert.deepEqual(results.filter(Boolean).length, 1);
-    assert.equal((await recipients()).length, 2);
+    assert.equal((await recipients()).length, 1);
   });
 });

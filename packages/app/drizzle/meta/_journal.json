@@ -141,6 +141,13 @@
       "when": 1791415506486,
       "tag": "0019_remove-sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1791417686681,
+      "tag": "0020_single-user",
+      "breakpoints": true
     }
   ]
 }

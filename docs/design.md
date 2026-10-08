@@ -72,7 +72,7 @@ These need host or vendor account access: configuring the Cloudflare tunnel rout
 
 ## Status
 
-As of 2026-10-07 the app runs alone on minicore at `https://kardboard.cc`; Sessions, Approval, Previews, and the services that ran them are gone. Still being built, in this order, on card 66ar6rp3 of the kardboard Board: removing Members, Invitations, Mentions, and notifications, which the app still has; one Access token for every Board, which today is still one token per Board without Board-naming tools or the side-finding instructions; Card types; and the Overview, whose place the plain list of Boards holds for now.
+As of 2026-10-07 the app runs alone on minicore at `https://kardboard.cc`; Sessions, Approval, Previews, the services that ran them, and Members, Invitations, Mentions, and notifications are gone. Still being built, in this order, on card 66ar6rp3 of the kardboard Board: one Access token for every Board, which today is still one token per Board without Board-naming tools or the side-finding instructions; Card types; and the Overview, whose place the plain list of Boards holds for now.
 
 ## Out of scope
 

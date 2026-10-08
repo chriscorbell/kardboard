@@ -7,60 +7,66 @@ import { after, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import type { Attachment, Card, Comment } from "@kardboard/shared";
 
-// How an Attachment's type is stored and served. The uploader's browser names the type, so a Member
-// can name an SVG or an HTML page anything; only the raster images may be shown in place. Dev
-// authentication signs the tests in, and `X-Dev-User` picks the caller by email.
+// How an Attachment's type is stored and served. The uploader's browser names the type, so an SVG
+// or an HTML page can be named anything; only the raster images may be shown in place. Dev
+// authentication signs the tests in as the User.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-attachments-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
+const { createComment } = await import("../src/services/comments.js");
 
 await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const BOARD = "board-1";
-const MEMBER = "ada@example.com";
 const SVG = `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.domain)</script></svg>`;
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
 beforeEach(async () => {
-  for (const t of [schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" });
-  await db.insert(schema.boardMembers).values({ boardId: BOARD, userId: "ada" });
+  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
 });
 
 function call(method: string, url: string, body?: unknown) {
   return api.request(url, {
     method,
-    headers: { "x-dev-user": MEMBER, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
 
+async function newCard(): Promise<Card> {
+  return (await (await call("POST", "/boards/board-one/cards", { title: "A card" })).json()) as Card;
+}
+
 async function newComment(): Promise<Comment> {
-  const card = (await (await call("POST", "/boards/board-one/cards", { title: "A card" })).json()) as Card;
-  const res = await call("POST", `/cards/${card.id}/comments`, { body: "see attached" });
+  const res = await call("POST", `/cards/${(await newCard()).id}/comments`, { body: "see attached" });
   assert.equal(res.status, 201);
   return (await res.json()) as Comment;
 }
 
 // The multipart body is written out by hand, so the part's Content-Type reaches the server exactly
 // as a hostile client could send it.
-async function upload(commentId: string, filename: string, type: string, bytes: string | Buffer): Promise<Attachment> {
+async function send(commentId: string, filename: string, type: string, bytes: string | Buffer): Promise<Response> {
   const boundary = "kardboard-test-boundary";
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${type}\r\n\r\n`),
     Buffer.from(bytes),
     Buffer.from(`\r\n--${boundary}--\r\n`),
   ]);
-  const res = await api.request(`/comments/${commentId}/attachments`, {
+  return api.request(`/comments/${commentId}/attachments`, {
     method: "POST",
-    headers: { "x-dev-user": MEMBER, "content-type": `multipart/form-data; boundary=${boundary}` },
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
     body,
   });
+}
+
+async function upload(commentId: string, filename: string, type: string, bytes: string | Buffer): Promise<Attachment> {
+  const res = await send(commentId, filename, type, bytes);
   assert.equal(res.status, 201);
   return (await res.json()) as Attachment;
 }
@@ -100,6 +106,13 @@ describe("uploading an attachment", () => {
   it("stores a type that is not shaped like one as application/octet-stream", async () => {
     const comment = await newComment();
     assert.equal(await storedMime((await upload(comment.id, "a.bin", "png", "x")).id), "application/octet-stream");
+  });
+
+  it("is refused on the Agent's comment: the User attaches files only to their own", async () => {
+    const card = await newCard();
+    const agents = await createComment({ cardId: card.id, body: "Here is the log", actor: { kind: "agent", id: null } });
+    assert.equal((await send(agents.id, "a.txt", "text/plain", "x")).status, 403);
+    assert.deepEqual(await db.select().from(schema.attachments).where(eq(schema.attachments.commentId, agents.id)), []);
   });
 });
 

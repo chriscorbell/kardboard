@@ -3,7 +3,7 @@ import type { BackupsView } from "@kardboard/shared";
 import { useAdminBackups, useTakeBackup } from "../../lib/api";
 import { Button, Chip, EmptyState, ErrorState, Skeleton } from "../../components/ui";
 import { absoluteTime, fileSize, relativeTime } from "../../lib/format";
-import { TabHeader } from "./AdminPage";
+import { TabHeader } from "./SettingsPage";
 
 export function BackupsTab() {
   const backups = useAdminBackups();

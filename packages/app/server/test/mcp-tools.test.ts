@@ -11,8 +11,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 // The agent's tools, called the way an agent outside kardboard calls them: over MCP with an Access
-// token, which the Admin makes through the REST API. The database opens at import time, and dev
-// authentication signs the Admin in.
+// token, which the User makes through the REST API. The database opens at import time, and dev
+// authentication signs the User in.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-mcp-tools-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
@@ -45,7 +45,7 @@ afterEach(async () => {
 async function agent(): Promise<{ client: Client; tokenId: string }> {
   const res = await api.request(`/admin/boards/${BOARD}/tokens`, {
     method: "POST",
-    headers: { "x-dev-user": "chris@example.com", "content-type": "application/json" },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "Laptop" }),
   });
   assert.equal(res.status, 201);
@@ -65,23 +65,15 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 }
 
 async function card(id: string, values: Partial<typeof schema.cards.$inferInsert> = {}) {
-  await db.insert(schema.cards).values({ id, boardId: BOARD, title: `Card ${id}`, column: "ready", creatorKind: "user", creatorId: "ada", ...values });
+  await db.insert(schema.cards).values({ id, boardId: BOARD, title: `Card ${id}`, column: "ready", creatorKind: "user", creatorId: "chris", ...values });
 }
 
 const row = async (id: string) => (await db.select().from(schema.cards).where(eq(schema.cards.id, id)).get())!;
 
 beforeEach(async () => {
-  for (const t of [schema.accessTokens, schema.attachments, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.accessTokens, schema.attachments, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets" });
-  await db.insert(schema.users).values([
-    { id: "chris", email: "chris@example.com", handle: "chris", name: "Chris", role: "admin", status: "active" },
-    { id: "ada", email: "ada@example.com", handle: "ada", name: "Ada", role: "member", status: "active" },
-    { id: "gone", email: "gone@example.com", handle: "gone", name: "Gone", role: "member", status: "revoked" },
-  ]);
-  await db.insert(schema.boardMembers).values([
-    { boardId: BOARD, userId: "ada" },
-    { boardId: BOARD, userId: "gone" },
-  ]);
+  await db.insert(schema.users).values({ id: "chris", email: "chris@example.com", name: "Chris" });
   await card(CARD, { column: "in_progress", branch: "kardboard/card-own" });
 });
 
@@ -125,19 +117,11 @@ describe("update_card", () => {
 });
 
 describe("get_board", () => {
-  it("lists who can be mentioned, the Admin included, with handles and never an email", async () => {
+  it("names each card's creator, and never sends an email", async () => {
     const { client } = await agent();
     const result = await call(client, "get_board");
-    const board = json(result) as { members: { id: string; name: string; handle: string; role: string }[] };
-    assert.deepEqual(
-      board.members.map((m) => [m.handle, m.role]).sort(),
-      [
-        ["ada", "member"],
-        ["chris", "admin"],
-      ],
-      "a revoked member is left out, since a Mention would reach nobody",
-    );
-    assert.deepEqual(Object.keys(board.members[0]!).sort(), ["handle", "id", "name", "role"]);
+    const board = json(result) as { cards: Record<string, { id: string; creator: string }[]> };
+    assert.equal(board.cards.in_progress!.find((c) => c.id === CARD)!.creator, "Chris");
     assert.ok(!text(result).includes("@example.com"), "no email reaches the agent");
   });
 
@@ -165,10 +149,20 @@ describe("get_board", () => {
 });
 
 describe("get_card", () => {
-  it("names the creator by name and handle only", async () => {
+  it("names the creator and each comment's author by name only", async () => {
+    await db.insert(schema.comments).values([
+      { id: "comment-person", cardId: CARD, authorKind: "user", authorId: "chris", body: "Use the brand blue.", createdAt: "2026-10-07T10:00:00.000Z" },
+      { id: "comment-agent", cardId: CARD, authorKind: "agent", authorId: null, body: "Done.", createdAt: "2026-10-07T10:05:00.000Z" },
+    ]);
     const { client } = await agent();
     const result = await call(client, "get_card", { card_id: CARD });
-    assert.deepEqual(json(result).creator, { name: "Ada", handle: "ada" });
+    const detail = json(result) as { creator: unknown; comments: Record<string, unknown>[] };
+    assert.deepEqual(detail.creator, { name: "Chris" });
+    assert.deepEqual(
+      detail.comments.map((c) => c.author),
+      ["Chris", "you"],
+    );
+    assert.deepEqual(Object.keys(detail.comments[0]!).sort(), ["attachments", "author", "body", "createdAt", "editedAt", "id"]);
     assert.ok(!text(result).includes("@example.com"));
   });
 
@@ -189,7 +183,7 @@ describe("read_attachment", () => {
     const dir = path.join(root, "uploads", sha256.slice(0, 2));
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, sha256), bytes);
-    await db.insert(schema.comments).values({ id: `comment-${id}`, cardId: CARD, authorKind: "user", authorId: "ada", body: "see attached" }).onConflictDoNothing();
+    await db.insert(schema.comments).values({ id: `comment-${id}`, cardId: CARD, authorKind: "user", authorId: "chris", body: "see attached" }).onConflictDoNothing();
     await db.insert(schema.attachments).values({ id, commentId: `comment-${id}`, filename, mime, size: bytes.length, sha256 });
   }
 

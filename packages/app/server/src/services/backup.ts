@@ -161,7 +161,7 @@ function withTimeout<T>(work: Promise<T>, ms: number, what = "the snapshot"): Pr
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-// ---- state kept for the Admin panel ----
+// ---- state kept for Settings ----
 
 // The last attempt and the last copy survive a restart as rows, so a failure in the night is still
 // on the Backups tab after the morning's deploy. Until `restoreBackupState` runs, which is after
@@ -217,7 +217,7 @@ function raise(alert: AdminAlert): void {
     deferred.push(alert);
     return;
   }
-  void alertAdmin({ path: "/admin/backups", ...alert }).catch((err) => console.error("[backup] could not send an alert", err));
+  void alertAdmin({ path: "/settings/backups", ...alert }).catch((err) => console.error("[backup] could not send an alert", err));
 }
 
 // ---- the copy off the disk ----

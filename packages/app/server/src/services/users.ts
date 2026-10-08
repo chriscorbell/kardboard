@@ -1,25 +1,15 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import type { EmailPreference, User } from "@kardboard/shared";
+import type { User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
-import { newId } from "../ids.js";
 
 export function toUser(row: typeof schema.users.$inferSelect): User {
   return {
     id: row.id,
     email: row.email,
-    handle: row.handle,
     name: row.name,
     avatarUrl: row.avatarUrl,
-    role: row.role,
-    status: row.status,
     createdAt: row.createdAt,
   };
-}
-
-// Removed Users are left out: nothing about them can be managed any more.
-export async function listUsers(): Promise<User[]> {
-  const rows = await db.select().from(schema.users).where(isNull(schema.users.removedAt)).orderBy(schema.users.createdAt);
-  return rows.map(toUser);
 }
 
 export async function getUser(id: string): Promise<User | null> {
@@ -33,140 +23,30 @@ export async function getUsersByIds(ids: string[]): Promise<Map<string, User>> {
   return new Map(rows.map((r) => [r.id, toUser(r)]));
 }
 
-// A User's own settings, which only they see: they are not part of the User everyone else is shown.
-export type UserPreferences = { emailPreference: EmailPreference; onboardedAt: string | null };
+// The User's own settings, beside the User everything else is shown.
+export type UserPreferences = { onboardedAt: string | null };
 
 export async function getPreferences(id: string): Promise<UserPreferences> {
-  const row = await db
-    .select({ emailPreference: schema.users.emailPreference, onboardedAt: schema.users.onboardedAt })
-    .from(schema.users)
-    .where(eq(schema.users.id, id))
-    .get();
-  return row ?? { emailPreference: "all", onboardedAt: null };
+  const row = await db.select({ onboardedAt: schema.users.onboardedAt }).from(schema.users).where(eq(schema.users.id, id)).get();
+  return row ?? { onboardedAt: null };
 }
 
-export async function updatePreferences(id: string, input: { emailPreference?: EmailPreference; onboarded?: boolean }): Promise<UserPreferences> {
-  const patch: Partial<typeof schema.users.$inferInsert> = {};
-  if (input.emailPreference) patch.emailPreference = input.emailPreference;
+export async function updatePreferences(id: string, input: { onboarded?: boolean }): Promise<UserPreferences> {
   // Dismissing twice keeps the first time; `false` brings the explainer back.
-  if (input.onboarded === true) patch.onboardedAt = (await getPreferences(id)).onboardedAt ?? new Date().toISOString();
-  if (input.onboarded === false) patch.onboardedAt = null;
-  if (Object.keys(patch).length > 0) await db.update(schema.users).set(patch).where(eq(schema.users.id, id));
+  if (input.onboarded === true) {
+    const onboardedAt = (await getPreferences(id)).onboardedAt ?? new Date().toISOString();
+    await db.update(schema.users).set({ onboardedAt }).where(eq(schema.users.id, id));
+  }
+  if (input.onboarded === false) await db.update(schema.users).set({ onboardedAt: null }).where(eq(schema.users.id, id));
   return getPreferences(id);
-}
-
-export async function findUserByEmail(email: string): Promise<User | null> {
-  const row = await db
-    .select()
-    .from(schema.users)
-    .where(eq(schema.users.email, email.toLowerCase()))
-    .get();
-  return row ? toUser(row) : null;
-}
-
-export async function findUsersByHandles(handles: string[]): Promise<User[]> {
-  if (handles.length === 0) return [];
-  const rows = await db.select().from(schema.users).where(inArray(schema.users.handle, handles));
-  return rows.map(toUser);
-}
-
-async function uniqueHandle(email: string): Promise<string> {
-  const base =
-    email
-      .split("@")[0]!
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]/g, "")
-      .slice(0, 30) || "user";
-  let candidate = base;
-  for (let i = 2; ; i++) {
-    const clash = await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(eq(schema.users.handle, candidate))
-      .get();
-    if (!clash) return candidate;
-    candidate = `${base}${i}`;
-  }
-}
-
-export async function inviteUser(input: {
-  email: string;
-  name: string;
-  role: "admin" | "member";
-}): Promise<User> {
-  const email = input.email.toLowerCase();
-  const existing = await findUserByEmail(email);
-  if (existing) {
-    if (existing.status === "revoked") {
-      await db.update(schema.users).set({ status: "invited" }).where(eq(schema.users.id, existing.id));
-      return { ...existing, status: "invited" };
-    }
-    return existing;
-  }
-  const id = newId();
-  await db.insert(schema.users).values({
-    id,
-    email,
-    handle: await uniqueHandle(email),
-    name: input.name,
-    role: input.role,
-    status: "invited",
-  });
-  return (await getUser(id))!;
-}
-
-// A removed User stays revoked: reinstating one would bring back a row with no email to sign in with.
-export async function setUserStatus(id: string, status: "invited" | "active" | "revoked"): Promise<void> {
-  await db
-    .update(schema.users)
-    .set({ status })
-    .where(and(eq(schema.users.id, id), isNull(schema.users.removedAt)));
-}
-
-export async function isRemoved(id: string): Promise<boolean> {
-  const row = await db.select({ removedAt: schema.users.removedAt }).from(schema.users).where(eq(schema.users.id, id)).get();
-  return Boolean(row?.removedAt);
-}
-
-export class RemoveRefused extends Error {}
-
-/**
- * Removes a revoked User for good, keeping only what signs their work: the row stays, still revoked,
- * with its name and handle, so their Cards and Comments keep their name and an old
- * Mention of them still means them. Their email address, sign-in, and avatar are cleared, and with
- * them their Board memberships, notifications, and any email still waiting to be sent
- * to them. The address is free to be invited again, as a new User with a handle of its own.
- */
-export async function removeUser(id: string): Promise<void> {
-  const row = await db.select().from(schema.users).where(eq(schema.users.id, id)).get();
-  if (!row || row.removedAt) throw new RemoveRefused("not_found");
-  if (row.status !== "revoked") throw new RemoveRefused("Revoke their access first.");
-  await db.batch([
-    db.delete(schema.boardMembers).where(eq(schema.boardMembers.userId, id)),
-    db.delete(schema.notifications).where(eq(schema.notifications.userId, id)),
-    db.delete(schema.outboundEmails).where(and(eq(schema.outboundEmails.toUserId, id), eq(schema.outboundEmails.status, "pending"))),
-    db
-      .update(schema.users)
-      .set({
-        // Unique and never deliverable: `.invalid` is reserved for exactly this.
-        email: `removed-${id}@removed.invalid`,
-        clerkUserId: null,
-        avatarUrl: null,
-        // An Admin's role reaches every Board; a removed User reaches none.
-        role: "member",
-        emailPreference: "off",
-        removedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.users.id, id)),
-  ]);
 }
 
 /**
  * Which User a Clerk identity signs in as. One already linked signs in by its Clerk id alone, whatever
- * addresses its Clerk account has since gained or lost. A first sign-in takes the row invited at
+ * addresses its Clerk account has since gained or lost. A first sign-in takes the row made for
  * `email`, which must be an address Clerk has verified, and only while no other Clerk user holds that
- * row: otherwise whoever later verifies an address the Admin or a Member dropped from their Clerk
- * account would sign in as them.
+ * row: otherwise whoever later verifies an address the User dropped from their Clerk account would
+ * sign in as them.
  */
 export async function activateFromClerk(input: {
   clerkUserId: string;
@@ -180,7 +60,6 @@ export async function activateFromClerk(input: {
     .where(eq(schema.users.clerkUserId, input.clerkUserId))
     .get();
   if (byClerk) {
-    if (byClerk.status === "revoked") return null;
     // Profile changes made in Clerk (avatar, name) flow back on the next token refresh.
     if (byClerk.avatarUrl !== (input.avatarUrl ?? null) || (input.name && byClerk.name !== input.name)) {
       await db
@@ -192,19 +71,18 @@ export async function activateFromClerk(input: {
     return toUser(byClerk);
   }
   if (!input.email) return null;
-  const invited = await db.select().from(schema.users).where(eq(schema.users.email, input.email.toLowerCase())).get();
-  if (!invited || invited.status === "revoked" || invited.clerkUserId) return null;
+  const allowed = await db.select().from(schema.users).where(eq(schema.users.email, input.email.toLowerCase())).get();
+  if (!allowed || allowed.clerkUserId) return null;
   // Only while the row is still unlinked, so a second Clerk user signing in at the same moment
   // cannot take it over between the read and the write.
   const linked = await db
     .update(schema.users)
     .set({
       clerkUserId: input.clerkUserId,
-      status: "active",
-      avatarUrl: input.avatarUrl ?? invited.avatarUrl,
-      name: invited.name || input.name || invited.email,
+      avatarUrl: input.avatarUrl ?? allowed.avatarUrl,
+      name: allowed.name || input.name || allowed.email,
     })
-    .where(and(eq(schema.users.id, invited.id), isNull(schema.users.clerkUserId)))
+    .where(and(eq(schema.users.id, allowed.id), isNull(schema.users.clerkUserId)))
     .returning()
     .get();
   return linked ? toUser(linked) : null;

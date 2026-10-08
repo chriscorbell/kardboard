@@ -438,7 +438,7 @@ describe("copying off the disk", () => {
 describe("what is kept across a restart", () => {
   it("writes the last attempt and copy through once restored, and sends the alerts raised before then", async () => {
     await db.delete(schema.users);
-    await db.insert(schema.users).values({ id: "admin", email: "root@example.com", handle: "root", name: "Root", role: "admin", status: "active" });
+    await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
     // The failed copies above raised an alert before the app's database was declared ready. The read
     // back fails here, once, and the alert still goes out.
     const select = db.select.bind(db);
@@ -458,6 +458,7 @@ describe("what is kept across a restart", () => {
       emails.map((e) => e.subject),
       ["kardboard: A backup could not be copied off the disk"],
     );
+    assert.match(emails[0]!.html, /href="[^"]*\/settings\/backups"/, "the alert opens the Backups tab");
 
     const { client, dir } = await sourceDb();
     await takeSnapshot({ client, dir, keep: 10, copyDir: null });

@@ -19,54 +19,27 @@ export const PRIORITIES = ["none", "low", "medium", "high"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 export const prioritySchema = z.enum(PRIORITIES);
 
-export const USER_ROLES = ["admin", "member"] as const;
-export type UserRole = (typeof USER_ROLES)[number];
-
-export const USER_STATUSES = ["invited", "active", "revoked"] as const;
-export type UserStatus = (typeof USER_STATUSES)[number];
-
 // What a Card in Done turned out to be: `implemented` when the agent that merged its pull request
 // said so as it closed the Card, `closed` for anything else, a duplicate or work that was not needed.
 export const CARD_OUTCOMES = ["implemented", "closed"] as const;
 export type CardOutcome = (typeof CARD_OUTCOMES)[number];
 
-// What the app notifies a user about. Every kind is recorded in the app; whether it is also emailed
-// depends on the User's EmailPreference. `session_failed` goes to a Card's creator and the Admin
-// when a Session on it failed or ran out of time.
-export const NOTIFICATION_KINDS = ["mention", "card_moved", "session_failed"] as const;
-export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
-
-// How much a User wants by email. In-app notifications are recorded whatever they choose.
-// "important" keeps what asks something of the reader: Mentions, a failed Session, and a Card of
-// theirs moving to Blocked or Review.
-export const EMAIL_PREFERENCES = ["all", "important", "off"] as const;
-export type EmailPreference = (typeof EMAIL_PREFERENCES)[number];
-
 export type ActorKind = "user" | "agent" | "system";
 
+/** The one person who signs in. */
 export interface User {
   id: string;
   email: string;
-  handle: string;
   name: string;
   avatarUrl: string | null;
-  role: UserRole;
-  status: UserStatus;
   createdAt: string;
 }
 
 /**
- * Enough of a User to say who did something: a name, a face, and the handle a Mention uses. A
- * Board lists everyone who ever appeared on it this way, so a Member who was removed or revoked
- * keeps their name on their Cards and Comments, without their email going with it.
+ * Enough of a User to say who did something: a name and a face. A Board names everyone who appears
+ * on it this way, which is the User, and anyone from when kardboard had Members.
  */
-export type Person = Pick<User, "id" | "handle" | "name" | "avatarUrl">;
-
-/**
- * A User on a Board's member list. Only the Admin is sent the email: a Board can be shared by people
- * from different clients, and a Member has no need of anyone else's address.
- */
-export type BoardMember = Omit<User, "email"> & Partial<Pick<User, "email">>;
+export type Person = Pick<User, "id" | "name" | "avatarUrl">;
 
 export interface Board {
   id: string;
@@ -141,7 +114,6 @@ export interface Comment {
   editedAt: string | null;
   createdAt: string;
   attachments: Attachment[];
-  mentions: string[];
 }
 
 export interface ActivityEntry {
@@ -153,25 +125,6 @@ export interface ActivityEntry {
   createdAt: string;
 }
 
-export interface Notification {
-  id: string;
-  kind: NotificationKind;
-  title: string;
-  body: string;
-  actorName: string;
-  actorAvatarUrl: string | null;
-  boardSlug: string;
-  cardId: string;
-  cardTitle: string;
-  readAt: string | null;
-  createdAt: string;
-}
-
-export interface NotificationsView {
-  unread: number;
-  notifications: Notification[];
-}
-
 export interface AgentProfile {
   name: string;
   avatarUrl: string | null;
@@ -180,9 +133,7 @@ export interface AgentProfile {
 export interface BoardView {
   board: Board;
   cards: Card[];
-  /** Who can open the Board now and is not revoked: the people a Mention can reach. */
-  members: BoardMember[];
-  /** Everyone who can open the Board or appears on it, former Members included. For names only. */
+  /** Everyone who appears on the Board, for names. */
   people: Person[];
   agent: AgentProfile;
 }
@@ -198,7 +149,6 @@ export interface Me {
   user: User;
   agent: AgentProfile;
   authMode: "dev" | "clerk";
-  emailPreference: EmailPreference;
   /** When this User dismissed the board explainer. Null shows it on the next Board they open. */
   onboardedAt: string | null;
 }
@@ -237,16 +187,9 @@ export const updateCommentSchema = z.object({
 
 // A User's own settings. `onboarded: true` records that the board explainer was dismissed.
 export const updateMeSchema = z.object({
-  emailPreference: z.enum(EMAIL_PREFERENCES).optional(),
   onboarded: z.boolean().optional(),
 });
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;
-
-export const inviteUserSchema = z.object({
-  email: z.string().email(),
-  name: z.string().trim().min(1).max(120),
-  role: z.enum(USER_ROLES).default("member"),
-});
 
 export const upsertBoardSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -259,9 +202,7 @@ export const upsertBoardSchema = z.object({
   repoUrl: z.string().url().nullable().optional(),
 });
 
-export const boardMembersSchema = z.object({ userIds: z.array(z.string()) });
-
-/** An Access token as the Admin sees it: never the token itself, which is shown once, at creation. */
+/** An Access token as the User sees it: never the token itself, which is shown once, at creation. */
 export interface AccessToken {
   id: string;
   boardId: string;
@@ -281,15 +222,12 @@ export const createAccessTokenSchema = z.object({ name: z.string().trim().min(1)
 // Deleting a Board names it again, so a request meant for another Board, or sent by mistake, fails.
 export const deleteBoardSchema = z.object({ slug: z.string() });
 
-// What deleting a Board would take with it, shown before the Admin confirms.
+// What deleting a Board would take with it, shown before the User confirms.
 export interface BoardDeletionImpact {
   cards: number;
   comments: number;
   attachments: number;
 }
-
-// No ids means "mark everything read".
-export const markNotificationsReadSchema = z.object({ ids: z.array(z.string()).optional() });
 
 export const settingsSchema = z.object({
   agentName: z.string().trim().min(1).max(40).optional(),
@@ -351,38 +289,3 @@ export type BoardEvent =
   | { type: "comment.removed"; commentId: string; cardId: string }
   | { type: "board.updated"; board: Board }
   | { type: "board.deleted"; boardId: string };
-
-// Mentions are @handle tokens. Handles are lowercase, from the user's email local part.
-// A handle can contain dots and hyphens but not end with one, so "thanks @chris." mentions chris.
-export const MENTION_RE = /(^|[^\w@])@([a-z0-9](?:[a-z0-9._-]{0,37}[a-z0-9])?)/gi;
-
-// Fenced blocks and inline code, which keep an @ as typed: `@tanstack/react-query` names a package.
-const CODE_SPANS = /(```[\s\S]*?```|`[^`\n]*`)/;
-
-/**
- * The text as a person should read it: each @handle that `nameOf` knows becomes @ and the name.
- * Handles it does not know, and anything in code, are left as written. Comments are stored with
- * handles, which is what a Mention is and what the Agent writes; this is only for showing them.
- */
-export function mentionsAsNames(text: string, nameOf: (handle: string) => string | undefined): string {
-  return outsideCode(text, (part) =>
-    part.replace(MENTION_RE, (all, before: string, handle: string) => {
-      const name = nameOf(handle.toLowerCase());
-      return name ? `${before}@${name}` : all;
-    }),
-  );
-}
-
-/** Applies `fn` to the text outside fenced blocks and inline code, and keeps the code as it is. */
-export function outsideCode(text: string, fn: (part: string) => string): string {
-  return text
-    .split(CODE_SPANS)
-    .map((part, i) => (i % 2 === 1 ? part : fn(part)))
-    .join("");
-}
-
-export function extractMentionHandles(body: string): string[] {
-  const out = new Set<string>();
-  for (const m of body.matchAll(MENTION_RE)) out.add(m[2]!.toLowerCase());
-  return [...out];
-}

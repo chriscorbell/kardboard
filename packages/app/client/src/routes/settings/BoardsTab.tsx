@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import type { Board, BoardDeletionImpact } from "@kardboard/shared";
-import { keys, request, useAdminBoards, useAdminUsers, useMe, type AdminBoard } from "../../lib/api";
-import { Avatar, Button, cx, ErrorState, Field, Input, Skeleton } from "../../components/ui";
+import { keys, request, useBoards, useMe } from "../../lib/api";
+import { Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
-import { TabHeader } from "./AdminPage";
+import { TabHeader } from "./SettingsPage";
 import { AccessTokensPanel } from "./AccessTokensPanel";
 import { slugDraft, slugify } from "./slug";
 import { canDelete, deletionContents } from "./boardDeletion";
@@ -15,22 +15,20 @@ type Draft = {
   name: string;
   slug: string;
   repoUrl: string;
-  memberIds: string[];
 };
 
-const empty: Draft = { name: "", slug: "", repoUrl: "", memberIds: [] };
+const empty: Draft = { name: "", slug: "", repoUrl: "" };
 
-function fromBoard(b: AdminBoard): Draft {
-  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "", memberIds: b.memberIds };
+function fromBoard(b: Board): Draft {
+  return { name: b.name, slug: b.slug, repoUrl: b.repoUrl ?? "" };
 }
 
 export function BoardsTab() {
-  const boards = useAdminBoards();
-  const users = useAdminUsers();
+  const boards = useBoards();
   const agentName = useMe().data?.agent.name ?? "The agent";
   const qc = useQueryClient();
-  const [editing, setEditing] = useState<AdminBoard | "new" | null>(null);
-  const [deleting, setDeleting] = useState<AdminBoard | null>(null);
+  const [editing, setEditing] = useState<Board | "new" | null>(null);
+  const [deleting, setDeleting] = useState<Board | null>(null);
   const [draft, setDraft] = useState<Draft>(empty);
   // A new board's slug follows its name until the slug is typed into by hand.
   const [slugTyped, setSlugTyped] = useState(false);
@@ -47,8 +45,8 @@ export function BoardsTab() {
         slug: slugify(draft.slug),
         repoUrl: draft.repoUrl || null,
       };
-      const board = editing === "new" ? await request<Board>("/admin/boards", { method: "POST", body: JSON.stringify(body) }) : await request<Board>(`/admin/boards/${(editing as AdminBoard).id}`, { method: "PATCH", body: JSON.stringify(body) });
-      await request(`/admin/boards/${board.id}/members`, { method: "PUT", body: JSON.stringify({ userIds: draft.memberIds }) });
+      if (editing === "new") await request<Board>("/admin/boards", { method: "POST", body: JSON.stringify(body) });
+      else await request<Board>(`/admin/boards/${(editing as Board).id}`, { method: "PATCH", body: JSON.stringify(body) });
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.adminBoards });
@@ -57,13 +55,11 @@ export function BoardsTab() {
     },
   });
 
-  const members = (users.data ?? []).filter((u) => u.role !== "admin" && u.status !== "revoked");
-
   return (
     <>
       <TabHeader
         title="Boards"
-        body="One board per project. Each board holds its repository and the members who may open it."
+        body="One board per project, with its repository, so your agents can find the board for the code they're working in."
         action={
           <Button variant="primary" icon={<Plus className="size-4" strokeWidth={1.75} />} onClick={() => setEditing("new")}>
             New board
@@ -85,15 +81,6 @@ export function BoardsTab() {
                   </p>
                   <p className="mt-0.5 truncate font-mono text-[12px] text-ink-muted">{b.repoUrl ?? "No repository yet"}</p>
                 </div>
-                {/* Members; the dialog shows all of them, so a phone keeps the row to name and repository. */}
-                <span className="hidden shrink-0 items-center gap-4 sm:flex">
-                  <span className="flex -space-x-1.5">
-                    {b.memberIds.slice(0, 4).map((id) => {
-                      const u = users.data?.find((x) => x.id === id);
-                      return u ? <Avatar key={id} name={u.name} url={u.avatarUrl} size={22} className="ring-2 ring-surface" /> : null;
-                    })}
-                  </span>
-                </span>
               </button>
             </li>
           ))}
@@ -135,31 +122,6 @@ export function BoardsTab() {
               <p className="text-[12.5px] text-ink-faint">Once the board exists, its settings can make an access token for your own agent.</p>
             )}
           </div>
-          <div>
-            <p className="mb-1.5 text-[13px] font-medium text-ink-muted">Members</p>
-            {members.length === 0 ? (
-              <p className="text-[12.5px] text-ink-faint">Invite users first. Admins always have access.</p>
-            ) : (
-              <ul className="flex flex-wrap gap-1.5">
-                {members.map((u) => {
-                  const on = draft.memberIds.includes(u.id);
-                  return (
-                    <li key={u.id}>
-                      <button
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() => setDraft({ ...draft, memberIds: on ? draft.memberIds.filter((id) => id !== u.id) : [...draft.memberIds, u.id] })}
-                        className={cx("inline-flex h-8 items-center gap-1.5 rounded-full border pl-1 pr-3 text-[13px] transition-colors", on ? "border-accent/40 bg-accent-soft text-ink" : "border-line bg-surface text-ink-muted hover:border-line-strong")}
-                      >
-                        <Avatar name={u.name} url={u.avatarUrl} size={22} />
-                        {u.name}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
           {save.isError ? <p className="text-[13px] text-danger">{save.error.message}</p> : null}
           <div className="flex items-center gap-2 pt-1">
             {editing && editing !== "new" ? (
@@ -191,7 +153,7 @@ export function BoardsTab() {
 }
 
 // Deleting names the Board twice: once by opening this from its settings, once by typing its slug.
-function DeleteBoardDialog({ board, onClose, onDeleted }: { board: AdminBoard | null; onClose: () => void; onDeleted: () => void }) {
+function DeleteBoardDialog({ board, onClose, onDeleted }: { board: Board | null; onClose: () => void; onDeleted: () => void }) {
   // The last Board shown stays through the closing animation, so the dialog does not empty as it
   // fades; each opening starts the form afresh.
   const [shown, setShown] = useState(board);
@@ -208,7 +170,7 @@ function DeleteBoardDialog({ board, onClose, onDeleted }: { board: AdminBoard | 
   );
 }
 
-function DeleteBoardForm({ board, onClose, onDeleted }: { board: AdminBoard; onClose: () => void; onDeleted: () => void }) {
+function DeleteBoardForm({ board, onClose, onDeleted }: { board: Board; onClose: () => void; onDeleted: () => void }) {
   const qc = useQueryClient();
   const [typed, setTyped] = useState("");
   const impact = useQuery({
@@ -244,7 +206,7 @@ function DeleteBoardForm({ board, onClose, onDeleted }: { board: AdminBoard; onC
         <div className="flex flex-col gap-2 text-[13.5px] leading-relaxed text-ink-muted">
           <p>
             <span className="font-medium text-ink">{board.name}</span>{" "}
-            {contents ? <>will be deleted with everything on it: {contents}, and its activity.</> : <>has no cards yet. Its settings and members will be deleted.</>}
+            {contents ? <>will be deleted with everything on it: {contents}, and its activity.</> : <>has no cards yet. Its settings will be deleted.</>}
           </p>
           <p>A snapshot is taken first, so it can be restored from Backups. The repository on GitHub is not touched.</p>
         </div>

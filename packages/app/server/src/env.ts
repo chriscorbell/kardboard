@@ -15,16 +15,15 @@ function str(name: string, fallback = ""): string {
 }
 
 /**
- * Dev authentication signs every request in as the Admin and lets any caller pick a User with a
- * header, so a missing or mistyped setting must never produce it in production: a production process
- * refuses to start.
+ * Dev authentication signs every request in as the User without a sign-in, so a missing or
+ * mistyped setting must never produce it in production: a production process refuses to start.
  */
 export function resolveAuthMode(input: { auth: string; production: boolean }): "dev" | "clerk" {
   const auth = input.auth.trim().toLowerCase();
   if (auth === "clerk") return "clerk";
   if (auth !== "" && auth !== "dev") throw new Error(`KARDBOARD_AUTH must be "clerk" or "dev", not ${JSON.stringify(input.auth)}.`);
   if (input.production) {
-    throw new Error("Refusing to start: NODE_ENV is production and authentication would run in dev mode, which signs every request in as the Admin. Set KARDBOARD_AUTH=clerk with the Clerk keys.");
+    throw new Error("Refusing to start: NODE_ENV is production and authentication would run in dev mode, which signs every request in as the User. Set KARDBOARD_AUTH=clerk with the Clerk keys.");
   }
   return "dev";
 }

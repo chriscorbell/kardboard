@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Settings } from "@kardboard/shared";
 import { keys, request, useAdminSettings } from "../../lib/api";
 import { Avatar, Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
-import { TabHeader } from "./AdminPage";
+import { TabHeader } from "./SettingsPage";
 
 export function AgentTab() {
   const settings = useAdminSettings();

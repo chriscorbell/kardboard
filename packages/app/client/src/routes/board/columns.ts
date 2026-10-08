@@ -17,7 +17,7 @@ export function columnHint(column: Column): string {
 
 const COLUMN_HINTS: Record<Column, string> = {
   inbox: "New requests, not looked at yet.",
-  blocked: "Waiting on an answer from a person.",
+  blocked: "Waiting on your answer.",
   ready: "Triaged and waiting to be started.",
   in_progress: "Being worked on now.",
   review: "A pull request is open for a look.",

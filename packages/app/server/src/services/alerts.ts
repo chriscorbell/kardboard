@@ -3,8 +3,8 @@ import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { queueEmail } from "./email.js";
 
-// Things that go wrong where no one is looking, such as a nightly backup. Each is emailed to every
-// active Admin. The same key sends at most once in six hours, so a condition checked every minute
+// Things that go wrong where no one is looking, such as a nightly backup. Each is emailed to the
+// User. The same key sends at most once in six hours, so a condition checked every minute
 // cannot fill an inbox, and the time it was last sent is a row, so a restart in between does not send
 // it again.
 export const ALERT_DEDUPE_MS = 6 * 3_600_000;
@@ -16,7 +16,7 @@ export interface AdminAlert {
   key: string;
   subject: string;
   body: string;
-  /** Where the email's button goes, as a path on this site. The admin panel when left out. */
+  /** Where the email's button goes, as a path on this site. Settings when left out. */
   path?: string;
 }
 
@@ -36,18 +36,15 @@ async function claim(key: string, now: Date): Promise<boolean> {
   return row !== undefined;
 }
 
-/** Emails every active Admin, unless the same key was sent in the last six hours. True if it sent. */
+/** Emails the User, unless the same key was sent in the last six hours. True if it sent. */
 export async function alertAdmin(alert: AdminAlert, now = new Date()): Promise<boolean> {
   // Logged whether or not it is sent, so the kept app log has every occurrence.
   console.warn(`[alert] ${alert.key}: ${alert.subject}`);
   if (!(await claim(alert.key, now))) return false;
   try {
-    const admins = await db
-      .select({ id: schema.users.id })
-      .from(schema.users)
-      .where(and(eq(schema.users.role, "admin"), eq(schema.users.status, "active")));
-    // Delivery happens after this returns. If it reaches no Admin, the slot is given back as it is
-    // for an email that could not even be queued, so the next occurrence tries again.
+    const admins = await db.select({ id: schema.users.id }).from(schema.users);
+    // Delivery happens after this returns. If it reaches nobody, the slot is given back as it is for
+    // an email that could not even be queued, so the next occurrence tries again.
     let pending = admins.length;
     let delivered = 0;
     const settled = (ok: boolean) => {
@@ -61,9 +58,9 @@ export async function alertAdmin(alert: AdminAlert, now = new Date()): Promise<b
         subject: `kardboard: ${alert.subject}`,
         heading: alert.subject,
         body: alert.body,
-        linkUrl: `${env.publicUrl}${alert.path ?? "/admin"}`,
-        linkLabel: "Open the admin panel",
-        footer: "You are receiving this because you are the kardboard Admin. The same alert is sent at most once every six hours while the problem lasts.",
+        linkUrl: `${env.publicUrl}${alert.path ?? "/settings"}`,
+        linkLabel: "Open kardboard's settings",
+        footer: "kardboard sends this about itself. The same alert is sent at most once every six hours while the problem lasts.",
       });
     }
   } catch (err) {

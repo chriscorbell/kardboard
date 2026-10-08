@@ -1,15 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { asc, eq, inArray } from "drizzle-orm";
-import { extractMentionHandles, mimeEssence, type Attachment, type Comment, type User } from "@kardboard/shared";
+import { mimeEssence, type Attachment, type Comment } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
 import { recordEvent, type Actor } from "./events.js";
 import { getCard } from "./cards.js";
-import { findUsersByHandles } from "./users.js";
-import { canBeNotified, forgetCommentTraces, notifyMentions } from "./notifications.js";
 
 function toAttachment(row: typeof schema.attachments.$inferSelect): Attachment {
   return {
@@ -26,7 +24,6 @@ async function hydrate(rows: (typeof schema.comments.$inferSelect)[]): Promise<C
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
   const atts = await db.select().from(schema.attachments).where(inArray(schema.attachments.commentId, ids));
-  const mens = await db.select().from(schema.mentions).where(inArray(schema.mentions.commentId, ids));
   return rows.map((r) => ({
     id: r.id,
     cardId: r.cardId,
@@ -36,7 +33,6 @@ async function hydrate(rows: (typeof schema.comments.$inferSelect)[]): Promise<C
     editedAt: r.editedAt,
     createdAt: r.createdAt,
     attachments: atts.filter((a) => a.commentId === r.id).map(toAttachment),
-    mentions: mens.filter((m) => m.commentId === r.id).map((m) => m.userId),
   }));
 }
 
@@ -54,26 +50,6 @@ export async function getComment(id: string): Promise<Comment | null> {
   return row ? (await hydrate([row]))[0]! : null;
 }
 
-// A Mention is recorded only for someone who can open the Card. Handles are global, so a handle
-// alone would otherwise reach Users of other Boards and revoked Users.
-async function syncMentions(comment: Comment, boardId: string, actor: Actor): Promise<string[]> {
-  const handles = extractMentionHandles(comment.body);
-  const users = await findUsersByHandles(handles);
-  const existing = new Set(comment.mentions);
-  const fresh: User[] = [];
-  for (const u of users) {
-    if (existing.has(u.id) || u.id === actor.id) continue;
-    if (await canBeNotified(u, boardId)) fresh.push(u);
-  }
-  if (fresh.length > 0) {
-    await db
-      .insert(schema.mentions)
-      .values(fresh.map((u) => ({ commentId: comment.id, userId: u.id })))
-      .onConflictDoNothing();
-  }
-  return fresh.map((u) => u.id);
-}
-
 export async function createComment(input: {
   cardId: string;
   body: string;
@@ -89,11 +65,7 @@ export async function createComment(input: {
     authorId: input.actor.id,
     body: input.body,
   });
-  let comment = (await getComment(id))!;
-  // kardboard's own notices quote what went wrong in the Agent's words, which can name people; the
-  // Agent already reached them, and the notice's own notification goes to who it concerns.
-  const newlyMentioned = input.actor.kind === "system" ? [] : await syncMentions(comment, card.boardId, input.actor);
-  comment = (await getComment(id))!;
+  const comment = (await getComment(id))!;
   await recordEvent({
     boardId: card.boardId,
     cardId: card.id,
@@ -103,7 +75,6 @@ export async function createComment(input: {
   });
   publish(card.boardId, { type: "comment.upserted", comment });
   publish(card.boardId, { type: "card.upserted", card: (await getCard(card.id))! });
-  await notifyMentions(card, comment, newlyMentioned, input.actor);
   return comment;
 }
 
@@ -116,15 +87,10 @@ export async function updateComment(id: string, input: { body: string; actor: Ac
     .update(schema.comments)
     .set({ body: input.body, editedAt: new Date().toISOString() })
     .where(eq(schema.comments.id, id));
-  let comment = (await getComment(id))!;
+  const comment = (await getComment(id))!;
   const card = (await getCard(comment.cardId))!;
-  // kardboard's own notices quote what went wrong in the Agent's words, which can name people; the
-  // Agent already reached them, and the notice's own notification goes to who it concerns.
-  const newlyMentioned = input.actor.kind === "system" ? [] : await syncMentions(comment, card.boardId, input.actor);
-  comment = (await getComment(id))!;
   await recordEvent({ boardId: card.boardId, cardId: card.id, actor: input.actor, type: "comment.edited", payload: { commentId: id } });
   publish(card.boardId, { type: "comment.upserted", comment });
-  await notifyMentions(card, comment, newlyMentioned, input.actor);
   return comment;
 }
 
@@ -177,23 +143,18 @@ export async function removeUnusedUploads(hashes: Iterable<string>, opts: { offD
 }
 
 /**
- * Removes a Comment for good: its body, every earlier revision of it, its Mentions, its
- * Attachments, and each uploaded file no other Attachment still points at. A pasted secret is the
- * usual reason, so the mention notifications that quoted it go as well; an email already sent
- * cannot be recalled. The event log records that the Comment was deleted and whose it was, never
- * what it said.
+ * Removes a Comment for good: its body, every earlier revision of it, its Attachments, and each
+ * uploaded file no other Attachment still points at. A pasted secret is the usual reason. The event
+ * log records that the Comment was deleted and whose it was, never what it said.
  */
 export async function deleteComment(id: string, actor: Actor): Promise<void> {
   const current = await getComment(id);
   if (!current) throw new Error("comment not found");
   const card = (await getCard(current.cardId))!;
-  const revisions = await db.select({ body: schema.commentRevisions.body }).from(schema.commentRevisions).where(eq(schema.commentRevisions.commentId, id));
   const hashes = new Set(current.attachments.length > 0 ? (await db.select({ sha256: schema.attachments.sha256 }).from(schema.attachments).where(eq(schema.attachments.commentId, id))).map((a) => a.sha256) : []);
   await db.delete(schema.commentRevisions).where(eq(schema.commentRevisions.commentId, id));
   await db.delete(schema.attachments).where(eq(schema.attachments.commentId, id));
-  await db.delete(schema.mentions).where(eq(schema.mentions.commentId, id));
   await db.delete(schema.comments).where(eq(schema.comments.id, id));
-  await forgetCommentTraces(id, card.id, [current.body, ...revisions.map((r) => r.body)]);
   await removeUnusedUploads(hashes, { offDiskCopy: true });
   await recordEvent({
     boardId: card.boardId,

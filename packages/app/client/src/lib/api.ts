@@ -11,11 +11,9 @@ import type {
   CreatedAccessToken,
   Me,
   MoveCardInput,
-  NotificationsView,
   Settings,
   UpdateCardInput,
   UpdateMeInput,
-  User,
 } from "@kardboard/shared";
 import { useRef } from "react";
 import { ApiError, errorCode, NO_RESPONSE, shouldRetry } from "./errors";
@@ -99,8 +97,6 @@ export const keys = {
   boards: ["boards"] as const,
   board: (slug: string) => ["board", slug] as const,
   card: (id: string) => ["card", id] as const,
-  notifications: ["notifications"] as const,
-  adminUsers: ["admin", "users"] as const,
   adminBoards: ["admin", "boards"] as const,
   adminSettings: ["admin", "settings"] as const,
   adminBackups: ["admin", "backups"] as const,
@@ -119,24 +115,6 @@ export function useBoard(slug: string) {
 }
 export function useCard(id: string | null) {
   return useQuery({ queryKey: keys.card(id ?? ""), queryFn: () => request<CardDetail>(`/cards/${id}`), enabled: Boolean(id) });
-}
-
-// The bell lives outside any board, so it polls rather than riding a board's event stream.
-export function useNotifications() {
-  return useQuery({
-    queryKey: keys.notifications,
-    queryFn: () => request<NotificationsView>("/notifications"),
-    refetchInterval: 30_000,
-    staleTime: 10_000,
-  });
-}
-
-export function useMarkNotificationsRead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (ids?: string[]) => request<NotificationsView>("/notifications/read", { method: "POST", body: JSON.stringify(ids ? { ids } : {}) }),
-    onSuccess: (view) => qc.setQueryData(keys.notifications, view),
-  });
 }
 
 export function useCreateCard(slug: string) {
@@ -223,7 +201,7 @@ export function useUpdateComment(cardId: string) {
   });
 }
 
-// The author or the Admin removes a Comment for good. The sheet drops it at once; the event stream
+// The User removes a Comment for good, theirs or the Agent's. The sheet drops it at once; the event stream
 // tells everyone else.
 export function useDeleteComment(cardId: string) {
   const qc = useQueryClient();
@@ -247,16 +225,7 @@ export function useDeleteCard(slug: string) {
   });
 }
 
-// Opening a Card reads whatever the bell held about it.
-export function useMarkCardRead() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (cardId: string) => request<NotificationsView>(`/cards/${cardId}/read`, { method: "POST" }),
-    onSuccess: (view) => qc.setQueryData(keys.notifications, view),
-  });
-}
-
-// The caller's own settings: how much email, and whether the board explainer has been dismissed.
+// The caller's own settings: whether the board explainer has been dismissed.
 export function useUpdateMe() {
   const qc = useQueryClient();
   return useMutation({
@@ -273,13 +242,9 @@ export function upsertCardInBoard(qc: ReturnType<typeof useQueryClient>, slug: s
   });
 }
 
-// ---- admin ----
-export type AdminBoard = Board & { memberIds: string[] };
-export function useAdminUsers() {
-  return useQuery({ queryKey: keys.adminUsers, queryFn: () => request<User[]>("/admin/users") });
-}
+// ---- settings ----
 export function useAdminBoards() {
-  return useQuery({ queryKey: keys.adminBoards, queryFn: () => request<AdminBoard[]>("/admin/boards") });
+  return useQuery({ queryKey: keys.adminBoards, queryFn: () => request<Board[]>("/admin/boards") });
 }
 export function useAccessTokens(boardId: string) {
   return useQuery({ queryKey: keys.accessTokens(boardId), queryFn: () => request<AccessToken[]>(`/admin/boards/${boardId}/tokens`) });

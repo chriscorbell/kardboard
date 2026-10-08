@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { slugDraft, slugify } from "../src/routes/admin/slug.js";
+import { slugDraft, slugify } from "../src/routes/settings/slug.js";
 
 describe("slugDraft", () => {
   it("keeps a hyphen typed at the end, so the next word can follow it", () => {

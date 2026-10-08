@@ -6,8 +6,7 @@ function key(k: string, mods: Partial<ComposerKey> = {}): ComposerKey {
   return { key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, isComposing: false, ...mods };
 }
 
-const plain = { mentionOpen: false, canCancel: false };
-const mentioning = { mentionOpen: true, canCancel: false };
+const plain = { canCancel: false };
 
 describe("composerKeyAction", () => {
   it("posts on Enter and suppresses the line break", () => {
@@ -31,7 +30,6 @@ describe("composerKeyAction", () => {
   it("does not post while an input method editor is composing", () => {
     assert.equal(composerKeyAction(key("Enter", { isComposing: true }), plain), null);
     assert.equal(composerKeyAction(key("Process"), plain), null);
-    assert.equal(composerKeyAction(key("Enter", { isComposing: true }), mentioning), null);
   });
 
   it("passes ordinary keys through", () => {
@@ -42,32 +40,11 @@ describe("composerKeyAction", () => {
 
   it("cancels on Escape only when there is something to cancel", () => {
     assert.equal(composerKeyAction(key("Escape"), plain), null);
-    assert.deepEqual(composerKeyAction(key("Escape"), { mentionOpen: false, canCancel: true }), { action: { type: "cancel" }, preventDefault: false });
-  });
-
-  describe("with the mention list open", () => {
-    it("picks the highlighted handle on Enter or Tab instead of posting", () => {
-      assert.deepEqual(composerKeyAction(key("Enter"), mentioning), { action: { type: "mention-pick" }, preventDefault: true });
-      assert.deepEqual(composerKeyAction(key("Tab"), mentioning), { action: { type: "mention-pick" }, preventDefault: true });
-    });
-
-    it("moves the highlight with the arrow keys", () => {
-      assert.deepEqual(composerKeyAction(key("ArrowDown"), mentioning), { action: { type: "mention-move", delta: 1 }, preventDefault: true });
-      assert.deepEqual(composerKeyAction(key("ArrowUp"), mentioning), { action: { type: "mention-move", delta: -1 }, preventDefault: true });
-    });
-
-    it("keeps Shift+Enter a line break and Shift+Tab a focus move", () => {
-      assert.equal(composerKeyAction(key("Enter", { shiftKey: true }), mentioning), null);
-      assert.equal(composerKeyAction(key("Tab", { shiftKey: true }), mentioning), null);
-    });
-
-    it("closes the list on Escape without cancelling the composer", () => {
-      assert.deepEqual(composerKeyAction(key("Escape"), { mentionOpen: true, canCancel: true }), { action: { type: "mention-close" }, preventDefault: false });
-    });
+    assert.deepEqual(composerKeyAction(key("Escape"), { canCancel: true }), { action: { type: "cancel" }, preventDefault: false });
   });
 
   describe("on a touch screen", () => {
-    const touch = { mentionOpen: false, canCancel: false, touch: true };
+    const touch = { canCancel: false, touch: true };
 
     it("leaves Enter to the textarea, so a phone can write a second paragraph", () => {
       assert.equal(composerKeyAction(key("Enter"), touch), null);
@@ -77,10 +54,6 @@ describe("composerKeyAction", () => {
       for (const mods of [{ metaKey: true }, { ctrlKey: true }]) {
         assert.deepEqual(composerKeyAction(key("Enter", mods), touch), { action: { type: "submit" }, preventDefault: true });
       }
-    });
-
-    it("still picks a handle on Enter while the mention list is open", () => {
-      assert.deepEqual(composerKeyAction(key("Enter"), { ...touch, mentionOpen: true }), { action: { type: "mention-pick" }, preventDefault: true });
     });
 
     it("posts on Enter as before when the pointer is not a touch screen", () => {
