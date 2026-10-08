@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { initials } from "../lib/format";
 
@@ -104,23 +104,16 @@ export function Field({ label, hint, error, children, className }: { label: Reac
   );
 }
 
-const inputBase =
+// The look of a text field, which the app's own dropdown shares.
+export const fieldClass =
   "w-full rounded-control border border-line-strong bg-raised px-3 text-sm text-ink placeholder:text-ink-faint transition-colors duration-150 hover:border-line-hover focus:border-accent/60 focus:outline-none disabled:opacity-50";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
-  return <input ref={ref} className={cx(inputBase, "h-9", className)} {...rest} />;
+  return <input ref={ref} className={cx(fieldClass, "h-9", className)} {...rest} />;
 });
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea({ className, ...rest }, ref) {
-  return <textarea ref={ref} className={cx(inputBase, "min-h-24 resize-y py-2 leading-relaxed", className)} {...rest} />;
-});
-
-export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...rest }, ref) {
-  return (
-    <select ref={ref} className={cx(inputBase, "h-9 appearance-none bg-[url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2716%27 height=%2716%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%23a69f93%27 stroke-width=%271.75%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27%3E%3Cpath d=%27m6 9 6 6 6-6%27/%3E%3C/svg%3E')] bg-[length:16px] bg-[right_8px_center] bg-no-repeat pr-8", className)} {...rest}>
-      {children}
-    </select>
-  );
+  return <textarea ref={ref} className={cx(fieldClass, "min-h-24 resize-y py-2 leading-relaxed", className)} {...rest} />;
 });
 
 export function EmptyState({ title, body, action }: { title: string; body?: string; action?: ReactNode }) {

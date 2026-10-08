@@ -3,7 +3,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { Paperclip, Upload } from "lucide-react";
 import { CARD_TYPES, CARD_TYPE_LABELS, COLUMNS, COLUMN_LABELS, PRIORITIES, type Card, type CardType, type Column, type Priority } from "@kardboard/shared";
 import { Dialog } from "../../components/Dialog";
-import { Button, cx, Field, Input, Select, Textarea } from "../../components/ui";
+import { Button, cx, Field, Input, Textarea } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { commentRequests, useCreateCard } from "../../lib/api";
 import { postComment, UploadFailed, type PostProgress } from "../../lib/commentPost";
 import { filesFromPaste, useFileDrop } from "../../lib/fileInput";
@@ -180,22 +181,10 @@ export function NewCardDialog({ slug, open, onClose, onCreated }: { slug: string
         <TypePicker value={type} onChange={setType} disabled={locked} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Priority">
-            <Select value={priority} onChange={(e) => setPriority(e.target.value as Priority)} disabled={locked}>
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {PRIORITY_LABELS[p]}
-                </option>
-              ))}
-            </Select>
+            <Select label="Priority" value={priority} onChange={setPriority} disabled={locked} options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABELS[p] }))} />
           </Field>
           <Field label="Column">
-            <Select value={column} onChange={(e) => setColumn(e.target.value as Column)} disabled={locked}>
-              {COLUMNS.map((c) => (
-                <option key={c} value={c}>
-                  {COLUMN_LABELS[c]}
-                </option>
-              ))}
-            </Select>
+            <Select label="Column" value={column} onChange={setColumn} disabled={locked} options={COLUMNS.map((c) => ({ value: c, label: COLUMN_LABELS[c] }))} />
           </Field>
         </div>
         {create.isError ? (
