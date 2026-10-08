@@ -4,7 +4,7 @@ kardboard is a kanban board for every project one person works on, kept up to da
 
 ## Actors
 
-The User is the one person kardboard is for: Chris. The Agent is one non-human identity, named "Agent" by default and renamed in Settings, under which every coding agent holding an Access token acts. The Board tells the User's own words from the Agent's: a Card or Comment the User wrote by hand carries their name, and one an agent wrote carries the Agent's, whichever machine or conversation it came from.
+The User is the one person kardboard is for: Chris. kardboard knows them only by the name they give the first time they open it, which a single screen asks for, and which they can change in Settings; it holds no email, photo, or account. The Agent is one non-human identity, named "Agent" by default and renamed in Settings, under which every coding agent holding an Access token acts. The Board tells the User's own words from the Agent's: a Card or Comment the User wrote by hand carries their name, and one an agent wrote carries the Agent's, whichever machine or conversation it came from.
 
 kardboard has no sign-in. It is reached only over the User's tailnet, on its own port of minicore's tailnet name with Tailscale's HTTPS, and every request that reaches it is the User ([ADR 0014](adr/0014-its-own-port-over-tailscale-https.md)). Agents still present an Access token.
 
@@ -52,6 +52,7 @@ The Board changes live: every open Board follows its changes over server-sent ev
 ## Settings
 
 - Boards: create, rename, set the repository, delete. Deleting a Board removes its Cards and everything on them and its event log, after the User types its slug, and is refused when the snapshot taken first fails, so a deleted Board can be restored from Backups; for the same reason its attachments stay in the off-disk copy. The repository on GitHub is not touched.
+- You: the User's name.
 - Agent: name and avatar, and the Access tokens that connect agents: make, list with last use, revoke.
 - Backups: snapshots, the last attempt, and the last off-disk copy, and a snapshot on demand.
 

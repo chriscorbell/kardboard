@@ -214,7 +214,7 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
           ) : !detail.data ? (
             <ErrorState compact title="Could not load comments." error={detail.error} onRetry={() => void detail.refetch()} retrying={detail.isFetching} />
           ) : (
-            <CommentList comments={detail.data.comments} people={people} agent={view.agent} meId={me.data?.user.id ?? ""} cardId={card.id} />
+            <CommentList comments={detail.data.comments} people={people} agent={view.agent} meId={me.data?.user?.id ?? ""} cardId={card.id} />
           )}
         </div>
         <div className="px-6 pb-4">
@@ -460,7 +460,7 @@ function CommentList({
       <ol ref={list} tabIndex={-1} aria-label="Comments" className="flex flex-col gap-5 outline-none">
         {comments.map((c) => {
           // A notice kardboard posted itself, from when it ran Sessions, is signed by kardboard.
-          const author = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? people.get(c.authorId) : undefined;
+          const author: { name: string; avatarUrl?: string | null } | undefined = c.authorKind === "agent" ? agent : c.authorKind === "system" ? { name: "kardboard", avatarUrl: null } : c.authorId ? people.get(c.authorId) : undefined;
           const mine = c.authorKind === "user" && c.authorId === meId;
           return (
             <li key={c.id} className="flex gap-3">

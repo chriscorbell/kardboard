@@ -33,20 +33,21 @@ export type CardOutcome = (typeof CARD_OUTCOMES)[number];
 
 export type ActorKind = "user" | "agent" | "system";
 
-/** The one person kardboard is for. */
+/**
+ * The one person kardboard is for. Nobody signs in: kardboard knows them only by the name they give
+ * the first time they open it, which signs their Cards and Comments apart from the Agent's.
+ */
 export interface User {
   id: string;
-  email: string;
   name: string;
-  avatarUrl: string | null;
   createdAt: string;
 }
 
 /**
- * Enough of a User to say who did something: a name and a face. A Board names everyone who appears
- * on it this way, which is the User, and anyone from when kardboard had Members.
+ * Enough of a User to say who did something. A Board names everyone who appears on it this way,
+ * which is the User, and anyone from when kardboard had Members.
  */
-export type Person = Pick<User, "id" | "name" | "avatarUrl">;
+export type Person = Pick<User, "id" | "name">;
 
 export interface Board {
   id: string;
@@ -175,7 +176,8 @@ export interface CardDetail {
 }
 
 export interface Me {
-  user: User;
+  /** Null until the User has given their name, which the first-run screen asks for. */
+  user: User | null;
   agent: AgentProfile;
   /** When this User dismissed the board explainer. Null shows it on the next Board they open. */
   onboardedAt: string | null;
@@ -216,7 +218,15 @@ export const updateCommentSchema = z.object({
 });
 
 // A User's own settings. `onboarded: true` records that the board explainer was dismissed.
+const personName = z.string().trim().min(1, "Give a name.").max(60);
+
+export const createMeSchema = z.object({
+  name: personName,
+});
+export type CreateMeInput = z.infer<typeof createMeSchema>;
+
 export const updateMeSchema = z.object({
+  name: personName.optional(),
   onboarded: z.boolean().optional(),
 });
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;

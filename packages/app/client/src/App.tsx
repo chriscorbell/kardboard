@@ -4,6 +4,7 @@ import { OverviewPage } from "./routes/OverviewPage";
 import { BoardPage } from "./routes/BoardPage";
 import { SettingsPage } from "./routes/settings/SettingsPage";
 import { UnreachablePage } from "./routes/UnreachablePage";
+import { FirstRunPage } from "./routes/FirstRunPage";
 import { Shell } from "./components/Shell";
 import { Skeleton } from "./components/ui";
 
@@ -19,8 +20,9 @@ export function App() {
   // A failed background refetch keeps the page: unmounting it would throw away whatever is being
   // typed.
   if (!me.data) return <UnreachablePage />;
+  if (!me.data.user) return <FirstRunPage />;
   return (
-    <Shell me={me.data}>
+    <Shell>
       <Routes>
         <Route path="/" element={<OverviewPage />} />
         <Route path="/b/:slug" element={<BoardPage />} />

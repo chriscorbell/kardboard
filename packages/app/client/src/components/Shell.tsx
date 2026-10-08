@@ -1,14 +1,13 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { ChevronDown, Settings2 } from "lucide-react";
-import type { Me } from "@kardboard/shared";
 import { useBoards } from "../lib/api";
-import { Avatar, cx } from "./ui";
+import { cx } from "./ui";
 import { Wordmark } from "./Wordmark";
 import { Menu } from "./Menu";
 import { Toaster } from "./Toaster";
 
-export function Shell({ me, children }: { me: Me; children: ReactNode }) {
+export function Shell({ children }: { children: ReactNode }) {
   const boards = useBoards();
   const navigate = useNavigate();
   const location = useLocation();
@@ -17,7 +16,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const inSettings = location.pathname.startsWith("/settings");
 
   // On a phone the wordmark keeps only its mark and the board name gives way (truncating) before
-  // Settings or the account menu does: those two must always be reachable.
+  // Settings does: it must always be reachable.
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-bg px-4 sm:gap-3">
@@ -52,9 +51,6 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
             <Settings2 className="size-4" strokeWidth={1.75} />
             <span className="hidden sm:inline">Settings</span>
           </NavLink>
-          <span className="ml-1 inline-flex p-0.5" title={me.user.name}>
-            <Avatar name={me.user.name} url={me.user.avatarUrl} size={28} />
-          </span>
         </div>
       </header>
       <main className="min-h-0 flex-1">{children}</main>

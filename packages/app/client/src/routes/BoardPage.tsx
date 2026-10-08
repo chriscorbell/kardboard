@@ -295,7 +295,7 @@ export function BoardPage() {
   const filter = useMemo(() => readFilter(params), [params]);
   const setFilter = useCallback((next: BoardFilter) => setParams((p) => writeFilter(next, p), { replace: true }), [setParams]);
   const filtering = filterActive(filter);
-  const viewer = useMemo(() => ({ id: me.data?.user.id ?? "" }), [me.data?.user.id]);
+  const viewer = useMemo(() => ({ id: me.data?.user?.id ?? "" }), [me.data?.user?.id]);
   const showHelp = helpOpen ?? (me.data !== undefined && me.data.onboardedAt === null);
   const closeHelp = () => {
     setHelpOpen(false);

@@ -46,7 +46,7 @@ export async function getBoardById(id: string): Promise<Board | null> {
 // Everyone a Board can show as the author of something. That is the User; the Board has no one else
 // since Members went, and a person who wrote on it before then has no row left to name them.
 export async function listBoardPeople(): Promise<Person[]> {
-  return db.select({ id: schema.users.id, name: schema.users.name, avatarUrl: schema.users.avatarUrl }).from(schema.users).orderBy(asc(schema.users.name));
+  return db.select({ id: schema.users.id, name: schema.users.name }).from(schema.users).orderBy(asc(schema.users.name));
 }
 
 export type BoardInput = {

@@ -22,7 +22,7 @@ beforeEach(async () => {
   for (const t of [schema.events, schema.attachments, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   fs.rmSync(path.join(root, "uploads"), { recursive: true, force: true });
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
 });
 
 function del(cardId: string) {

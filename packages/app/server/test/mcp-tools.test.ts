@@ -72,7 +72,7 @@ const row = async (id: string) => (await db.select().from(schema.cards).where(eq
 beforeEach(async () => {
   for (const t of [schema.accessTokens, schema.attachments, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets" });
-  await db.insert(schema.users).values({ id: "chris", email: "chris@example.com", name: "Chris" });
+  await db.insert(schema.users).values({ id: "chris", name: "Chris" });
   await card(CARD, { column: "in_progress", branch: "kardboard/card-own" });
 });
 
@@ -145,12 +145,11 @@ describe("update_card", () => {
 });
 
 describe("get_board", () => {
-  it("names each card's creator, and never sends an email", async () => {
+  it("names each card's creator", async () => {
     const { client } = await agent();
     const result = await call(client, "get_board", { board: "board-one" });
     const board = json(result) as { cards: Record<string, { id: string; creator: string }[]> };
     assert.equal(board.cards.in_progress!.find((c) => c.id === CARD)!.creator, "Chris");
-    assert.ok(!text(result).includes("@example.com"), "no email reaches the agent");
   });
 
   it("names each card's parent", async () => {

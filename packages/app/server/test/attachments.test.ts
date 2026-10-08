@@ -26,7 +26,7 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0
 beforeEach(async () => {
   for (const t of [schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
 });
 
 function call(method: string, url: string, body?: unknown) {

@@ -31,7 +31,7 @@ async function read(): Promise<OverviewView> {
 
 beforeEach(async () => {
   for (const t of [schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
   // Named so that a sort by raw bytes would put the lowercase one last.
   await db.insert(schema.boards).values([
     { id: "b-recipes", slug: "recipes", name: "Recipes" },

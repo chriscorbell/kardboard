@@ -2,12 +2,11 @@ import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core
 
 const now = () => new Date().toISOString();
 
-// One row: the User, created from KARDBOARD_ADMIN_EMAIL on first start.
+// One row: the User, created when they give their name the first time they open kardboard. Before
+// then there is none.
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
-  email: text("email").notNull().unique(),
   name: text("name").notNull(),
-  avatarUrl: text("avatar_url"),
   // When the User dismissed the board explainer. Kept here rather than in the browser, since they
   // move between a laptop and a phone.
   onboardedAt: text("onboarded_at"),

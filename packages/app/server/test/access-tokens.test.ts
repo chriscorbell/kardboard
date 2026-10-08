@@ -42,7 +42,7 @@ beforeEach(async () => {
     { id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets" },
     { id: "board-2", slug: "board-two", name: "Board two", repoUrl: "https://github.com/acme/gadgets" },
   ]);
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
 });
 
 function call(method: string, url: string, body?: unknown) {
