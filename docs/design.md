@@ -33,9 +33,9 @@ The home page shows every Board at once, so nothing is lost across projects: the
 
 ## Working a Board from an agent
 
-Any coding agent the User runs can read and change every Board through an Access token, at the `/mcp` endpoint. The User makes one in Settings, named for where it runs. The secret is shown once, with the `claude mcp add` command that gives Claude Code the server at user scope, so one install works in every project; only its hash is kept. A token records when it was last used and ends when the User revokes it. See [ADR 0012](adr/0012-one-access-token-reaches-every-board.md).
+Any coding agent the User runs can read and change every Board through an Access token, at the `/mcp` endpoint. The User makes one in Settings, named for where it runs. The secret is shown once, with the command that installs the server for the user in Claude Code, or in Codex with the token in an environment variable, so one install works in every project; only its hash is kept. A token records when it was last used and stops working when the User revokes it; its row stays, so the events it signed still name it. See [ADR 0012](adr/0012-one-access-token-reaches-every-board.md).
 
-A token acts as the Agent: its Cards, Comments, and moves carry the Agent's name, and the event log records which token acted. The tools list the Boards with their repositories; create a Board; read a Board, which marks each Card where the User has commented since the Agent last did, so an agent that works only when asked can find the answers waiting for it; read a Card and an attachment; create a Card in any Column, with its type and Priority; edit any Card's title, description, type, or Priority; move a Card, at the top or the bottom of its Column; comment; record a Card's pull request and branch; and delete a Card the Agent created. A tool that acts on a Card finds its Board from the Card; the others name the Board.
+A token acts as the Agent: its Cards, Comments, and moves carry the Agent's name, and the event log records which token acted. The tools list the Boards with their repositories, open Cards, and replies waiting; create a Board; read a Board, which marks each Card where the User has commented since the Agent last did, so an agent that works only when asked can find the answers waiting for it; read a Card and an attachment; create a Card in any Column, with its type and Priority; edit any Card's title, description, type, or Priority; move a Card, at the top or the bottom of its Column; comment; record a Card's pull request and branch; and delete a Card the Agent created. A tool that acts on a Card finds its Board from the Card; the others name the Board.
 
 The server's instructions tell an agent how to work:
 
@@ -52,8 +52,7 @@ The Board changes live: every open Board follows its changes over server-sent ev
 ## Settings
 
 - Boards: create, rename, set the repository, delete. Deleting a Board removes its Cards and everything on them and its event log, after the User types its slug, and is refused when the snapshot taken first fails, so a deleted Board can be restored from Backups; for the same reason its attachments stay in the off-disk copy. The repository on GitHub is not touched.
-- Agent: name and avatar.
-- Access tokens: make, list with last use, revoke.
+- Agent: name and avatar, and the Access tokens that connect agents: make, list with last use, revoke.
 - Backups: snapshots, the last attempt, and the last off-disk copy, and a snapshot on demand.
 
 ## Infrastructure
@@ -72,7 +71,7 @@ These need host or vendor account access: configuring the Cloudflare tunnel rout
 
 ## Status
 
-As of 2026-10-07 the app runs alone on minicore at `https://kardboard.cc`; Sessions, Approval, Previews, the services that ran them, and Members, Invitations, Mentions, and notifications are gone. Still being built, in this order, on card 66ar6rp3 of the kardboard Board: one Access token for every Board, which today is still one token per Board without Board-naming tools or the side-finding instructions; Card types; and the Overview, whose place the plain list of Boards holds for now.
+As of 2026-10-07 the app runs alone on minicore at `https://kardboard.cc`; Sessions, Approval, Previews, the services that ran them, and Members, Invitations, Mentions, and notifications are gone. Still being built, in this order, on card 66ar6rp3 of the kardboard Board: Card types, which the MCP tools and the side-finding instructions do not mention yet; and the Overview, whose place the plain list of Boards holds for now.
 
 ## Out of scope
 

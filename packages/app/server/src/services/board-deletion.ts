@@ -32,10 +32,10 @@ export async function boardDeletionImpact(boardId: string): Promise<BoardDeletio
 }
 
 /**
- * Removes a Board for good: its Cards and everything on them, its event log, its Access tokens, and
- * each uploaded file nothing else points at. A snapshot is taken first and the delete is refused
- * without one, so a Board deleted by mistake can be restored from Backups; for the same reason the
- * off-disk copy of its attachments is left in place.
+ * Removes a Board for good: its Cards and everything on them, its event log, and each uploaded file
+ * nothing else points at. A snapshot is taken first and the delete is refused without one, so a
+ * Board deleted by mistake can be restored from Backups; for the same reason the off-disk copy of its
+ * attachments is left in place.
  *
  * `uploadsRemoved` settles once the files are gone: after the snapshot's copy off the disk, which
  * must not miss them.
@@ -64,7 +64,6 @@ export async function deleteBoard(
       db.delete(schema.comments).where(inArray(schema.comments.cardId, cardsOf(boardId))),
       db.delete(schema.events).where(eq(schema.events.boardId, boardId)),
       db.delete(schema.cards).where(eq(schema.cards.boardId, boardId)),
-      db.delete(schema.accessTokens).where(eq(schema.accessTokens.boardId, boardId)),
       db.delete(schema.boards).where(eq(schema.boards.id, boardId)),
     ]);
     return { hashes, cards };

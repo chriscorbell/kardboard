@@ -43,7 +43,7 @@ afterEach(async () => {
 });
 
 async function agent(): Promise<{ client: Client; tokenId: string }> {
-  const res = await api.request(`/admin/boards/${BOARD}/tokens`, {
+  const res = await api.request("/admin/tokens", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "Laptop" }),
@@ -75,6 +75,17 @@ beforeEach(async () => {
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets" });
   await db.insert(schema.users).values({ id: "chris", email: "chris@example.com", name: "Chris" });
   await card(CARD, { column: "in_progress", branch: "kardboard/card-own" });
+});
+
+describe("the server's instructions", () => {
+  it("tell an agent how to find its board, and to file side-findings in Backlog", async () => {
+    const { client } = await agent();
+    const instructions = client.getInstructions() ?? "";
+    assert.match(instructions, /git remote get-url origin/);
+    assert.match(instructions, /list_boards/);
+    assert.match(instructions, /create_board/);
+    assert.match(instructions, /File side-findings without asking[^]*in Backlog/);
+  });
 });
 
 describe("update_card", () => {
@@ -119,7 +130,7 @@ describe("update_card", () => {
 describe("get_board", () => {
   it("names each card's creator, and never sends an email", async () => {
     const { client } = await agent();
-    const result = await call(client, "get_board");
+    const result = await call(client, "get_board", { board: "board-one" });
     const board = json(result) as { cards: Record<string, { id: string; creator: string }[]> };
     assert.equal(board.cards.in_progress!.find((c) => c.id === CARD)!.creator, "Chris");
     assert.ok(!text(result).includes("@example.com"), "no email reaches the agent");
@@ -128,7 +139,7 @@ describe("get_board", () => {
   it("names each card's parent", async () => {
     await card("card-child", { parentCardId: CARD, creatorKind: "agent", creatorId: null });
     const { client } = await agent();
-    const board = json(await call(client, "get_board")) as { cards: Record<string, { id: string; parentCardId: string | null }[]> };
+    const board = json(await call(client, "get_board", { board: "board-one" })) as { cards: Record<string, { id: string; parentCardId: string | null }[]> };
     assert.equal(board.cards.ready!.find((c) => c.id === "card-child")!.parentCardId, CARD);
     assert.equal(board.cards.in_progress!.find((c) => c.id === CARD)!.parentCardId, null);
   });
@@ -136,27 +147,165 @@ describe("get_board", () => {
   it("sends only the most recent Done cards unless asked for all of them", async () => {
     for (let i = 0; i < 20; i++) await card(`done-${String(i).padStart(2, "0")}`, { column: "done", updatedAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString() });
     const { client } = await agent();
-    const some = json(await call(client, "get_board")) as { cards: { done: { id: string }[] }; doneOmitted: number };
+    const some = json(await call(client, "get_board", { board: "board-one" })) as { cards: { done: { id: string }[] }; doneOmitted: number };
     assert.equal(some.cards.done.length, 15);
     assert.equal(some.doneOmitted, 5);
     assert.equal(some.cards.done[0]!.id, "done-19", "newest first");
     assert.ok(!some.cards.done.some((c) => c.id === "done-04"), "the oldest are the ones left out");
 
-    const all = json(await call(client, "get_board", { include_all_done: true })) as { cards: { done: unknown[] }; doneOmitted: number };
+    const all = json(await call(client, "get_board", { board: "board-one", include_all_done: true })) as { cards: { done: unknown[] }; doneOmitted: number };
     assert.equal(all.cards.done.length, 20);
     assert.equal(all.doneOmitted, 0);
   });
 });
 
+describe("list_boards", () => {
+  it("counts each board's open cards by column, and the replies waiting there", async () => {
+    await db.insert(schema.boards).values({ id: "board-2", slug: "board-two", name: "Board two" });
+    await card("backlog", { column: "inbox" });
+    await card("asked", { column: "ready" });
+    await card("answered-long-ago", { column: "done" });
+    await card("told", { column: "ready" });
+    await card("stuck", { boardId: "board-2", column: "blocked" });
+    const comment = (id: string, cardId: string, authorKind: "user" | "agent", at: string) =>
+      db.insert(schema.comments).values({ id, cardId, authorKind, authorId: authorKind === "user" ? "chris" : null, body: id, createdAt: `2026-10-07T10:0${at}:00.000Z` });
+    // A reply waits where the person spoke after the agent, and only on a card still open.
+    for (const cardId of ["asked", "answered-long-ago", "stuck"]) {
+      await comment(`${cardId}-q`, cardId, "agent", "0");
+      await comment(`${cardId}-a`, cardId, "user", "5");
+    }
+    await comment("told-a", "told", "user", "0");
+    await comment("told-q", "told", "agent", "5");
+
+    const { client } = await agent();
+    assert.deepEqual(json(await call(client, "list_boards")), {
+      boards: [
+        { slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets", open: { inbox: 1, blocked: 0, ready: 2, in_progress: 1, review: 0 }, replyWaiting: 1 },
+        { slug: "board-two", name: "Board two", repoUrl: null, open: { inbox: 0, blocked: 1, ready: 0, in_progress: 0, review: 0 }, replyWaiting: 1 },
+      ],
+    });
+  });
+});
+
+describe("create_board", () => {
+  it("makes a board with its repository's address written the one way, as the agent", async () => {
+    const { client, tokenId } = await agent();
+    const result = await call(client, "create_board", { name: "Gadget Shop", repo_url: "git@github.com:Acme/Gadgets.git" });
+    assert.notEqual(result.isError, true, text(result));
+    assert.deepEqual(json(result), { slug: "gadget-shop", name: "Gadget Shop", repoUrl: "https://github.com/Acme/Gadgets" });
+
+    const made = (await db.select().from(schema.boards).where(eq(schema.boards.slug, "gadget-shop")).get())!;
+    const [created] = await db.select().from(schema.events).where(eq(schema.events.boardId, made.id));
+    assert.equal(created?.type, "board.created");
+    assert.equal(created?.actorKind, "agent");
+    assert.deepEqual(created?.payload, { accessTokenId: tokenId, name: "Gadget Shop", slug: "gadget-shop" });
+    // And the agent finds it again from its checkout.
+    assert.equal((json(await call(client, "get_board", { board: "https://github.com/acme/gadgets.git" })).board as { slug: string }).slug, "gadget-shop");
+  });
+
+  it("takes the slug it is given, and needs no repository", async () => {
+    const { client } = await agent();
+    assert.deepEqual(json(await call(client, "create_board", { name: "Reading list", slug: "Books 2026" })), { slug: "books-2026", name: "Reading list", repoUrl: null });
+  });
+
+  it("refuses a repository another board has, in whatever form, and names that board", async () => {
+    const { client } = await agent();
+    for (const repo_url of ["https://github.com/acme/widgets", "https://github.com/ACME/Widgets.git/", "git@github.com:acme/widgets.git"]) {
+      const result = await call(client, "create_board", { name: "Widgets again", repo_url });
+      assert.equal(result.isError, true, repo_url);
+      assert.match(text(result), /board board-one already has/);
+    }
+    assert.equal((await db.select().from(schema.boards)).length, 1);
+  });
+
+  it("refuses a slug already taken", async () => {
+    const { client } = await agent();
+    const sameName = await call(client, "create_board", { name: "Board One" });
+    assert.equal(sameName.isError, true);
+    assert.match(text(sameName), /the slug board-one is taken: pass another as slug/);
+    assert.equal((await call(client, "create_board", { name: "Something else", slug: "board-one" })).isError, true);
+    assert.equal((await db.select().from(schema.boards)).length, 1);
+  });
+
+  it("refuses an address that is not a GitHub repository", async () => {
+    const { client } = await agent();
+    for (const repo_url of ["https://gitlab.com/acme/gadgets", "https://github.com/acme", "https://github.com/acme/gadgets/pull/3", "gadgets"]) {
+      const result = await call(client, "create_board", { name: "Gadgets", repo_url });
+      assert.equal(result.isError, true, repo_url);
+      assert.match(text(result), /is not a GitHub repository address/);
+    }
+    assert.equal((await db.select().from(schema.boards)).length, 1);
+  });
+});
+
+// get_board and create_card take a board's slug, or its repository as `git remote get-url origin`
+// prints it, which is how an agent finds the board for the checkout it is in.
+describe("naming a board", () => {
+  const ADDRESSES = [
+    "https://github.com/acme/widgets",
+    "https://github.com/acme/widgets.git",
+    "git@github.com:acme/widgets.git",
+    "ssh://git@github.com/acme/widgets.git",
+    "https://github.com/Acme/Widgets",
+  ];
+
+  it("finds a board by its slug, in any case", async () => {
+    const { client } = await agent();
+    for (const board of ["board-one", "Board-One", " board-one "]) {
+      const result = await call(client, "get_board", { board });
+      assert.deepEqual(json(result).board, { slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets" }, board);
+    }
+  });
+
+  it("finds a board by its repository, however the address is written", async () => {
+    const { client } = await agent();
+    for (const board of ADDRESSES) {
+      const result = await call(client, "get_board", { board });
+      assert.notEqual(result.isError, true, `${board}: ${text(result)}`);
+      assert.equal((json(result).board as { slug: string }).slug, "board-one", board);
+    }
+  });
+
+  it("matches the address a board was saved with in another form", async () => {
+    await db.update(schema.boards).set({ repoUrl: "https://github.com/Acme/Widgets.git" }).where(eq(schema.boards.id, BOARD));
+    const { client } = await agent();
+    assert.equal((json(await call(client, "get_board", { board: "git@github.com:acme/widgets" })).board as { slug: string }).slug, "board-one");
+  });
+
+  it("files a card on the board named, by slug or by repository", async () => {
+    const { client } = await agent();
+    for (const board of ["board-one", ...ADDRESSES]) {
+      const result = json(await call(client, "create_card", { board, title: `Filed through ${board}` }));
+      assert.equal(result.board, "board-one", board);
+      assert.equal((await row(result.cardId as string)).boardId, BOARD, board);
+    }
+  });
+
+  it("points an agent at list_boards and create_board when no board matches", async () => {
+    const { client } = await agent();
+    for (const [name, args] of [
+      ["get_board", { board: "board-two" }],
+      ["get_board", { board: "https://github.com/acme/gadgets" }],
+      ["create_card", { board: "git@github.com:acme/gadgets.git", title: "Nowhere to go" }],
+    ] as const) {
+      const result = await call(client, name, args);
+      assert.equal(result.isError, true, `${name} ${args.board}`);
+      assert.match(text(result), /no board matches .*list_boards.*create_board/s);
+    }
+    assert.equal((await db.select().from(schema.cards)).length, 1, "only the card the test started with");
+  });
+});
+
 describe("get_card", () => {
-  it("names the creator and each comment's author by name only", async () => {
+  it("names its board, its creator, and each comment's author by name only", async () => {
     await db.insert(schema.comments).values([
       { id: "comment-person", cardId: CARD, authorKind: "user", authorId: "chris", body: "Use the brand blue.", createdAt: "2026-10-07T10:00:00.000Z" },
       { id: "comment-agent", cardId: CARD, authorKind: "agent", authorId: null, body: "Done.", createdAt: "2026-10-07T10:05:00.000Z" },
     ]);
     const { client } = await agent();
     const result = await call(client, "get_card", { card_id: CARD });
-    const detail = json(result) as { creator: unknown; comments: Record<string, unknown>[] };
+    const detail = json(result) as { board: unknown; creator: unknown; comments: Record<string, unknown>[] };
+    assert.deepEqual(detail.board, { slug: "board-one", name: "Board one" });
     assert.deepEqual(detail.creator, { name: "Chris" });
     assert.deepEqual(
       detail.comments.map((c) => c.author),

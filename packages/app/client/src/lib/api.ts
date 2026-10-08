@@ -100,7 +100,7 @@ export const keys = {
   adminBoards: ["admin", "boards"] as const,
   adminSettings: ["admin", "settings"] as const,
   adminBackups: ["admin", "backups"] as const,
-  accessTokens: (boardId: string) => ["admin", "access-tokens", boardId] as const,
+  accessTokens: ["admin", "access-tokens"] as const,
 };
 
 export function useMe() {
@@ -246,21 +246,21 @@ export function upsertCardInBoard(qc: ReturnType<typeof useQueryClient>, slug: s
 export function useAdminBoards() {
   return useQuery({ queryKey: keys.adminBoards, queryFn: () => request<Board[]>("/admin/boards") });
 }
-export function useAccessTokens(boardId: string) {
-  return useQuery({ queryKey: keys.accessTokens(boardId), queryFn: () => request<AccessToken[]>(`/admin/boards/${boardId}/tokens`) });
+export function useAccessTokens() {
+  return useQuery({ queryKey: keys.accessTokens, queryFn: () => request<AccessToken[]>("/admin/tokens") });
 }
-export function useCreateAccessToken(boardId: string) {
+export function useCreateAccessToken() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => request<CreatedAccessToken>(`/admin/boards/${boardId}/tokens`, { method: "POST", body: JSON.stringify({ name }) }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.accessTokens(boardId) }),
+    mutationFn: (name: string) => request<CreatedAccessToken>("/admin/tokens", { method: "POST", body: JSON.stringify({ name }) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.accessTokens }),
   });
 }
-export function useRevokeAccessToken(boardId: string) {
+export function useRevokeAccessToken() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (tokenId: string) => request(`/admin/boards/${boardId}/tokens/${tokenId}`, { method: "DELETE" }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.accessTokens(boardId) }),
+    mutationFn: (tokenId: string) => request(`/admin/tokens/${tokenId}`, { method: "DELETE" }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.accessTokens }),
   });
 }
 export function useAdminSettings() {
