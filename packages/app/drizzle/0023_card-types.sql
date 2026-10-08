@@ -1,0 +1,1 @@
+ALTER TABLE `cards` ADD `type` text DEFAULT 'task' NOT NULL;

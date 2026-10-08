@@ -71,6 +71,16 @@ describe("creating a card", () => {
     assert.equal(ready.creatorKind, "user");
     assert.equal(ready.creatorId, "user");
   });
+
+  it("makes it a task unless the User picks a type, and lets the type change", async () => {
+    assert.equal((await newCard()).type, "task");
+    const idea = await newCard({ title: "Offline mode", type: "idea" });
+    assert.equal(idea.type, "idea");
+    const res = await call("PATCH", `/cards/${idea.id}`, { type: "feature", revision: idea.revision });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as Card).type, "feature");
+    assert.equal((await call("POST", "/boards/board-one/cards", { title: "Epic", type: "epic" })).status, 400);
+  });
 });
 
 describe("editing a comment", () => {

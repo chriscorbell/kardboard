@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import type { Card, Column, Priority } from "@kardboard/shared";
+import type { Card, CardType, Column, Priority } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
@@ -20,6 +20,7 @@ async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card
     boardId: r.boardId,
     title: r.title,
     description: r.description,
+    type: r.type,
     priority: r.priority,
     column: r.column,
     position: r.position,
@@ -114,6 +115,7 @@ export async function createCard(input: {
   boardId: string;
   title: string;
   description: string;
+  type?: CardType;
   priority: Priority;
   column: Column;
   actor: Actor;
@@ -127,6 +129,7 @@ export async function createCard(input: {
     boardId: input.boardId,
     title: input.title,
     description: input.description,
+    type: input.type ?? "task",
     priority: input.priority,
     column: input.column,
     position: await edgePosition(input.boardId, input.column, input.at ?? "bottom"),
@@ -151,6 +154,7 @@ export async function updateCard(
   input: {
     title?: string;
     description?: string;
+    type?: CardType;
     priority?: Priority;
     revision: number;
     actor: Actor;
@@ -163,6 +167,7 @@ export async function updateCard(
   if (input.title !== undefined && input.title !== current.title) changed.title = input.title;
   if (input.description !== undefined && input.description !== current.description)
     changed.description = input.description;
+  if (input.type !== undefined && input.type !== current.type) changed.type = input.type;
   if (input.priority !== undefined && input.priority !== current.priority) changed.priority = input.priority;
   if (Object.keys(changed).length === 0) return current;
   // The revision is checked by the statement that writes, not only by the read above, so two edits
@@ -175,7 +180,7 @@ export async function updateCard(
   if (written.length === 0) throw new ConflictError("card changed since you loaded it");
   const card = (await getCard(id))!;
   // What each changed field said before, so no edit, a person's or the Agent's, loses an author's words.
-  const previous = Object.fromEntries(Object.keys(changed).map((field) => [field, current[field as "title" | "description" | "priority"]]));
+  const previous = Object.fromEntries(Object.keys(changed).map((field) => [field, current[field as "title" | "description" | "type" | "priority"]]));
   await recordEvent({
     boardId: card.boardId,
     cardId: card.id,

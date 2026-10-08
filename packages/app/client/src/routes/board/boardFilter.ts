@@ -1,4 +1,4 @@
-import { PRIORITIES, type Card, type Priority } from "@kardboard/shared";
+import { CARD_TYPES, PRIORITIES, type Card, type CardType, type Priority } from "@kardboard/shared";
 
 // The board toolbar's search and filters. They narrow the Cards already loaded, and live in the URL
 // query so a reload, a shared link, or opening and closing a Card keeps them.
@@ -8,19 +8,22 @@ export type BoardFilter = {
   mine: boolean;
   /** Cards waiting on the User: a question for them, or a change to review. */
   needsMe: boolean;
+  type: CardType | null;
   priority: Priority | null;
 };
 
-export const NO_FILTER: BoardFilter = { q: "", mine: false, needsMe: false, priority: null };
+export const NO_FILTER: BoardFilter = { q: "", mine: false, needsMe: false, type: null, priority: null };
 
-const KEYS = { q: "q", mine: "mine", needsMe: "needs", priority: "priority" } as const;
+const KEYS = { q: "q", mine: "mine", needsMe: "needs", type: "type", priority: "priority" } as const;
 
 export function readFilter(params: URLSearchParams): BoardFilter {
   const priority = params.get(KEYS.priority);
+  const type = params.get(KEYS.type);
   return {
     q: params.get(KEYS.q) ?? "",
     mine: params.get(KEYS.mine) === "1",
     needsMe: params.get(KEYS.needsMe) === "1",
+    type: (CARD_TYPES as readonly string[]).includes(type ?? "") ? (type as CardType) : null,
     priority: (PRIORITIES as readonly string[]).includes(priority ?? "") ? (priority as Priority) : null,
   };
 }
@@ -32,12 +35,13 @@ export function writeFilter(filter: BoardFilter, params: URLSearchParams): URLSe
   set(KEYS.q, filter.q);
   set(KEYS.mine, filter.mine ? "1" : null);
   set(KEYS.needsMe, filter.needsMe ? "1" : null);
+  set(KEYS.type, filter.type);
   set(KEYS.priority, filter.priority);
   return next;
 }
 
 export function filterActive(filter: BoardFilter): boolean {
-  return filter.q.trim() !== "" || filter.mine || filter.needsMe || filter.priority !== null;
+  return filter.q.trim() !== "" || filter.mine || filter.needsMe || filter.type !== null || filter.priority !== null;
 }
 
 export type Viewer = { id: string };
@@ -59,6 +63,7 @@ export function matchesQuery(card: Card, q: string): boolean {
 export function matchesFilter(card: Card, filter: BoardFilter, viewer: Viewer): boolean {
   if (filter.mine && !(card.creatorKind === "user" && card.creatorId === viewer.id)) return false;
   if (filter.needsMe && !waitsOn(card)) return false;
+  if (filter.type && card.type !== filter.type) return false;
   if (filter.priority && card.priority !== filter.priority) return false;
   return matchesQuery(card, filter.q);
 }

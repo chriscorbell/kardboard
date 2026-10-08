@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Paperclip, Upload } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type Card, type Column, type Priority } from "@kardboard/shared";
+import { CARD_TYPES, CARD_TYPE_LABELS, COLUMNS, COLUMN_LABELS, PRIORITIES, type Card, type CardType, type Column, type Priority } from "@kardboard/shared";
 import { Dialog } from "../../components/Dialog";
-import { Button, Field, Input, Select, Textarea } from "../../components/ui";
+import { Button, cx, Field, Input, Select, Textarea } from "../../components/ui";
 import { commentRequests, useCreateCard } from "../../lib/api";
 import { postComment, UploadFailed, type PostProgress } from "../../lib/commentPost";
 import { filesFromPaste, useFileDrop } from "../../lib/fileInput";
 import { partitionBySize, tooLargeMessage } from "../../lib/files";
 import { useCoarsePointer } from "../../lib/pointer";
 import { toast } from "../../lib/toast";
+import { CARD_TYPE_LOOK } from "./cardTypes";
 import { attachmentOnlyBody, FileChips } from "./Composer";
 
 const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "Low", medium: "Medium", high: "High" };
@@ -21,6 +22,7 @@ type Upload = { card: Card; progress: PostProgress<File> | null; fractions: Read
 export function NewCardDialog({ slug, open, onClose, onCreated }: { slug: string; open: boolean; onClose: () => void; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [type, setType] = useState<CardType>("task");
   const [priority, setPriority] = useState<Priority>("none");
   const [column, setColumn] = useState<Column>("inbox");
   const [files, setFiles] = useState<File[]>([]);
@@ -46,6 +48,7 @@ export function NewCardDialog({ slug, open, onClose, onCreated }: { slug: string
       submitting.current = false;
       setTitle("");
       setDescription("");
+      setType("task");
       setPriority("none");
       setColumn("inbox");
       setFiles([]);
@@ -108,7 +111,7 @@ export function NewCardDialog({ slug, open, onClose, onCreated }: { slug: string
     submitting.current = true;
     try {
       if (upload) return await sendFiles(upload, at);
-      const card = await create.mutateAsync({ title, description, priority, column });
+      const card = await create.mutateAsync({ title, description, type, priority, column });
       if (files.length === 0) return finish(card, at);
       await sendFiles({ card, progress: null, fractions: new Map(), error: null }, at);
     } catch {
@@ -174,6 +177,7 @@ export function NewCardDialog({ slug, open, onClose, onCreated }: { slug: string
             </p>
           ) : null}
         </div>
+        <TypePicker value={type} onChange={setType} disabled={locked} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Priority">
             <Select value={priority} onChange={(e) => setPriority(e.target.value as Priority)} disabled={locked}>
@@ -235,5 +239,51 @@ export function NewCardDialog({ slug, open, onClose, onCreated }: { slug: string
         </AnimatePresence>
       </form>
     </Dialog>
+  );
+}
+
+// The five types side by side, each in its own color, so picking one is a single click rather than a
+// list to open. Arrow keys move between them, as in any radio group.
+function TypePicker({ value, onChange, disabled }: { value: CardType; onChange: (t: CardType) => void; disabled: boolean }) {
+  return (
+    <div>
+      <p id="new-card-type" className="mb-1.5 text-[13px] font-medium text-ink-muted">
+        Type
+      </p>
+      <div role="radiogroup" aria-labelledby="new-card-type" className="flex flex-wrap gap-1.5">
+        {CARD_TYPES.map((t) => {
+          const look = CARD_TYPE_LOOK[t];
+          const Icon = look.icon;
+          const on = t === value;
+          return (
+            <button
+              key={t}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              tabIndex={on ? 0 : -1}
+              disabled={disabled}
+              onClick={() => onChange(t)}
+              onKeyDown={(e) => {
+                const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+                if (!step) return;
+                e.preventDefault();
+                const next = CARD_TYPES[(CARD_TYPES.indexOf(t) + step + CARD_TYPES.length) % CARD_TYPES.length]!;
+                onChange(next);
+                (e.currentTarget.parentElement?.querySelector(`[data-type="${next}"]`) as HTMLElement | null)?.focus();
+              }}
+              data-type={t}
+              className={cx(
+                "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] disabled:opacity-50",
+                on ? cx(look.soft, look.text, "font-medium") : "border-line text-ink-muted hover:border-line-strong hover:text-ink",
+              )}
+            >
+              <Icon className={cx("size-3.5", on ? look.text : "")} strokeWidth={1.75} aria-hidden="true" />
+              {CARD_TYPE_LABELS[t]}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

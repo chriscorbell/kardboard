@@ -8,7 +8,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { inArray, sql } from "drizzle-orm";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, slugify, upsertBoardSchema, type AccessToken, type Board, type Card } from "@kardboard/shared";
+import { CARD_TYPES, COLUMNS, COLUMN_LABELS, PRIORITIES, slugify, upsertBoardSchema, type AccessToken, type Board, type Card } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
 import { createBoard, findBoard, getBoardById, getBoardBySlug, listAllBoards } from "../services/boards.js";
@@ -30,7 +30,7 @@ async function boardSnapshot(board: Board, includeAllDone: boolean) {
   const cards = await listCards(board.id);
   const waiting = await repliesWaiting(cards.map((c) => c.id));
   const users = await getUsersByIds(cards.map((c) => c.creatorId).filter((x): x is string => Boolean(x)));
-  const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, replyWaiting: waiting.has(c.id), updatedAt: c.updatedAt });
+  const summary = (c: (typeof cards)[number]) => ({ id: c.id, title: c.title, type: c.type, revision: c.revision, priority: c.priority, creator: c.creatorId ? users.get(c.creatorId)?.name : c.creatorKind, parentCardId: c.parentCardId, branch: c.branch, prUrl: c.prUrl, replyWaiting: waiting.has(c.id), updatedAt: c.updatedAt });
   const done = cards.filter((c) => c.column === "done").sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   const shownDone = includeAllDone ? done : done.slice(0, DONE_SHOWN);
   const grouped = Object.fromEntries(COLUMNS.map((col) => [col, (col === "done" ? shownDone : cards.filter((c) => c.column === col)).map(summary)]));
@@ -107,7 +107,7 @@ Read get_board when you start, and read every card it marks replyWaiting: the pe
 
 Keep the board true to the work. Find or create the card for what you are asked to do before starting it, and move it to In Progress. If you need the person's answer, ask in a comment and move the card to Blocked. Once its pull request is open, record it with link_pull_request and move the card to Review. When you have merged the pull request, move the card to Done with merged set. Every edit and move takes the revision you last read: if the card changed since, read it again before deciding.
 
-File side-findings without asking. When you notice something worth doing that is outside the task at hand, such as a bug, a cleanup, or an idea, create a card for it in Backlog on the board it belongs to, and say so in one line of your reply, like "Filed on kardboard: <title>". Give it a title that says what it asks for, and a description someone can act on without this conversation: where you found it, the files involved, and the card you were working on. Do not file what you are about to fix as part of the current task, and do not file the same thing twice: check the board first.`;
+File side-findings without asking. When you notice something worth doing that is outside the task at hand, such as a bug, a cleanup, or an idea, create a card for it in Backlog on the board it belongs to, and say so in one line of your reply, like "Filed on kardboard: <title>". Give it the type that fits, a title that says what it asks for, and a description someone can act on without this conversation: where you found it, the files involved, and the card you were working on. Do not file what you are about to fix as part of the current task, and do not file the same thing twice: check the board first.`;
 
 const text = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
 
@@ -166,7 +166,7 @@ function buildTokenServer(token: AccessToken): McpServer {
   server.registerTool(
     "get_board",
     {
-      description: `A board's name and repository, and every card on it grouped by column, with creator names and each card's revision. replyWaiting marks a card where the person has commented since you last did: read it with get_card. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
+      description: `A board's name and repository, and every card on it grouped by column, with its type, its creator's name, and its revision. replyWaiting marks a card where the person has commented since you last did: read it with get_card. Done lists only the ${DONE_SHOWN} most recently changed cards unless include_all_done is true; doneOmitted says how many were left out.`,
       inputSchema: { board: boardRef, include_all_done: z.boolean().default(false) },
     },
     async ({ board, include_all_done }) => text(await boardSnapshot(await boardNamed(board), include_all_done)),
@@ -190,12 +190,12 @@ function buildTokenServer(token: AccessToken): McpServer {
   server.registerTool(
     "create_card",
     {
-      description: "Create a card on a board. A new request or a side-finding goes in Backlog, column inbox; one already understood well enough to start goes in Ready. Give it a title that says what it asks for, and a description with what someone picking it up needs. A column reads top down, so position top puts the card first, as what to take next; it goes to the bottom otherwise.",
-      inputSchema: { board: boardRef, title: z.string().trim().min(1).max(200), description: z.string().max(20_000).default(""), column: z.enum(COLUMNS).default("inbox"), priority: z.enum(PRIORITIES).default("none"), position: z.enum(["top", "bottom"]).default("bottom") },
+      description: "Create a card on a board. A new request or a side-finding goes in Backlog, column inbox; one already understood well enough to start goes in Ready. Give it the type that fits: bug for something broken, feature for something new it should do, task for work to get done, idea for something worth considering, chore for upkeep such as dependencies and cleanup. Give it a title that says what it asks for, and a description with what someone picking it up needs. A column reads top down, so position top puts the card first, as what to take next; it goes to the bottom otherwise.",
+      inputSchema: { board: boardRef, title: z.string().trim().min(1).max(200), description: z.string().max(20_000).default(""), type: z.enum(CARD_TYPES).default("task"), column: z.enum(COLUMNS).default("inbox"), priority: z.enum(PRIORITIES).default("none"), position: z.enum(["top", "bottom"]).default("bottom") },
     },
-    async ({ board, title, description, column, priority, position }) => {
+    async ({ board, title, description, type, column, priority, position }) => {
       const target = await boardNamed(board);
-      const card = await createCard({ boardId: target.id, title, description, priority, column, actor, at: position });
+      const card = await createCard({ boardId: target.id, title, description, type, priority, column, actor, at: position });
       return text({ cardId: card.id, board: target.slug, revision: card.revision });
     },
   );
@@ -204,26 +204,27 @@ function buildTokenServer(token: AccessToken): McpServer {
   server.registerTool(
     "update_card",
     {
-      description: "Change a card's title, description, or priority. When you rewrite a card the person wrote, keep everything they asked for, and say what you changed in a comment. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again.",
+      description: "Change a card's title, description, type, or priority. When you rewrite a card the person wrote, keep everything they asked for, and say what you changed in a comment. Pass the revision from your latest get_card or get_board: if the card has changed since, the edit is refused and you should read it again.",
       inputSchema: {
         card_id: z.string(),
         title: z.string().trim().min(1).max(200).optional(),
         description: z.string().max(20_000).optional(),
+        type: z.enum(CARD_TYPES).optional(),
         priority: z.enum(PRIORITIES).optional(),
         revision: z.number().int().nonnegative(),
       },
     },
-    async ({ card_id, title, description, priority, revision }) => {
+    async ({ card_id, title, description, type, priority, revision }) => {
       await cardNamed(card_id);
-      if (title === undefined && description === undefined && priority === undefined) throw new Error("nothing to change: pass a title, a description, or a priority");
+      if (title === undefined && description === undefined && type === undefined && priority === undefined) throw new Error("nothing to change: pass a title, a description, a type, or a priority");
       let card;
       try {
-        card = await updateCard(card_id, { title, description, priority, revision, actor });
+        card = await updateCard(card_id, { title, description, type, priority, revision, actor });
       } catch (err) {
         if (err instanceof ConflictError) throw await conflict(card_id, revision);
         throw err;
       }
-      return text({ cardId: card.id, revision: card.revision, title: card.title, priority: card.priority });
+      return text({ cardId: card.id, revision: card.revision, title: card.title, type: card.type, priority: card.priority });
     },
   );
 

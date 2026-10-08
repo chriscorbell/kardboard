@@ -24,6 +24,7 @@ Nothing on a board starts on its own. You decide which agent works on what, and 
 ## Features
 
 - **Six fixed columns** with clear meanings: Backlog, Blocked, Ready, In Progress, Review, Done.
+- **Card types**: every card is a bug, feature, task, idea, or chore, each with its own color and icon, so a board sorts itself at a glance.
 - **Cards** with Markdown descriptions, priority, comments, and file attachments you can pick, paste, or drop, including on a new card. Search and filters, and a Done column that stays a narrow strip until you open it, and then folds its older cards.
 - **Questions you can see**: a card in Blocked pins the agent's question and says it needs your answer, and the agent sees which cards you have answered since it last looked.
 - **One agent identity** across all boards, with a configurable name and avatar (the default is Milo), so the board always tells your words from your agents'.

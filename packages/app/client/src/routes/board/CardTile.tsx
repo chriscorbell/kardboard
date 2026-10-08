@@ -2,6 +2,7 @@ import { forwardRef, type HTMLAttributes } from "react";
 import { GitPullRequest, MessageCircleQuestion, MessageSquare } from "lucide-react";
 import type { AgentProfile, Card, Person } from "@kardboard/shared";
 import { Avatar, cx } from "../../components/ui";
+import { TypeLabel } from "./cardTypes";
 
 const PRIORITY: Record<Card["priority"], { label: string; className: string } | null> = {
   none: null,
@@ -40,6 +41,7 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
         </p>
       ) : null}
       <div className="mt-2 flex items-center gap-2.5 text-[12px] text-ink-faint">
+        <TypeLabel type={card.type} />
         {priority ? <span className={cx("font-medium", priority.className)}>{priority.label}</span> : null}
         {card.commentCount > 0 ? (
           <span className="inline-flex items-center gap-1">
