@@ -3,7 +3,10 @@
 @import "@fontsource-variable/geist-mono";
 
 @theme {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  /* SF Pro on Apple devices, as their system font: Apple's license does not allow serving it as a web
+     font. `-apple-system` names it in Safari and Firefox, `BlinkMacSystemFont` in Chrome. Everywhere
+     else, the bundled Geist. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
   /*
@@ -55,7 +58,6 @@
     font-family: var(--font-sans);
     font-size: 14px;
     line-height: 1.5;
-    font-feature-settings: "ss01" on;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
