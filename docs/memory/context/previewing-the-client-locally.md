@@ -1,14 +1,14 @@
 # Previewing the client locally
 
-Read when: checking a client change in a browser on the Mac, especially from an agent's browser pane or any launcher that sets `PORT`.
+Read when: checking a client change in a browser, especially from an agent's browser pane or any launcher that sets `PORT`, or taking a screenshot of the app from a script.
 
 Status: verified
-Scope: component, `packages/app`, local development on the Mac
-Verified: 2026-09-24
+Scope: component, `packages/app`, local development
+Verified: 2026-10-07, running the command below on agent-pc
 Source: `packages/app/server/src/env.ts`, `packages/app/vite.config.ts`, `packages/app/client/src/lib/auth.tsx`
 Recheck when: `env.ts` stops reading `PORT` or `.env`, the Vite proxy target changes, or `packages/app/.env` stops setting `KARDBOARD_AUTH=clerk`
 
-The checked-out `packages/app/.env` sets `KARDBOARD_AUTH=clerk` with real Clerk keys, so a plain `pnpm dev` asks for a Clerk sign-in. Neither `process.loadEnvFile` nor Vite overwrites a variable already in the environment, so dev auth and a throwaway database come from the command line without touching `.env`, which a Session never edits:
+The checked-out `packages/app/.env` sets `KARDBOARD_AUTH=clerk` with real Clerk keys, so a plain `pnpm dev` asks for a Clerk sign-in. Neither `process.loadEnvFile` nor Vite overwrites a variable already in the environment, so dev auth and a throwaway database come from the command line without touching `.env`:
 
 ```bash
 cd packages/app && PORT=3070 KARDBOARD_AUTH=dev CLERK_SECRET_KEY= VITE_CLERK_PUBLISHABLE_KEY= KARDBOARD_DATA_DIR=<scratch dir> pnpm dev
@@ -16,4 +16,6 @@ cd packages/app && PORT=3070 KARDBOARD_AUTH=dev CLERK_SECRET_KEY= VITE_CLERK_PUB
 
 `PORT=3070` matters when the launcher exports `PORT` for the port it watches, as the Claude desktop app's browser pane does with 5173: the API server reads `PORT`, binds Vite's port, and every `/api` call through Vite's proxy to 3070 fails with `ECONNREFUSED` while the page stays blank.
 
-A fresh data directory seeds demo boards. To show UI that needs a particular state, write rows into `<scratch dir>/kardboard.db` with `sqlite3`; for example a Blocked Card shows the "is asking" panel when its latest Comment other than kardboard's system notices has `author_kind = 'agent'` (`awaitingReply` in `server/src/services/cards.ts`). Observed 2026-09-24 while checking the Blocked question layout.
+A fresh data directory seeds demo boards. To show UI that needs a particular state, write rows into `<scratch dir>/kardboard.db` with `sqlite3`; for example a Blocked Card shows the "is asking" panel when its latest Comment other than kardboard's system notices has `author_kind = 'agent'` (`awaitingReply` in `server/src/services/cards.ts`). Observed 2026-09-24 while checking the Blocked question layout. The seed already has one such Card, "Swap the hero photography" on the Portfolio site Board, and `PATCH /api/me` with `{"onboarded": true}` hides the Board explainer.
+
+Screenshots from a script: `google-chrome --headless=new --screenshot` captures before the app has loaded its data, and `--virtual-time-budget` never settles on a Board page, whose event stream stays open, so both give a blank page or a skeleton. Drive Chrome over the DevTools protocol instead: start it with `--remote-debugging-port`, open the page's WebSocket from `/json`, `Page.navigate`, wait a few seconds, run any clicks through `Runtime.evaluate`, then `Page.captureScreenshot`; `Emulation.setDeviceMetricsOverride` sets the size and a `deviceScaleFactor` of 2 for README images. Node 24's built-in `WebSocket` is enough, with no package. Found 2026-10-07 on agent-pc while taking the README screenshots.

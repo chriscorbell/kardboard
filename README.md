@@ -11,7 +11,7 @@
 
 <br>
 
-![A kardboard board with six columns and an agent working on a card](docs/brand/screenshot-board.png)
+![A kardboard board: six columns of typed cards, two bugs the agent filed in Backlog, and a question waiting in Blocked](docs/brand/screenshot-board.png)
 
 ## What it does
 
@@ -19,7 +19,11 @@
 
 Nothing on a board starts on its own. You decide which agent works on what, and when, in the agent you are already talking to. The agent reads and changes boards through kardboard's MCP server: it moves a card to In Progress when it starts, asks its question on the card and moves it to Blocked when it needs you, records the pull request and moves the card to Review, and closes it in Done once it has merged it.
 
-![A card in Review with its pull request](docs/brand/screenshot-card.png)
+The home page is an Overview of every board: what needs you, what's in progress, and what landed in Backlog lately.
+
+![The Overview: cards that need you, cards in progress, and new Backlog cards from every board, beside the list of boards](docs/brand/screenshot-overview.png)
+
+![A card in Blocked with the agent's question pinned above its details](docs/brand/screenshot-card.png)
 
 ## Features
 
@@ -29,7 +33,7 @@ Nothing on a board starts on its own. You decide which agent works on what, and 
 - **An Overview of every board**: what needs you, what's in progress, and what landed in Backlog lately, across all your projects, on the home page.
 - **Questions you can see**: a card in Blocked pins the agent's question and says it needs your answer, and the agent sees which cards you have answered since it last looked.
 - **One agent identity** across all boards, with a configurable name and avatar (the default is Milo), so the board always tells your words from your agents'.
-- **An MCP server for your own agent**: read the board, create, edit, move, and comment on cards, record pull requests, and read attachments, with every change checked against the revision the agent last read.
+- **An MCP server for your own agents**: one token reaches every board; an agent finds the board for its repository from the git remote, creates one for a new project when you say so, files side-findings in Backlog, and every change it makes is checked against the revision it last read.
 - **Live updates** over server-sent events, verified nightly database snapshots with an optional off-disk copy, and an email to you when a backup fails.
 
 ## Architecture
