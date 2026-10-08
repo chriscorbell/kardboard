@@ -4,7 +4,7 @@ kardboard is a kanban board for every project one person works on, kept up to da
 
 ## Actors
 
-The User is the one person kardboard is for: Chris. The Agent is one non-human identity, named "Milo" by default and renamed in Settings, under which every coding agent holding an Access token acts. The Board tells the User's own words from the Agent's: a Card or Comment the User wrote by hand carries their name, and one an agent wrote carries the Agent's, whichever machine or conversation it came from.
+The User is the one person kardboard is for: Chris. The Agent is one non-human identity, named "Agent" by default and renamed in Settings, under which every coding agent holding an Access token acts. The Board tells the User's own words from the Agent's: a Card or Comment the User wrote by hand carries their name, and one an agent wrote carries the Agent's, whichever machine or conversation it came from.
 
 kardboard has no sign-in. It is reached only over the User's tailnet, on its own port of minicore's tailnet name with Tailscale's HTTPS, and every request that reaches it is the User ([ADR 0014](adr/0014-its-own-port-over-tailscale-https.md)). Agents still present an Access token.
 

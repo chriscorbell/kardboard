@@ -32,7 +32,7 @@ The home page is an Overview of every board: what needs you, what's in progress,
 - **Cards** with Markdown descriptions, priority, comments, and file attachments you can pick, paste, or drop, including on a new card. Search and filters, and a Done column that stays a narrow strip until you open it, and then folds its older cards.
 - **An Overview of every board**: what needs you, what's in progress, and what landed in Backlog lately, across all your projects, on the home page.
 - **Questions you can see**: a card in Blocked pins the agent's question and says it needs your answer, and the agent sees which cards you have answered since it last looked.
-- **One agent identity** across all boards, with a configurable name and avatar (the default is Milo), so the board always tells your words from your agents'.
+- **One agent identity** across all boards, with a configurable name and avatar (the default is Agent), so the board always tells your words from your agents'.
 - **An MCP server for your own agents**: one token reaches every board; an agent finds the board for its repository from the git remote, creates one for a new project when you say so, files side-findings in Backlog, and every change it makes is checked against the revision it last read.
 - **Live updates** over server-sent events, verified nightly database snapshots with an optional off-disk copy, and a warning on the Overview when a backup fails.
 

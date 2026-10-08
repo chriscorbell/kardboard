@@ -11,7 +11,7 @@ The one person kardboard is for, whose projects the Boards track.
 _Avoid_: Admin, Member, owner, client, account
 
 **Agent**:
-The single non-human identity, with its own name and avatar, under which every coding agent holding an Access token acts on every Board. Named "Milo" by default.
+The single non-human identity, with its own name and avatar, under which every coding agent holding an Access token acts on every Board. Named "Agent" by default.
 _Avoid_: Bot, assistant, worker
 
 **Access token**:
