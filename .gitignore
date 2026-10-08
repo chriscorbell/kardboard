@@ -10,4 +10,3 @@ data/
 *.db-*
 .pnpm-store/
 .claude/*
-!.claude/settings.json
