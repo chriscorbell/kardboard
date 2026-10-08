@@ -3,8 +3,8 @@ import type { Settings, AgentProfile } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 
 const DEFAULTS: Settings = {
-  agentName: "Milo",
-  agentAvatarUrl: "/brand/milo.png",
+  agentName: "Agent",
+  agentAvatarUrl: "/brand/agent.png",
 };
 
 export async function getSettings(): Promise<Settings> {
