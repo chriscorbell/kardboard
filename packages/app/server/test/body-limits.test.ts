@@ -8,7 +8,7 @@ import { serve } from "@hono/node-server";
 
 // How large a body the JSON API and the MCP server will read: 1 MB, except an Attachment upload,
 // which keeps its own 25 MB limit. The MCP route needs the raw Node request, so it is served on a
-// real port. Dev authentication signs the API calls in, `X-Dev-User` picking the caller by email.
+// real port. Dev authentication signs the API calls in as the User.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-body-limits-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
@@ -29,31 +29,25 @@ after(() => {
 });
 
 const BOARD = "board-1";
-const ADMIN = "root@example.com";
-const MEMBER = "ada@example.com";
 const MB = 1024 * 1024;
 
 // The Access token the agent calls the MCP server with, made afresh for each test.
 let token = "";
 
 beforeEach(async () => {
-  for (const t of [schema.accessTokens, schema.attachments, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.accessTokens, schema.attachments, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values([
-    { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
-    { id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" },
-  ]);
-  await db.insert(schema.boardMembers).values({ boardId: BOARD, userId: "ada" });
-  await db.insert(schema.cards).values({ id: "card-1", boardId: BOARD, title: "A card", column: "ready", creatorKind: "user", creatorId: "ada" });
-  const made = await call(ADMIN, "POST", `/admin/boards/${BOARD}/tokens`, { name: "Laptop" });
+  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.cards).values({ id: "card-1", boardId: BOARD, title: "A card", column: "ready", creatorKind: "user", creatorId: "user" });
+  const made = await call("POST", `/admin/boards/${BOARD}/tokens`, { name: "Laptop" });
   assert.equal(made.status, 201);
   token = ((await made.json()) as { secret: string }).secret;
 });
 
-function call(as: string, method: string, url: string, body?: unknown) {
+function call(method: string, url: string, body?: unknown) {
   return api.request(url, {
     method,
-    headers: { "x-dev-user": as, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -106,19 +100,19 @@ describe("the MCP server", () => {
 
 describe("the JSON API", () => {
   it("refuses a body over 1 MB", async () => {
-    const res = await call(MEMBER, "POST", "/boards/board-one/cards", { title: "Big", description: "x".repeat(2 * MB) });
+    const res = await call("POST", "/boards/board-one/cards", { title: "Big", description: "x".repeat(2 * MB) });
     assert.equal(res.status, 413);
     assert.deepEqual(await res.json(), { error: "request body exceeds 1 MB" });
     assert.equal((await db.select().from(schema.cards)).length, 1);
   });
 
   it("still takes an Attachment over 1 MB", async () => {
-    const posted = await call(MEMBER, "POST", "/cards/card-1/comments", { body: "Here is the log" });
+    const posted = await call("POST", "/cards/card-1/comments", { body: "Here is the log" });
     assert.equal(posted.status, 201);
     const comment = (await posted.json()) as { id: string };
     const form = new FormData();
     form.append("file", new File(["x".repeat(3 * MB)], "big.log", { type: "text/plain" }));
-    const res = await api.request(`/comments/${comment.id}/attachments`, { method: "POST", headers: { "x-dev-user": MEMBER }, body: form });
+    const res = await api.request(`/comments/${comment.id}/attachments`, { method: "POST", body: form });
     assert.equal(res.status, 201);
     assert.equal(((await res.json()) as { size: number }).size, 3 * MB);
   });

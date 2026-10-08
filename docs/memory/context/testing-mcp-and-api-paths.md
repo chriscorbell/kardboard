@@ -9,4 +9,4 @@ Source: [mcp-tools.test.ts](../../../packages/app/server/test/mcp-tools.test.ts)
 Recheck when: `routes/mcp.ts` stops handing the raw Node request to the SDK transport, or Access tokens stop being made through `POST /admin/boards/:id/tokens`.
 
 - MCP. The route gives the SDK transport the raw Node request and response, so `mcp.request()` cannot drive it. Serve `mcp.fetch` with `@hono/node-server` on port 0, make an Access token through `POST /admin/boards/:id/tokens` with `api.request()`, and connect the SDK's `Client` through `StreamableHTTPClientTransport` with the returned secret as the bearer token. A tool that throws comes back as `isError: true` with the message as its text. Close every client and the server in `after`, or the test run never exits. `access-tokens.test.ts` also shows a bare `initialize` POST for asserting the route's 401 before any tool runs.
-- REST. `api.request()` works directly. Tests run in dev authentication, and `X-Dev-User` picks the caller by email.
+- REST. `api.request()` works directly. Tests run in dev authentication, where every request is the one User.

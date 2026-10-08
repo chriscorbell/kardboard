@@ -18,7 +18,7 @@ const PRIORITY_LABELS: Record<Priority, string> = { none: "No priority", low: "L
 // moments of the Card.
 type Upload = { card: Card; progress: PostProgress<File> | null; fractions: ReadonlyMap<File, number>; error: string | null };
 
-export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slug: string; open: boolean; onClose: () => void; isAdmin: boolean; onCreated: (id: string) => void }) {
+export function NewCardDialog({ slug, open, onClose, onCreated }: { slug: string; open: boolean; onClose: () => void; onCreated: (id: string) => void }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>("none");
@@ -184,17 +184,15 @@ export function NewCardDialog({ slug, open, onClose, isAdmin, onCreated }: { slu
               ))}
             </Select>
           </Field>
-          {isAdmin ? (
-            <Field label="Column">
-              <Select value={column} onChange={(e) => setColumn(e.target.value as Column)} disabled={locked}>
-                {COLUMNS.map((c) => (
-                  <option key={c} value={c}>
-                    {COLUMN_LABELS[c]}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          ) : null}
+          <Field label="Column">
+            <Select value={column} onChange={(e) => setColumn(e.target.value as Column)} disabled={locked}>
+              {COLUMNS.map((c) => (
+                <option key={c} value={c}>
+                  {COLUMN_LABELS[c]}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
         {create.isError ? (
           <p role="alert" className="text-[13px] text-danger">

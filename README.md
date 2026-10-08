@@ -67,7 +67,7 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 | `KARDBOARD_AUTH` | `clerk`, or `dev` for local work. Dev mode signs every request in as the seeded admin, so with `NODE_ENV=production` the app refuses to start unless this is `clerk`. |
 | `CLERK_SECRET_KEY`, `VITE_CLERK_PUBLISHABLE_KEY` | Clerk credentials for `clerk` mode. |
 | `CLERK_JWT_KEY` | Optional. The JWKS Public Key (PEM) from Clerk's API keys page, on one line with `\n` escapes. With it, session tokens are verified without a call to Clerk. |
-| `KARDBOARD_ADMIN_EMAIL` | The first admin, created on first start. |
+| `KARDBOARD_ADMIN_EMAIL` | The one address that can sign in. Its account is created on first start. |
 | `RESEND_API_KEY`, `KARDBOARD_EMAIL_FROM` | Email delivery. Without a key, emails are logged instead of sent. |
 | `KARDBOARD_BACKUP_HOUR`, `KARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |
 | `KARDBOARD_BACKUP_COPY_DIR` | Optional off-disk copy of every snapshot and attachment, such as a NAS share. The directory needs a `.kardboard-backup-target` marker file. |
@@ -85,7 +85,7 @@ External services you need to set up once:
 
 Your own coding agent can read a board and create, edit, move, and comment on cards, as the board's agent.
 
-1. In the admin panel, open the board's settings. Under **Access tokens**, name a token after where it will run and create it.
+1. In Settings, open the board. Under **Access tokens**, name a token after where it will run and create it.
 2. Copy the command shown with the token and run it in the project's folder. It adds the board to Claude Code as an MCP server for that project:
 
    ```bash

@@ -6,93 +6,82 @@ import { newId } from "./ids.js";
 const ADMIN_EMAIL = process.env.KARDBOARD_ADMIN_EMAIL ?? "hi@chriscorbell.com";
 const ADMIN_NAME = process.env.KARDBOARD_ADMIN_NAME ?? "Chris Corbell";
 
-// The first Admin is created from env so a fresh deployment can sign in. Demo content only appears in dev auth mode.
+// The User is created from env so a fresh deployment can sign in. Demo content only appears in dev auth mode.
 export async function ensureSeed(): Promise<void> {
   const userCount = Number((await db.select({ n: sql<number>`count(*)` }).from(schema.users).get())?.n ?? 0);
   if (userCount === 0) {
-    await db.insert(schema.users).values({
-      id: newId(),
-      email: ADMIN_EMAIL.toLowerCase(),
-      handle: "chris",
-      name: ADMIN_NAME,
-      role: "admin",
-      status: env.authMode === "dev" ? "active" : "invited",
-    });
-    console.log(`[seed] created admin ${ADMIN_EMAIL}`);
+    await db.insert(schema.users).values({ id: newId(), email: ADMIN_EMAIL.toLowerCase(), name: ADMIN_NAME });
+    console.log(`[seed] created ${ADMIN_EMAIL}`);
   }
   const boardCount = Number((await db.select({ n: sql<number>`count(*)` }).from(schema.boards).get())?.n ?? 0);
   if (boardCount === 0 && env.authMode === "dev") await seedDemo();
 }
 
+// A few of one person's projects, worked by them and their agent: what a board looks like a few weeks in.
 async function seedDemo(): Promise<void> {
-  const admin = (await db.select().from(schema.users).get())!;
-  const members = [
-    { id: newId(), email: "priya@lumen-studio.example", handle: "priya", name: "Priya Raghunathan", role: "member" as const, status: "active" as const },
-    { id: newId(), email: "tomasz@lumen-studio.example", handle: "tomasz", name: "Tomasz Wierzbicki", role: "member" as const, status: "active" as const },
-    { id: newId(), email: "ines@harbor-and-co.example", handle: "ines", name: "Inês Ferreira", role: "member" as const, status: "invited" as const },
-  ];
-  await db.insert(schema.users).values(members);
-  const [priya, tomasz, ines] = members;
-
-  const lumen = { id: newId(), slug: "lumen", name: "Lumen Studio site", repoUrl: "https://github.com/chriscorbell/lumen-site" };
-  const harbor = { id: newId(), slug: "harbor", name: "Harbor booking app", repoUrl: "https://github.com/chriscorbell/harbor-booking" };
-  await db.insert(schema.boards).values([lumen, harbor]);
-  await db.insert(schema.boardMembers).values([
-    { boardId: lumen.id, userId: priya!.id },
-    { boardId: lumen.id, userId: tomasz!.id },
-    { boardId: harbor.id, userId: ines!.id },
-  ]);
-
+  const me = (await db.select().from(schema.users).get())!;
   const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+
+  const site = { id: newId(), slug: "portfolio", name: "Portfolio site", repoUrl: "https://github.com/chriscorbell/portfolio" };
+  const homelab = { id: newId(), slug: "homelab", name: "Homelab", repoUrl: "https://github.com/chriscorbell/fleet" };
+  const recipes = { id: newId(), slug: "recipes", name: "Recipe box", repoUrl: null };
+  await db.insert(schema.boards).values([site, homelab, recipes]);
+
   type C = typeof schema.cards.$inferInsert;
+  const card = (boardId: string, column: C["column"], position: number, title: string, rest: Partial<C> = {}): C => ({
+    id: newId(),
+    boardId,
+    title,
+    description: "",
+    priority: "none",
+    column,
+    position,
+    creatorKind: "user",
+    creatorId: me.id,
+    createdAt: minutesAgo(60),
+    updatedAt: minutesAgo(30),
+    ...rest,
+  });
+  const agent = { creatorKind: "agent" as const, creatorId: null };
   const cards: C[] = [
-    { id: newId(), boardId: lumen.id, title: "Contact form drops the phone number", description: "When someone fills in the phone field and submits, the email we get has the field blank. Tested in Safari and Chrome.\n\nSteps:\n1. Open /contact\n2. Fill every field\n3. Submit\n\nThe phone line is missing in the notification email.", priority: "high", column: "inbox", position: 1000, creatorKind: "user", creatorId: priya!.id, createdAt: minutesAgo(4), updatedAt: minutesAgo(4) },
-    { id: newId(), boardId: lumen.id, title: "Add a press page with downloadable logo pack", description: "We keep getting asked for logos. A single page with the SVG and PNG versions plus a short brand paragraph would do.", priority: "medium", column: "ready", position: 1000, creatorKind: "user", creatorId: tomasz!.id, createdAt: minutesAgo(180), updatedAt: minutesAgo(60) },
-    { id: newId(), boardId: lumen.id, title: "Swap hero photography for the spring shoot", description: "Assets are in the shared Drive folder \"Spring 2026 hero\". Use the landscape crops.", priority: "medium", column: "blocked", position: 1000, creatorKind: "user", creatorId: priya!.id, createdAt: minutesAgo(400), updatedAt: minutesAgo(300) },
-    { id: newId(), boardId: lumen.id, title: "Case study page for the Meridian rebrand", description: "Long-form page with before/after, three pull quotes, and the process timeline. Copy is final in the doc linked below.", priority: "medium", column: "in_progress", position: 1000, creatorKind: "user", creatorId: tomasz!.id, branch: "kardboard/meridian-case-study", createdAt: minutesAgo(90), updatedAt: minutesAgo(12) },
-    { id: newId(), boardId: lumen.id, title: "Footer newsletter signup", description: "Small email field in the footer that posts to our Buttondown list.", priority: "low", column: "review", position: 1000, creatorKind: "user", creatorId: priya!.id, branch: "kardboard/footer-newsletter", prUrl: "https://github.com/chriscorbell/lumen-site/pull/41", prNumber: 41, createdAt: minutesAgo(1500), updatedAt: minutesAgo(45) },
-    { id: newId(), boardId: lumen.id, title: "Fix the 404 page layout on mobile", description: "The illustration overflows the viewport on phones.", priority: "none", column: "done", position: 1000, creatorKind: "user", creatorId: tomasz!.id, branch: "kardboard/404-mobile", prUrl: "https://github.com/chriscorbell/lumen-site/pull/38", prNumber: 38, createdAt: minutesAgo(4000), updatedAt: minutesAgo(2000) },
-    { id: newId(), boardId: lumen.id, title: "Cookie banner keeps reappearing", description: "Dismissed it three times on my laptop, it comes back on every visit.", priority: "none", column: "done", position: 2000, creatorKind: "user", creatorId: priya!.id, createdAt: minutesAgo(6000), updatedAt: minutesAgo(5000) },
-    { id: newId(), boardId: harbor.id, title: "Double booking when two people pick the same slot", description: "Two customers managed to book the 10:00 slot on Thursday. We need a hard guarantee that a slot can only be booked once.", priority: "high", column: "ready", position: 1000, creatorKind: "user", creatorId: ines!.id, createdAt: minutesAgo(30), updatedAt: minutesAgo(30) },
-    { id: newId(), boardId: harbor.id, title: "Send a reminder email 24 hours before a booking", description: "", priority: "medium", column: "inbox", position: 1000, creatorKind: "user", creatorId: ines!.id, createdAt: minutesAgo(8), updatedAt: minutesAgo(8) },
+    card(site.id, "inbox", 1000, "Contact form drops the phone number on Safari", { ...agent, priority: "high", description: "Found while working on the footer redesign (card \"Footer newsletter signup\").\n\nThe `tel` input loses its value when Safari autofills the form, so the email that arrives has an empty phone line. Chrome and Firefox are fine.\n\n- `src/components/ContactForm.tsx`: the controlled input resets on the autofill `change` event.", createdAt: minutesAgo(12), updatedAt: minutesAgo(12) }),
+    card(site.id, "inbox", 2000, "Image component ships the full-size original to phones", { ...agent, priority: "medium", description: "Found while profiling the case study page. `src/components/Figure.tsx` sets `srcset` but no `sizes`, so phones download the 2400px file.", createdAt: minutesAgo(40), updatedAt: minutesAgo(40) }),
+    card(site.id, "inbox", 3000, "Add a dark-mode toggle to the header", { createdAt: minutesAgo(400), updatedAt: minutesAgo(400) }),
+    card(site.id, "blocked", 1000, "Swap the hero photography for the spring shoot", { priority: "medium", description: "Assets are in the \"Spring 2026 hero\" folder. Use the landscape crops.", createdAt: minutesAgo(600), updatedAt: minutesAgo(300) }),
+    card(site.id, "ready", 1000, "Press page with a downloadable logo pack", { priority: "medium", description: "One page with the SVG and PNG logos and a short brand paragraph.", createdAt: minutesAgo(900), updatedAt: minutesAgo(200) }),
+    card(site.id, "in_progress", 1000, "Case study page for the Meridian rebrand", { priority: "medium", description: "Before and after, three pull quotes, and the process timeline.", branch: "meridian-case-study", createdAt: minutesAgo(1200), updatedAt: minutesAgo(15) }),
+    card(site.id, "review", 1000, "Footer newsletter signup", { priority: "low", description: "An email field in the footer that posts to the Buttondown list.", branch: "footer-newsletter", prUrl: "https://github.com/chriscorbell/portfolio/pull/41", prNumber: 41, createdAt: minutesAgo(1500), updatedAt: minutesAgo(45) }),
+    card(site.id, "done", 1000, "Fix the 404 page layout on mobile", { branch: "404-mobile", prUrl: "https://github.com/chriscorbell/portfolio/pull/38", prNumber: 38, outcome: "implemented", createdAt: minutesAgo(4000), updatedAt: minutesAgo(2000) }),
+    card(homelab.id, "inbox", 1000, "Watchtower restarts containers that opt out of updates", { ...agent, priority: "high", description: "Found while moving the media stack. The opt-out label is set on the service, but Watchtower reads it from the container, and compose only copies labels across on recreate.", createdAt: minutesAgo(90), updatedAt: minutesAgo(90) }),
+    card(homelab.id, "ready", 1000, "Move the NAS backups to the new pool", { priority: "medium", createdAt: minutesAgo(3000), updatedAt: minutesAgo(3000) }),
+    card(homelab.id, "in_progress", 1000, "Put the media stack behind the tunnel", { branch: "media-tunnel", createdAt: minutesAgo(800), updatedAt: minutesAgo(60) }),
+    card(recipes.id, "inbox", 1000, "Scale ingredient amounts by servings", { createdAt: minutesAgo(5000), updatedAt: minutesAgo(5000) }),
+    card(recipes.id, "inbox", 2000, "Import recipes from a URL", { createdAt: minutesAgo(5200), updatedAt: minutesAgo(5200) }),
   ];
   await db.insert(schema.cards).values(cards);
 
-  const [bug, press, hero, meridian, footer, notfound] = cards;
-  const comments: (typeof schema.comments.$inferInsert)[] = [
-    { id: newId(), cardId: hero!.id, authorKind: "agent", authorId: null, body: `@priya I can see the Drive folder but it holds both landscape and square crops at two resolutions. Which set should go on the homepage hero: the 2400px landscape crops, or the 1600px ones? I'll wire the rest once you confirm.`, createdAt: minutesAgo(300) },
-    { id: newId(), cardId: meridian!.id, authorKind: "user", authorId: tomasz!.id, body: "Copy doc: https://docs.google.com/document/d/meridian-final. The pull quotes are highlighted in yellow.", createdAt: minutesAgo(88) },
-    { id: newId(), cardId: footer!.id, authorKind: "agent", authorId: null, body: `@priya The newsletter field is ready for a look in PR #41.\n\nIt posts to the Buttondown list, shows an inline confirmation, and keeps the footer height unchanged on mobile. Tell me when you're happy and I'll merge it.`, createdAt: minutesAgo(45) },
-    { id: newId(), cardId: notfound!.id, authorKind: "agent", authorId: null, body: `@tomasz Merged and deployed. The illustration now scales with the viewport and the page fits on a 360px screen.`, createdAt: minutesAgo(2000) },
-    { id: newId(), cardId: notfound!.id, authorKind: "user", authorId: tomasz!.id, body: "Looks right on my phone, thanks.", createdAt: minutesAgo(1900) },
-    { id: newId(), cardId: press!.id, authorKind: "user", authorId: priya!.id, body: "Logo files are attached to the brand card in the old Trello board, I'll upload them here shortly.", editedAt: minutesAgo(55), createdAt: minutesAgo(60) },
-  ];
-  await db.insert(schema.comments).values(comments);
-  await db.insert(schema.mentions).values([
-    { commentId: comments[0]!.id, userId: priya!.id, notifiedAt: minutesAgo(300) },
-    { commentId: comments[2]!.id, userId: priya!.id, notifiedAt: minutesAgo(45) },
-    { commentId: comments[3]!.id, userId: tomasz!.id, notifiedAt: minutesAgo(2000) },
+  const byTitle = (prefix: string) => cards.find((c) => c.title.startsWith(prefix))!;
+  const hero = byTitle("Swap the hero");
+  const footer = byTitle("Footer newsletter");
+  const meridian = byTitle("Case study page");
+  const notfound = byTitle("Fix the 404");
+  await db.insert(schema.comments).values([
+    { id: newId(), cardId: hero.id, authorKind: "agent", authorId: null, body: "The folder holds landscape and square crops, each at 2400px and 1600px. Which set should the homepage hero use? I'll wire the rest once you say.", createdAt: minutesAgo(300) },
+    { id: newId(), cardId: meridian.id, authorKind: "user", authorId: me.id, body: "The pull quotes are highlighted in the copy doc. Keep the timeline to five steps.", createdAt: minutesAgo(88) },
+    { id: newId(), cardId: footer.id, authorKind: "agent", authorId: null, body: "Ready for a look in #41. The field posts to the Buttondown list, confirms inline, and keeps the footer height the same on mobile.", createdAt: minutesAgo(45) },
+    { id: newId(), cardId: notfound.id, authorKind: "agent", authorId: null, body: "Merged #38. The illustration scales with the viewport and the page fits on a 360px screen.", createdAt: minutesAgo(2000) },
   ]);
 
-  // The signed-in dev Admin needs something behind the bell.
-  await db.insert(schema.notifications).values([
-    { id: newId(), userId: admin.id, boardId: lumen.id, cardId: footer!.id, kind: "mention", title: "Milo mentioned you", body: comments[2]!.body.slice(0, 500), actorName: "Milo", createdAt: minutesAgo(45) },
-    { id: newId(), userId: admin.id, boardId: lumen.id, cardId: meridian!.id, kind: "card_moved", title: "Milo moved your card to In progress", body: "Backlog → In progress", actorName: "Milo", createdAt: minutesAgo(80) },
-    { id: newId(), userId: admin.id, boardId: lumen.id, cardId: notfound!.id, kind: "card_moved", title: "Milo moved your card to Done", body: "Review → Done", actorName: "Milo", readAt: minutesAgo(1900), createdAt: minutesAgo(2000) },
-  ]);
-
-  const ev = (cardId: string, type: string, actorKind: "user" | "agent" | "system", actorId: string | null, payload: Record<string, unknown>, at: string) => ({ id: newId(), boardId: lumen.id, cardId, actorKind, actorId, type, payload, createdAt: at });
+  const ev = (cardId: string, type: string, actorKind: "user" | "agent", payload: Record<string, unknown>, at: string) => ({ id: newId(), boardId: site.id, cardId, actorKind, actorId: actorKind === "user" ? me.id : null, type, payload, createdAt: at });
   await db.insert(schema.events).values([
-    ev(bug!.id, "card.created", "user", priya!.id, { column: "inbox" }, minutesAgo(4)),
-    ev(hero!.id, "card.created", "user", priya!.id, { column: "inbox" }, minutesAgo(400)),
-    ev(hero!.id, "card.moved", "agent", null, { from: "inbox", to: "blocked" }, minutesAgo(300)),
-    ev(meridian!.id, "card.created", "user", tomasz!.id, { column: "inbox" }, minutesAgo(90)),
-    ev(meridian!.id, "card.moved", "agent", null, { from: "inbox", to: "in_progress" }, minutesAgo(80)),
-    ev(footer!.id, "card.created", "user", priya!.id, { column: "inbox" }, minutesAgo(1500)),
-    ev(footer!.id, "card.moved", "agent", null, { from: "in_progress", to: "review" }, minutesAgo(45)),
-    ev(notfound!.id, "card.moved", "agent", null, { from: "review", to: "done" }, minutesAgo(2000)),
+    ev(hero.id, "card.created", "user", { column: "inbox" }, minutesAgo(600)),
+    ev(hero.id, "card.moved", "agent", { from: "inbox", to: "blocked" }, minutesAgo(300)),
+    ev(meridian.id, "card.moved", "agent", { from: "ready", to: "in_progress" }, minutesAgo(80)),
+    ev(footer.id, "card.pr_linked", "agent", { prNumber: 41, prUrl: footer.prUrl }, minutesAgo(46)),
+    ev(footer.id, "card.moved", "agent", { from: "in_progress", to: "review" }, minutesAgo(45)),
+    ev(notfound.id, "card.merged", "agent", { prNumber: 38, prUrl: notfound.prUrl }, minutesAgo(2000)),
+    ev(notfound.id, "card.moved", "agent", { from: "review", to: "done" }, minutesAgo(2000)),
   ]);
-
   console.log("[seed] demo boards created");
 }
 

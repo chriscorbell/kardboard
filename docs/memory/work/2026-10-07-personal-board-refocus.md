@@ -13,7 +13,10 @@ Decisions the Admin made on 2026-10-07 that the ADRs do not spell out:
 - Left for the Admin: uninstalling and deleting both GitHub Apps, revoking the Claude setup-token and the Codex sign-in kardboard used.
 
 Done:
-- Step 1, the decision record: this note and ADRs 0011 and 0012.
+- Step 1, the decision record: this note and ADRs 0011 and 0012 (PR 86).
+- Step 2, Sessions, Approval, and Previews out of the app (PR 87, migration 0019). A verified snapshot was taken on minicore first, `backups/kardboard-before-sessions-removal-20261007T233833Z.db`, also copied to the NAS; production had 92 cards and 69 Session rows.
+- Step 3, the runner, egress proxy, preview router, and agent image out of the repository (PR 88), and off minicore: fleet `8108a35`, the old containers, networks, volumes, and images removed, the `cbn*` firewall rule and its unit removed, 14 Session lines out of `.env` after a dated copy, the Codex sign-in file shredded, and the runner's logs archived under `~/.local/state/kardboard/`. What only the Admin can do (GitHub Apps, provider tokens, the Cloudflare wildcard route) is on card vfkfpnrx.
+- Step 4, single-user (migration 0020): production had one admin and one removed Member who wrote nothing, so deleting non-admin users lost no authorship. The Admin panel became Settings at `/settings`, with `/admin` redirecting; the API paths stay under `/api/admin`.
 
-Next action: step 2, remove Sessions, Approval, and Previews from the app (card rn4yp6cr).
+Next action: step 5, one Access token for every Board (card h7cr8bca). The session that did steps 1 to 4 holds the kardboard MCP tools as they were at its start; after step 5 deploys, `get_board` and `create_card` need a `board` argument its cached schema lacks, so it calls the MCP endpoint with curl instead.
 Close when: every step's card is in Done, the README and design describe the new scope, and minicore runs the app alone.

@@ -29,7 +29,7 @@ One snapshot is taken per day, at `KARDBOARD_BACKUP_HOUR` in the server's timezo
 | `KARDBOARD_BACKUP_DIR` | `<data dir>/backups` | Where snapshots are written |
 | `KARDBOARD_BACKUP_COPY_DIR` | unset | A second directory, off the data disk, that each snapshot and `uploads/` are copied to. Unset copies nothing |
 
-**Admin → Backups** lists the snapshots with their size and age, marks the pre-migration ones, and takes one on demand with *Snapshot now*. Take one before any risky change. The same is available as `GET` and `POST /api/admin/backups`. Its `lastAttempt` says when the most recent daily or on-demand snapshot finished and, if it failed, why; `lastCopy` does the same for the copy off the disk. Both are kept in the database, so they survive a restart.
+**Settings → Backups** lists the snapshots with their size and age, marks the pre-migration ones, and takes one on demand with *Snapshot now*. Take one before any risky change. The same is available as `GET` and `POST /api/admin/backups`. Its `lastAttempt` says when the most recent daily or on-demand snapshot finished and, if it failed, why; `lastCopy` does the same for the copy off the disk. Both are kept in the database, so they survive a restart.
 
 **Alerts.** A failed scheduled snapshot, a failed copy, and a failed pre-migration snapshot each email every active Admin. The scheduler retries a failed snapshot every minute, but the same alert is sent at most once in six hours. Each failure is also in the app's log as `[backup] …`, and `[alert] backup.failed` marks every occurrence, sent or not.
 

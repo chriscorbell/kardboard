@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { BoardDeletionImpact } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { takeSnapshot, type SnapshotResult } from "./backup.js";
@@ -6,7 +6,7 @@ import { removeUnusedUploads } from "./comments.js";
 import { recordEvent, type Actor } from "./events.js";
 import { publish } from "./realtime.js";
 
-// Refused before anything is removed: the message is for the Admin, `status` for the response.
+// Refused before anything is removed: the message is for the User, `status` for the response.
 export class BoardDeletionRefused extends Error {
   constructor(
     message: string,
@@ -32,11 +32,10 @@ export async function boardDeletionImpact(boardId: string): Promise<BoardDeletio
 }
 
 /**
- * Removes a Board for good: its Cards and everything on them, its event log, its Members' access,
- * and each uploaded file nothing else points at. A snapshot is taken first and the delete is refused
+ * Removes a Board for good: its Cards and everything on them, its event log, its Access tokens, and
+ * each uploaded file nothing else points at. A snapshot is taken first and the delete is refused
  * without one, so a Board deleted by mistake can be restored from Backups; for the same reason the
- * off-disk copy of its attachments is left in place. Emails already sent stay on the record; one
- * still waiting that quotes a deleted Comment is not sent.
+ * off-disk copy of its attachments is left in place.
  *
  * `uploadsRemoved` settles once the files are gone: after the snapshot's copy off the disk, which
  * must not miss them.
@@ -60,15 +59,11 @@ export async function deleteBoard(
     const hashes = new Set((await db.select({ sha256: schema.attachments.sha256 }).from(schema.attachments).where(inArray(schema.attachments.commentId, commentsOf(boardId)))).map((a) => a.sha256));
     const cards = await count(db.select({ n: sql<number>`count(*)` }).from(schema.cards).where(eq(schema.cards.boardId, boardId)).get());
     await db.batch([
-      db.delete(schema.notifications).where(eq(schema.notifications.boardId, boardId)),
-      db.delete(schema.mentions).where(inArray(schema.mentions.commentId, commentsOf(boardId))),
       db.delete(schema.attachments).where(inArray(schema.attachments.commentId, commentsOf(boardId))),
       db.delete(schema.commentRevisions).where(inArray(schema.commentRevisions.commentId, commentsOf(boardId))),
-      db.delete(schema.outboundEmails).where(and(inArray(schema.outboundEmails.commentId, commentsOf(boardId)), eq(schema.outboundEmails.status, "pending"))),
       db.delete(schema.comments).where(inArray(schema.comments.cardId, cardsOf(boardId))),
       db.delete(schema.events).where(eq(schema.events.boardId, boardId)),
       db.delete(schema.cards).where(eq(schema.cards.boardId, boardId)),
-      db.delete(schema.boardMembers).where(eq(schema.boardMembers.boardId, boardId)),
       db.delete(schema.accessTokens).where(eq(schema.accessTokens.boardId, boardId)),
       db.delete(schema.boards).where(eq(schema.boards.id, boardId)),
     ]);

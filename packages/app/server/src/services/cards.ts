@@ -4,7 +4,6 @@ import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
 import { recordEvent, type Actor } from "./events.js";
-import { notifyCardMoved } from "./notifications.js";
 
 async function hydrate(rows: (typeof schema.cards.$inferSelect)[]): Promise<Card[]> {
   if (rows.length === 0) return [];
@@ -230,7 +229,6 @@ export async function moveCard(
     });
   }
   publish(card.boardId, { type: "card.upserted", card });
-  if (columnChanged) void notifyCardMoved(card, current.column, input.actor).catch((err) => console.error("[notify] card moved", err));
   return card;
 }
 

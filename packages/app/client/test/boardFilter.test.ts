@@ -30,9 +30,7 @@ function card(over: Partial<Card> = {}): Card {
   };
 }
 
-const ada = { id: "ada", isAdmin: false };
-const grace = { id: "grace", isAdmin: false };
-const root = { id: "root", isAdmin: true };
+const ada = { id: "ada" };
 const filter = (over: Partial<BoardFilter>): BoardFilter => ({ ...NO_FILTER, ...over });
 
 describe("the filter in the URL", () => {
@@ -73,20 +71,18 @@ describe("search", () => {
   });
 });
 
-describe("waiting on the viewer", () => {
-  it("counts a question on the viewer's own card, and every question for the Admin", () => {
-    const question = card({ column: "blocked", awaitingReply: true, creatorId: "ada" });
-    assert.equal(waitsOn(question, ada), true);
-    assert.equal(waitsOn(question, grace), false);
-    assert.equal(waitsOn(question, root), true);
+describe("waiting on the User", () => {
+  it("counts the Agent's question, whoever wrote the card", () => {
+    assert.equal(waitsOn(card({ column: "blocked", awaitingReply: true, creatorId: "ada" })), true);
+    assert.equal(waitsOn(card({ column: "blocked", awaitingReply: true, creatorKind: "agent", creatorId: null })), true);
   });
 
   it("does not count a Blocked card nobody has been asked about", () => {
-    assert.equal(waitsOn(card({ column: "blocked", awaitingReply: false }), ada), false);
+    assert.equal(waitsOn(card({ column: "blocked", awaitingReply: false })), false);
   });
 
-  it("counts a card in Review for anyone", () => {
-    assert.equal(waitsOn(card({ column: "review", creatorId: "someone" }), grace), true);
+  it("counts a card in Review", () => {
+    assert.equal(waitsOn(card({ column: "review" })), true);
   });
 });
 

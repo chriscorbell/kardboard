@@ -27,7 +27,7 @@ const SCREEN_READER_INSTRUCTIONS = {
   draggable: "To open a card, press Enter. To move it, press Space to pick it up, use the arrow keys to move it within or between columns, then press Space again to drop it, or Escape to cancel.",
 };
 
-function SortableCard({ card, creator, agent, questionIsMine, onOpen }: { card: Card; creator: Person | undefined; agent: AgentProfile; questionIsMine: boolean; onOpen: () => void }) {
+function SortableCard({ card, creator, agent, onOpen }: { card: Card; creator: Person | undefined; agent: AgentProfile; onOpen: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, data: { column: card.column } });
   return (
     <CardTile
@@ -35,7 +35,6 @@ function SortableCard({ card, creator, agent, questionIsMine, onOpen }: { card: 
       card={card}
       creator={creator}
       agent={agent}
-      questionIsMine={questionIsMine}
       dragging={isDragging}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className="cursor-grab touch-manipulation active:cursor-grabbing"
@@ -185,7 +184,7 @@ function ColumnLane({
           {held ? (
             <div inert className="pointer-events-none absolute inset-x-1 top-12 opacity-0">
               <SortableContext items={[held.id]} strategy={verticalListSortingStrategy}>
-                <SortableCard card={held} creator={held.creatorId ? people.get(held.creatorId) : undefined} agent={agent} questionIsMine={false} onOpen={() => undefined} />
+                <SortableCard card={held} creator={held.creatorId ? people.get(held.creatorId) : undefined} agent={agent} onOpen={() => undefined} />
               </SortableContext>
             </div>
           ) : null}
@@ -223,7 +222,7 @@ function ColumnLane({
                     exit={dragging ? undefined : { opacity: 0, scale: 0.97 }}
                     transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                   >
-                    <SortableCard card={card} creator={card.creatorId ? people.get(card.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(card, viewer)} onOpen={() => onOpen(card.id)} />
+                    <SortableCard card={card} creator={card.creatorId ? people.get(card.creatorId) : undefined} agent={agent} onOpen={() => onOpen(card.id)} />
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -296,7 +295,7 @@ export function BoardPage() {
   const filter = useMemo(() => readFilter(params), [params]);
   const setFilter = useCallback((next: BoardFilter) => setParams((p) => writeFilter(next, p), { replace: true }), [setParams]);
   const filtering = filterActive(filter);
-  const viewer = useMemo(() => ({ id: me.data?.user.id ?? "", isAdmin: me.data?.user.role === "admin" }), [me.data?.user.id, me.data?.user.role]);
+  const viewer = useMemo(() => ({ id: me.data?.user.id ?? "" }), [me.data?.user.id]);
   const showHelp = helpOpen ?? (me.data !== undefined && me.data.onboardedAt === null);
   const closeHelp = () => {
     setHelpOpen(false);
@@ -349,7 +348,7 @@ export function BoardPage() {
     const map: Record<Column, Card[]> = { inbox: [], blocked: [], ready: [], in_progress: [], review: [], done: [] };
     let waiting = 0;
     for (const c of board.data?.cards ?? []) {
-      if (waitsOn(c, viewer)) waiting++;
+      if (waitsOn(c)) waiting++;
       if (matchesFilter(c, filter, viewer)) map[c.column].push(c);
     }
     for (const col of COLUMNS) map[col].sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
@@ -501,7 +500,6 @@ export function BoardPage() {
       </div>
     );
   }
-  const isAdmin = me.data?.user.role === "admin";
   const agent = board.data.agent;
 
   const helpButton = (className: string) => (
@@ -582,10 +580,10 @@ export function BoardPage() {
           ))}
         </div>
         <DragOverlay dropAnimation={reduce ? null : cardDrop}>
-          {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} questionIsMine={waitsOn(activeCard, viewer)} overlay /> : null}
+          {activeCard ? <CardTile card={activeCard} creator={activeCard.creatorId ? people.get(activeCard.creatorId) : undefined} agent={agent} overlay /> : null}
         </DragOverlay>
       </DndContext>
-      <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} isAdmin={Boolean(isAdmin)} onCreated={openCard} />
+      <NewCardDialog slug={slug} open={creating} onClose={() => setCreating(false)} onCreated={openCard} />
       <CardSheet slug={slug} cardId={cardId ?? null} view={board.data} onClose={closeCard} />
     </div>
   );

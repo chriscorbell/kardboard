@@ -9,8 +9,8 @@ import { serve } from "@hono/node-server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-// Access tokens: made by the Admin through the REST API, used by an agent outside kardboard over MCP,
-// the way Claude Code on the Admin's own machine would use one.
+// Access tokens: made by the User through the REST API, used by an agent outside kardboard over MCP,
+// the way Claude Code on the User's own machine would use one.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-access-tokens-"));
 process.env.KARDBOARD_DATA_DIR = root;
 process.env.KARDBOARD_AUTH = "dev";
@@ -31,8 +31,6 @@ after(() => {
 });
 
 const BOARD = "board-1";
-const ADMIN = "root@example.com";
-const MEMBER = "ada@example.com";
 
 const clients: Client[] = [];
 afterEach(async () => {
@@ -40,28 +38,24 @@ afterEach(async () => {
 });
 
 beforeEach(async () => {
-  for (const t of [schema.accessTokens, schema.notifications, schema.outboundEmails, schema.events, schema.comments, schema.cards, schema.boardMembers, schema.users, schema.boards]) await db.delete(t);
+  for (const t of [schema.accessTokens, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values([
     { id: BOARD, slug: "board-one", name: "Board one", repoUrl: "https://github.com/acme/widgets" },
     { id: "board-2", slug: "board-two", name: "Board two" },
   ]);
-  await db.insert(schema.users).values([
-    { id: "admin", email: ADMIN, handle: "root", name: "Root", role: "admin", status: "active" },
-    { id: "ada", email: MEMBER, handle: "ada", name: "Ada", role: "member", status: "active" },
-  ]);
-  await db.insert(schema.boardMembers).values({ boardId: BOARD, userId: "ada" });
+  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
 });
 
-function call(as: string, method: string, url: string, body?: unknown) {
+function call(method: string, url: string, body?: unknown) {
   return api.request(url, {
     method,
-    headers: { "x-dev-user": as, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
 
 async function makeToken(boardId = BOARD): Promise<{ id: string; secret: string }> {
-  const res = await call(ADMIN, "POST", `/admin/boards/${boardId}/tokens`, { name: "Laptop" });
+  const res = await call("POST", `/admin/boards/${boardId}/tokens`, { name: "Laptop" });
   assert.equal(res.status, 201);
   const body = (await res.json()) as { accessToken: { id: string }; secret: string };
   return { id: body.accessToken.id, secret: body.secret };
@@ -89,7 +83,7 @@ const json = (result: ToolResult) => JSON.parse(text(result)) as Record<string, 
 const tool = (client: Client, name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
 
 async function card(id: string, values: Partial<typeof schema.cards.$inferInsert> = {}) {
-  await db.insert(schema.cards).values({ id, boardId: BOARD, title: `Card ${id}`, column: "ready", creatorKind: "user", creatorId: "admin", ...values });
+  await db.insert(schema.cards).values({ id, boardId: BOARD, title: `Card ${id}`, column: "ready", creatorKind: "user", creatorId: "user", ...values });
 }
 const row = async (id: string) => (await db.select().from(schema.cards).where(eq(schema.cards.id, id)).get())!;
 
@@ -97,7 +91,7 @@ describe("making an access token", () => {
   it("shows its secret once, and keeps only a hash of it", async () => {
     const { id, secret } = await makeToken();
     assert.match(secret, /^kbat_[A-Za-z0-9_-]{43}$/);
-    const listed = (await (await call(ADMIN, "GET", `/admin/boards/${BOARD}/tokens`)).json()) as Record<string, unknown>[];
+    const listed = (await (await call("GET", `/admin/boards/${BOARD}/tokens`)).json()) as Record<string, unknown>[];
     assert.deepEqual(
       listed.map((t) => Object.keys(t).sort()),
       [["boardId", "createdAt", "id", "lastUsedAt", "name"]],
@@ -107,10 +101,6 @@ describe("making an access token", () => {
     assert.ok(!stored.tokenHash.includes(secret));
   });
 
-  it("is the Admin's alone", async () => {
-    const res = await call(MEMBER, "POST", `/admin/boards/${BOARD}/tokens`, { name: "Mine" });
-    assert.equal(res.status, 403);
-  });
 });
 
 describe("an agent holding an access token", () => {
@@ -137,7 +127,7 @@ describe("an agent holding an access token", () => {
   });
 
   it("edits any card on its Board, keeping the words it replaced", async () => {
-    await card("theirs", { creatorId: "ada", description: "Make the logo bigger" });
+    await card("theirs", { description: "Make the logo bigger" });
     const client = await connect((await makeToken()).secret);
     const result = json(await tool(client, "update_card", { card_id: "theirs", description: "Make the logo 20% bigger", revision: 0 }));
     assert.equal(result.revision, 1);
@@ -150,7 +140,7 @@ describe("an agent holding an access token", () => {
     await card("unanswered");
     await card("untouched");
     const comment = (id: string, cardId: string, authorKind: "user" | "agent" | "system", at: string) =>
-      db.insert(schema.comments).values({ id, cardId, authorKind, authorId: authorKind === "user" ? "admin" : null, body: id, createdAt: at });
+      db.insert(schema.comments).values({ id, cardId, authorKind, authorId: authorKind === "user" ? "user" : null, body: id, createdAt: at });
     await comment("q1", "answered", "agent", "2026-09-29T10:00:00.000Z");
     await comment("a1", "answered", "user", "2026-09-29T10:05:00.000Z");
     await comment("q2", "unanswered", "agent", "2026-09-29T10:00:00.000Z");
@@ -184,7 +174,7 @@ describe("an agent holding an access token", () => {
   });
 
   it("deletes a card the agent created, and only such a card", async () => {
-    await card("persons", { creatorId: "ada" });
+    await card("persons");
     const client = await connect((await makeToken()).secret);
     const made = json(await tool(client, "create_card", { title: "Made by mistake" })).cardId as string;
 
@@ -255,26 +245,13 @@ describe("an agent holding an access token", () => {
     assert.equal(c1.branch, "dark-mode");
     assert.equal(c1.prUrl, "https://github.com/Acme/Widgets/pull/4");
   });
-
-  it("does not tell the Admin about their own card moving, but does tell a Member", async () => {
-    await card("admins", { creatorId: "admin" });
-    await card("adas", { creatorId: "ada" });
-    const client = await connect((await makeToken()).secret);
-    await tool(client, "move_card", { card_id: "admins", column: "review", revision: 0 });
-    await tool(client, "move_card", { card_id: "adas", column: "review", revision: 0 });
-    const told = await db.select().from(schema.notifications);
-    assert.deepEqual(
-      told.map((n) => [n.userId, n.cardId]),
-      [["ada", "adas"]],
-    );
-  });
 });
 
 describe("an access token's standing", () => {
-  it("ends when the Admin revokes it", async () => {
+  it("ends when the User revokes it", async () => {
     const { id, secret } = await makeToken();
     assert.equal((await initialize(secret)).status, 200);
-    assert.equal((await call(ADMIN, "DELETE", `/admin/boards/${BOARD}/tokens/${id}`)).status, 200);
+    assert.equal((await call("DELETE", `/admin/boards/${BOARD}/tokens/${id}`)).status, 200);
     assert.equal((await initialize(secret)).status, 401);
     const [revoked] = await db.select().from(schema.events).where(eq(schema.events.type, "access_token.revoked"));
     assert.equal(revoked?.payload.name, "Laptop");
@@ -282,7 +259,7 @@ describe("an access token's standing", () => {
 
   it("is only ever a token for its own Board", async () => {
     const { id } = await makeToken();
-    assert.equal((await call(ADMIN, "DELETE", `/admin/boards/board-2/tokens/${id}`)).status, 404);
+    assert.equal((await call("DELETE", `/admin/boards/board-2/tokens/${id}`)).status, 404);
     assert.equal((await db.select().from(schema.accessTokens)).length, 1);
   });
 

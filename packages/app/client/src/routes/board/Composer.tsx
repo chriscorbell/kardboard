@@ -1,23 +1,15 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import { Paperclip, Send, X } from "lucide-react";
-import type { AgentProfile, Person } from "@kardboard/shared";
-import { Avatar, Button, cx, IconButton, Textarea } from "../../components/ui";
+import { Button, cx, IconButton, Textarea } from "../../components/ui";
 import type { UploadProgress } from "../../lib/api";
 import { filesFromPaste } from "../../lib/fileInput";
 import { partitionBySize, tooLargeMessage } from "../../lib/files";
 import { fileSize } from "../../lib/format";
 import { useCoarsePointer } from "../../lib/pointer";
 import { composerKeyAction } from "./composerKeys";
-import { mentionCandidates, type MentionCandidate } from "./mentionCandidates";
-import { mentionInsert, mentionsForEditing, mentionsForPosting, nameBook } from "./mentionText";
 
 type Props = {
-  /** Who the @ list offers: people who can open the Board now. */
-  members: Person[];
-  /** Everyone else the Board can name, so a Comment being edited shows their Mentions by name too. */
-  known?: Pick<Person, "handle" | "name">[];
-  agent: AgentProfile;
   onSubmit: (body: string, files: File[], onProgress: UploadProgress) => Promise<void>;
   initialBody?: string;
   submitLabel?: string;
@@ -36,28 +28,19 @@ export function attachmentOnlyBody(count: number): string {
   return count === 1 ? "Attached a file." : "Attached files.";
 }
 
-// A textarea with @mention completion. Typing "@" opens a list of Board members filtered by what follows.
-export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
-  { members, known, agent, onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus, placeholder },
-  handle,
-) {
-  // People are shown by name while writing and posted as @handles; see mentionText.ts.
-  const book = useMemo(() => nameBook([{ handle: agent.name, name: agent.name }, ...members, ...(known ?? [])]), [agent.name, members, known]);
-  const [body, setBody] = useState(() => mentionsForEditing(initialBody, book));
+// A textarea for a Comment, with files picked, pasted, or dropped beside it.
+export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ onSubmit, initialBody = "", submitLabel = "Post", onCancel, allowFiles = true, autoFocus, placeholder }, handle) {
+  const [body, setBody] = useState(initialBody);
   const [files, setFiles] = useState<File[]>([]);
   const [progress, setProgress] = useState<ReadonlyMap<File, number>>(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Something left out of the last pick, paste, or drop, said once rather than dropped silently.
   const [notice, setNotice] = useState<string | null>(null);
-  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
-  const [highlight, setHighlight] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const touch = useCoarsePointer();
   const reduce = useReducedMotion();
-
-  const candidates = useMemo(() => (mention ? mentionCandidates(agent, members, mention.query) : []), [members, mention, agent]);
 
   useEffect(() => {
     const el = ref.current;
@@ -87,29 +70,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     },
   }));
 
-  const detectMention = (value: string, caret: number) => {
-    const before = value.slice(0, caret);
-    const m = /(^|\s)@([a-z0-9._-]*)$/i.exec(before);
-    if (m) {
-      setMention({ start: caret - m[2]!.length - 1, query: m[2]! });
-      setHighlight(0);
-    } else setMention(null);
-  };
-
-  const pick = (person: MentionCandidate) => {
-    if (!mention) return;
-    const text = mentionInsert(person, book);
-    const caret = ref.current?.selectionStart ?? body.length;
-    const next = `${body.slice(0, mention.start)}@${text} ${body.slice(caret)}`;
-    setBody(next);
-    setMention(null);
-    requestAnimationFrame(() => {
-      const pos = mention.start + text.length + 2;
-      ref.current?.setSelectionRange(pos, pos);
-      ref.current?.focus();
-    });
-  };
-
   const canPost = Boolean(body.trim()) || files.length > 0;
 
   const submit = async () => {
@@ -122,7 +82,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     const sentBody = body;
     const sentFiles = files;
     try {
-      await onSubmit(mentionsForPosting(sentBody.trim(), book) || attachmentOnlyBody(sentFiles.length), sentFiles, (file, fraction) => setProgress((p) => new Map(p).set(file, fraction)));
+      await onSubmit(sentBody.trim() || attachmentOnlyBody(sentFiles.length), sentFiles, (file, fraction) => setProgress((p) => new Map(p).set(file, fraction)));
       setBody((b) => (b === sentBody ? "" : b));
       setFiles((fs) => fs.filter((f) => !sentFiles.includes(f)));
       setProgress((p) => new Map([...p].filter(([f]) => !sentFiles.includes(f))));
@@ -139,11 +99,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         ref={ref}
         value={body}
         rows={3}
-        placeholder={placeholder ?? "Write a comment. Use @ to mention someone."}
-        onChange={(e) => {
-          setBody(e.target.value);
-          detectMention(e.target.value, e.target.selectionStart);
-        }}
+        placeholder={placeholder ?? "Write a comment."}
+        onChange={(e) => setBody(e.target.value)}
         onPaste={(e) => {
           if (!allowFiles) return;
           const pasted = filesFromPaste(e);
@@ -154,22 +111,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         onKeyDown={(e) => {
           const handled = composerKeyAction(
             { key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, isComposing: e.nativeEvent.isComposing },
-            { mentionOpen: mention !== null && candidates.length > 0, canCancel: Boolean(onCancel), touch },
+            { canCancel: Boolean(onCancel), touch },
           );
           if (!handled) return;
           if (handled.preventDefault) e.preventDefault();
           switch (handled.action.type) {
-            case "mention-move": {
-              const delta = handled.action.delta;
-              setHighlight((h) => (h + delta + candidates.length) % candidates.length);
-              return;
-            }
-            case "mention-pick":
-              pick(candidates[highlight]!);
-              return;
-            case "mention-close":
-              setMention(null);
-              return;
             case "submit":
               void submit();
               return;
@@ -177,32 +123,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               onCancel?.();
           }
         }}
-        onBlur={() => setTimeout(() => setMention(null), 120)}
         className="pr-3"
       />
-      {mention && candidates.length > 0 ? (
-        <ul className="absolute left-2 z-20 mt-1 w-64 overflow-hidden rounded-card border border-line-strong bg-raised p-1 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.6)]" role="listbox">
-          {candidates.map((c, i) => (
-            <li key={c.handle}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={i === highlight}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  pick(c);
-                }}
-                onMouseEnter={() => setHighlight(i)}
-                className={cx("flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-[13px]", i === highlight ? "bg-overlay text-ink" : "text-ink-muted")}
-              >
-                <Avatar name={c.name} url={c.avatarUrl} size={20} tone={c.agent ? "agent" : "neutral"} />
-                <span className="truncate">{c.name}</span>
-                <span className="ml-auto font-mono text-[11px] text-ink-faint">@{c.handle}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
       {files.length > 0 ? <FileChips files={files} progress={busy ? progress : null} onRemove={busy ? undefined : (i) => setFiles((fs) => fs.filter((_, j) => j !== i))} /> : null}
       {notice ? (
         <p role="status" className="mt-2 text-[12px] text-warn">

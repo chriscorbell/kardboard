@@ -52,7 +52,7 @@ export async function verifySessionToken(token: string, keys: { jwtKey: string; 
 
 type ClerkEmailAddress = { id: string; emailAddress: string; verification: { status: string } | null };
 
-// The address a Clerk user's first sign-in is matched to an Invitation by: the primary address when
+// The address a Clerk user's first sign-in is matched to the User by: the primary address when
 // Clerk has verified it, otherwise another verified one. An unverified address says nothing about
 // who holds it, so a user with none is matched to no one.
 export function signInEmail(user: { primaryEmailAddressId: string | null; emailAddresses: ClerkEmailAddress[] }): string | null {
@@ -60,19 +60,16 @@ export function signInEmail(user: { primaryEmailAddressId: string | null; emailA
   return (verified.find((e) => e.id === user.primaryEmailAddressId) ?? verified[0])?.emailAddress ?? null;
 }
 
-// Only which User a Clerk identity is, never the User itself: status and role are read from the
-// database on every request, so revoking someone or changing their role takes effect at once.
+// Only which User a Clerk identity is, never the User itself, which is read from the database on
+// every request.
 const clerkCache = new Map<string, { userId: string | null; expires: number }>();
 
 export class NotInvitedError extends Error {}
 
 async function resolveUser(c: Context): Promise<User | null> {
   if (env.authMode === "dev") {
-    // Dev mode: every request is the seeded admin, or a user chosen with the X-Dev-User header (email).
-    const email = c.req.header("x-dev-user");
-    const row = email
-      ? await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase())).get()
-      : await db.select().from(schema.users).where(eq(schema.users.role, "admin")).get();
+    // Dev mode: every request is the seeded User.
+    const row = await db.select().from(schema.users).get();
     return row ? toUser(row) : null;
   }
   const header = c.req.header("authorization") ?? "";
@@ -116,12 +113,6 @@ export const requireUser: MiddlewareHandler<{ Variables: AuthVariables }> = asyn
     throw err;
   }
   if (!user) return c.json({ error: "unauthenticated" }, 401);
-  if (user.status === "revoked") return c.json({ error: "not_invited" }, 403);
   c.set("user", user);
-  await next();
-};
-
-export const requireAdmin: MiddlewareHandler<{ Variables: AuthVariables }> = async (c, next) => {
-  if (c.get("user").role !== "admin") return c.json({ error: "forbidden" }, 403);
   await next();
 };
