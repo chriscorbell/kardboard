@@ -116,7 +116,7 @@ export function BoardsTab() {
           {save.isError ? <p className="text-[13px] text-danger">{save.error.message}</p> : null}
           <div className="flex items-center gap-2 pt-1">
             {editing && editing !== "new" ? (
-              <Button type="button" variant="ghost" className="-ml-2 text-danger hover:bg-[rgba(217,130,116,0.1)] hover:text-danger" icon={<Trash2 className="size-4" strokeWidth={1.75} />} onClick={() => setDeleting(editing)}>
+              <Button type="button" variant="ghost" className="-ml-2 text-danger hover:bg-danger/10 hover:text-danger" icon={<Trash2 className="size-4" strokeWidth={1.75} />} onClick={() => setDeleting(editing)}>
                 Delete board
               </Button>
             ) : null}

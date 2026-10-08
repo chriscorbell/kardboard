@@ -18,13 +18,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   ref,
 ) {
   const base =
-    "inline-flex items-center justify-center gap-1.5 rounded-control font-medium whitespace-nowrap select-none transition-[background-color,border-color,color,transform] duration-150 ease-out-expo active:translate-y-px disabled:opacity-50 disabled:pointer-events-none";
+    "inline-flex items-center justify-center gap-1.5 rounded-control font-medium whitespace-nowrap select-none transition-[background-color,border-color,color,transform,filter] duration-150 ease-out-expo active:scale-[0.98] disabled:pointer-events-none";
   const sizes = size === "sm" ? "h-7 px-2.5 text-[13px]" : "h-9 px-3.5 text-sm";
   const variants = {
-    primary: "bg-accent text-accent-ink hover:bg-[#e2ad6c]",
-    secondary: "bg-raised border border-line-strong text-ink hover:bg-overlay hover:border-[#4a463f]",
-    ghost: "text-ink-muted hover:text-ink hover:bg-raised",
-    danger: "bg-transparent border border-line-strong text-danger hover:bg-[rgba(217,130,116,0.1)] hover:border-danger",
+    primary: "bg-accent text-accent-ink hover:brightness-105 disabled:bg-raised disabled:text-ink-faint",
+    secondary: "bg-raised text-ink hover:bg-overlay disabled:text-ink-faint",
+    ghost: "text-ink-muted hover:text-ink hover:bg-raised disabled:opacity-50",
+    danger: "bg-danger/12 text-danger hover:bg-danger/20 disabled:opacity-50",
   }[variant];
   return (
     <button ref={ref} className={cx(base, sizes, variants, className)} disabled={disabled || loading} {...rest}>
@@ -44,7 +44,7 @@ export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTM
       aria-label={label}
       title={label}
       className={cx(
-        "inline-flex size-8 items-center justify-center rounded-control text-ink-muted transition-colors duration-150 hover:bg-raised hover:text-ink active:translate-y-px disabled:opacity-40 disabled:pointer-events-none",
+        "inline-flex size-8 items-center justify-center rounded-control text-ink-muted transition-[background-color,color,transform] duration-150 hover:bg-raised hover:text-ink active:scale-[0.94] disabled:opacity-40 disabled:pointer-events-none",
         className,
       )}
       {...rest}
@@ -76,10 +76,10 @@ export function Chip({ children, tone = "neutral", className }: { children: Reac
   const tones = {
     neutral: "bg-raised text-ink-muted border-line",
     accent: "bg-accent-soft text-accent border-accent/30",
-    ok: "bg-[rgba(143,187,135,0.12)] text-ok border-ok/30",
-    warn: "bg-[rgba(217,178,108,0.12)] text-warn border-warn/30",
-    danger: "bg-[rgba(217,130,116,0.12)] text-danger border-danger/30",
-    info: "bg-[rgba(134,171,201,0.12)] text-info border-info/30",
+    ok: "bg-ok/12 text-ok border-ok/30",
+    warn: "bg-warn/12 text-warn border-warn/30",
+    danger: "bg-danger/12 text-danger border-danger/30",
+    info: "bg-info/12 text-info border-info/30",
   }[tone];
   return <span className={cx("inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[12px] font-medium leading-none", tones, className)}>{children}</span>;
 }
@@ -105,7 +105,7 @@ export function Field({ label, hint, error, children, className }: { label: Reac
 }
 
 const inputBase =
-  "w-full rounded-control border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-ink-faint transition-colors duration-150 hover:border-[#4a463f] focus:border-accent focus:outline-none disabled:opacity-50";
+  "w-full rounded-control border border-line-strong bg-raised px-3 text-sm text-ink placeholder:text-ink-faint transition-colors duration-150 hover:border-line-hover focus:border-accent/60 focus:outline-none disabled:opacity-50";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
   return <input ref={ref} className={cx(inputBase, "h-9", className)} {...rest} />;
