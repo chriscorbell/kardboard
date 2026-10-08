@@ -6,11 +6,11 @@ import crypto from "node:crypto";
  * click in it. A route that already chose one of these headers keeps its own: the attachment
  * route's sandbox policy is stricter than this one.
  *
- * kardboard is served over plain http, so it asks for no HSTS. It withdraws the one it once asked for:
- * on 2026-10-07 it ran behind Tailscale Serve at `https://minicore.saanen-monitor.ts.net` and sent a
- * year of HSTS with `includeSubDomains`, which makes a browser that saw it refuse plain http to every
- * port on minicore, the other apps there included. `max-age=0` over https makes such a browser forget
- * it, and over http a browser ignores the header.
+ * kardboard asks for no HSTS: a policy covers every port of the host name, and other apps on the same
+ * machine may serve plain http. It withdraws the one it once asked for. For a few hours on 2026-10-07
+ * it sent a year of HSTS with `includeSubDomains` from `https://minicore.saanen-monitor.ts.net`, which
+ * makes a browser that saw it refuse plain http to every port on minicore. `max-age=0` over https, on
+ * any port of that name, makes such a browser forget it.
  */
 export function securityHeaders(): MiddlewareHandler {
   const headers: Record<string, string> = {

@@ -1,25 +1,30 @@
 # Reaching kardboard
 
-kardboard is a plain port on minicore, like the other apps there, with no sign-in of its own; see [ADR 0014](../adr/0014-a-plain-port-like-the-other-apps.md).
+kardboard is at `https://minicore.saanen-monitor.ts.net:3071`, on the tailnet only, with no sign-in of its own; see [ADR 0014](../adr/0014-its-own-port-over-tailscale-https.md).
 
 ## How it is wired
 
-- The app listens on 3070 inside its container and is published on host port 3071, on every interface (`3071:3070` in `deploy/compose.yaml`). `ufw` is inactive on minicore, so the port is open to the home network and the tailnet.
-- From any tailnet device it is `http://minicore.saanen-monitor.ts.net:3071`; on the home network, `http://10.0.0.20:3071` as well.
-- Use the full tailnet name. The bare `minicore` is resolved through each machine's search domains in order, and on agent-pc `xode.cc` comes first, so `minicore` there is `minicore.xode.cc`, a Cloudflare address (found 2026-10-07).
-- Nothing routes the public internet to it. The Cloudflare tunnel in fleet's `stacks/cloudflared` routes hostnames to `10.0.0.20` plus a port, set in the Cloudflare dashboard; no route may ever target 3071. The `kardboard.cc` routes to 3070 and 3073 are left over from before 2026-10-07 and reach nothing.
+Two pieces, both on minicore, with the same port number at each end:
 
-## Agents
+1. The app container publishes port 3071 on the host's loopback only (`127.0.0.1:3071:3070` in `deploy/compose.yaml`). Nothing off the machine reaches that port.
+2. Tailscale Serve listens on port 3071 of the tailnet name, with the tailnet's certificate, and proxies to the app. It was set up with `sudo tailscale serve --bg --https=3071 http://127.0.0.1:3071`, which persists across reboots. `tailscale serve status` lists it, and `sudo tailscale serve --https=3071 off` removes it.
 
-An agent reaches the MCP server at `http://minicore.saanen-monitor.ts.net:3071/mcp` with its Access token, from any machine on the tailnet. The install commands in Settings → Agent use the address the page was opened at.
-
-## The HSTS left over from Tailscale Serve
-
-From 2026-10-07, for a few hours, the app ran behind Tailscale Serve at `https://minicore.saanen-monitor.ts.net` and sent `Strict-Transport-Security: max-age=31536000; includeSubDomains`. A browser that loaded it there refuses plain http to `minicore.saanen-monitor.ts.net` on every port, invox's 3050 included, until 2027-10. The app now sends `max-age=0`, which clears that, but only over https. So Serve went on proxying `https://minicore.saanen-monitor.ts.net` to the app (`sudo tailscale serve --bg 3071`) until each browser that saw kardboard there had opened it once, and was then turned off with `sudo tailscale serve --https=443 off`.
-
-A browser that still turns `http://minicore.saanen-monitor.ts.net:3071` into https holds the old policy. In Chrome, delete it under "Delete domain security policies" at `chrome://net-internals/#hsts`. In Safari, on a Mac or an iPhone, clearing its history and website data does it.
+Port 443, the bare `https://minicore.saanen-monitor.ts.net`, belongs to no app.
 
 ## When it does not load
 
-- `curl http://minicore.saanen-monitor.ts.net:3071/healthz` from a tailnet device answers `{"ok":true,"db":"ok"}` when the app is up. On minicore, `curl http://127.0.0.1:3071/healthz`.
-- A renamed tailnet changes the address. Update every agent's MCP URL, and the address in this runbook, the design, and the compose file's header.
+Check from the inside out:
+
+1. The app: on minicore, `curl http://127.0.0.1:3071/healthz` answers `{"ok":true,"db":"ok"}`. If it does not, run `docker compose ps` in `~/docker/stacks/kardboard` and read the app's log.
+2. Serve: on minicore, `tailscale serve status` shows `https://minicore.saanen-monitor.ts.net:3071` proxying to `http://127.0.0.1:3071`.
+3. The tailnet: from the device, `curl https://minicore.saanen-monitor.ts.net:3071/healthz`. If this fails while the first two pass, check that the device is on the tailnet with `tailscale status`.
+
+Use the full name. The bare `minicore` is resolved through each machine's search domains in order. On agent-pc, `xode.cc` comes first, so `minicore` there is `minicore.xode.cc`, a Cloudflare address.
+
+## Agents
+
+An agent reaches the MCP server at `https://minicore.saanen-monitor.ts.net:3071/mcp` with its Access token, from any machine on the tailnet. The install commands in Settings → Agent use the address the page was opened at.
+
+## The HSTS left over from the root address
+
+For a few hours on 2026-10-07, the app at `https://minicore.saanen-monitor.ts.net` sent `Strict-Transport-Security: max-age=31536000; includeSubDomains`. A browser that saw it refuses plain http to every port of that name, such as invox's `http://…:3050`. The app now sends `max-age=0`, and HSTS is kept per host name, not per port, so opening kardboard at its address in that browser clears the old policy. To clear it by hand in Chrome, use "Delete domain security policies" at `chrome://net-internals/#hsts`.

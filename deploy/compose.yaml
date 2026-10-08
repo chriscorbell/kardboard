@@ -1,9 +1,11 @@
 # kardboard stack for minicore. Copy this directory to hosts/minicore/stacks/kardboard in chriscorbell/fleet and run
 # `docker compose up -d`. Watchtower updates the app on each push to main.
 #
-# Like the other apps on minicore, the app is a plain port on the host, reached from the home network
-# and the tailnet at http://minicore.saanen-monitor.ts.net:3071, with no sign-in of its own. Nothing
-# routes the public internet to it; see docs/adr/0014-a-plain-port-like-the-other-apps.md.
+# The app listens on the host's loopback only, and Tailscale Serve gives it HTTPS on the same port
+# number, on the tailnet only:
+#   sudo tailscale serve --bg --https=3071 http://127.0.0.1:3071
+# so it is at https://minicore.saanen-monitor.ts.net:3071, with no sign-in of its own. See
+# docs/adr/0014-its-own-port-over-tailscale-https.md and docs/runbooks/access.md.
 
 name: kardboard
 
@@ -21,10 +23,9 @@ services:
     image: ghcr.io/chriscorbell/kardboard-app:latest
     restart: unless-stopped
     init: true
-    # 3071 on the host, not 3070: the Cloudflare tunnel that served kardboard.cc until 2026-10-07 may
-    # still route to 10.0.0.20:3070, and an app with no sign-in must never be behind it.
+    # Loopback only: Tailscale Serve is the one way in.
     ports:
-      - "3071:3070"
+      - "127.0.0.1:3071:3070"
     environment:
       TZ: America/New_York
       KARDBOARD_ADMIN_EMAIL: ${KARDBOARD_ADMIN_EMAIL}
