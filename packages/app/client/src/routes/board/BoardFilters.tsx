@@ -1,8 +1,10 @@
 import { forwardRef, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ChevronDown, Search, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { CARD_TYPES, CARD_TYPE_LABELS, PRIORITIES, type CardType, type Priority } from "@kardboard/shared";
 import { cx, Kbd } from "../../components/ui";
+import { Select } from "../../components/Select";
+import { CARD_TYPE_LOOK } from "./cardTypes";
 import { useCoarsePointer } from "../../lib/pointer";
 import { filterActive, NO_FILTER, type BoardFilter } from "./boardFilter";
 
@@ -56,9 +58,9 @@ function Toggle({ pressed, onClick, children }: { pressed: boolean; onClick: () 
   );
 }
 
-// Mine, Needs me, Type, and Priority. Type and Priority are native selects dressed as chips: each list
-// opens as the phone's own picker, and is not clipped by the chip row scrolling sideways on a narrow
-// screen.
+// Mine, Needs me, Type, and Priority. Type and Priority are the app's own dropdowns dressed as chips;
+// their lists open above the page, so the chip row scrolling sideways on a narrow screen does not clip
+// them.
 export function FilterChips({ filter, onChange, waiting, className }: { filter: BoardFilter; onChange: (f: BoardFilter) => void; waiting: number; className?: string }) {
   const reduce = useReducedMotion();
   return (
@@ -74,38 +76,22 @@ export function FilterChips({ filter, onChange, waiting, className }: { filter: 
           </span>
         ) : null}
       </Toggle>
-      <label className={cx(chip, "relative pr-1.5", filter.type ? chipOn : chipOff)}>
-        <span className="sr-only">Type</span>
-        <select
-          value={filter.type ?? ""}
-          onChange={(e) => onChange({ ...filter, type: (e.target.value || null) as CardType | null })}
-          className="h-full cursor-pointer appearance-none bg-transparent pr-4 focus:outline-none"
-        >
-          <option value="">Any type</option>
-          {CARD_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {CARD_TYPE_LABELS[t]}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="pointer-events-none absolute right-2 size-3.5" strokeWidth={1.75} aria-hidden="true" />
-      </label>
-      <label className={cx(chip, "relative pr-1.5", filter.priority ? chipOn : chipOff)}>
-        <span className="sr-only">Priority</span>
-        <select
-          value={filter.priority ?? ""}
-          onChange={(e) => onChange({ ...filter, priority: (e.target.value || null) as Priority | null })}
-          className="h-full cursor-pointer appearance-none bg-transparent pr-4 focus:outline-none"
-        >
-          <option value="">Any priority</option>
-          {[...PRIORITIES].reverse().map((p) => (
-            <option key={p} value={p}>
-              {PRIORITY_LABELS[p]}
-            </option>
-          ))}
-        </select>
-        <ChevronDown className="pointer-events-none absolute right-2 size-3.5" strokeWidth={1.75} aria-hidden="true" />
-      </label>
+      <Select
+        label="Type"
+        look="bare"
+        value={filter.type ?? ""}
+        onChange={(v) => onChange({ ...filter, type: (v || null) as CardType | null })}
+        options={[{ value: "", label: "Any type" }, ...CARD_TYPES.map((t) => ({ value: t, label: CARD_TYPE_LABELS[t], icon: <TypeIcon type={t} /> }))]}
+        className={cx(chip, "pr-2", filter.type ? chipOn : chipOff)}
+      />
+      <Select
+        label="Priority"
+        look="bare"
+        value={filter.priority ?? ""}
+        onChange={(v) => onChange({ ...filter, priority: (v || null) as Priority | null })}
+        options={[{ value: "", label: "Any priority" }, ...[...PRIORITIES].reverse().map((p) => ({ value: p, label: PRIORITY_LABELS[p] }))]}
+        className={cx(chip, "pr-2", filter.priority ? chipOn : chipOff)}
+      />
       <AnimatePresence initial={false}>
         {filterActive(filter) ? (
           <motion.button
@@ -125,4 +111,9 @@ export function FilterChips({ filter, onChange, waiting, className }: { filter: 
       </AnimatePresence>
     </div>
   );
+}
+
+function TypeIcon({ type }: { type: CardType }) {
+  const { icon: Icon, text } = CARD_TYPE_LOOK[type];
+  return <Icon className={cx("size-3.5 shrink-0", text)} strokeWidth={1.75} aria-hidden="true" />;
 }
