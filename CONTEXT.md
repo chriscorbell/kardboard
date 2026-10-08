@@ -7,7 +7,7 @@ A kanban board for every project one person works on, kept up to date by that pe
 ### People and actors
 
 **User**:
-The one person who signs in, and whose projects the Boards track.
+The one person kardboard is for, whose projects the Boards track.
 _Avoid_: Admin, Member, owner, client, account
 
 **Agent**:

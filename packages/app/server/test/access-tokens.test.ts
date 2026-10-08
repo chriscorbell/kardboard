@@ -13,7 +13,6 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 // outside kardboard over MCP, the way Claude Code on the User's own machine would use one.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-access-tokens-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

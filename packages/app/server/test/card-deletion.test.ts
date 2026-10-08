@@ -6,11 +6,9 @@ import path from "node:path";
 import { after, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 
-// Deleting a Card through the REST API, the way the card sheet does. Dev authentication signs the
-// tests in as the User.
+// Deleting a Card through the REST API, the way the card sheet does.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-card-deletion-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

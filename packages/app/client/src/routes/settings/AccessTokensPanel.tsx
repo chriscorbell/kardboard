@@ -6,6 +6,7 @@ import { useAccessTokens, useCreateAccessToken, useRevokeAccessToken } from "../
 import { Button, cx, IconButton, Input, Skeleton } from "../../components/ui";
 import { relativeTime } from "../../lib/format";
 import { toast } from "../../lib/toast";
+import { copyText } from "../../lib/clipboard";
 import { claudeMcpAddCommand, codexMcpAddCommands } from "./accessTokens";
 
 // The User's tokens for their own agents, each reaching every Board. A new token's secret lives only
@@ -182,7 +183,7 @@ function Secret({ value, label }: { value: string; label: string }) {
   }, [copied]);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       setCopied(true);
     } catch {
       toast("It was not copied. Select it and copy it by hand instead.");

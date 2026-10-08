@@ -7,11 +7,9 @@ import { and, eq } from "drizzle-orm";
 import type { BoardView, Card, Comment, Me } from "@kardboard/shared";
 
 // What the User sees of a Board and of themselves: who the Board names, which Cards are waiting on
-// an answer, deleting a Comment, and their own settings. Dev authentication signs the tests in as
-// the User.
+// an answer, deleting a Comment, and their own settings.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-user-view-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

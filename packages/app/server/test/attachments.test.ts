@@ -8,11 +8,9 @@ import { eq } from "drizzle-orm";
 import type { Attachment, Card, Comment } from "@kardboard/shared";
 
 // How an Attachment's type is stored and served. The uploader's browser names the type, so an SVG
-// or an HTML page can be named anything; only the raster images may be shown in place. Dev
-// authentication signs the tests in as the User.
+// or an HTML page can be named anything; only the raster images may be shown in place.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-attachments-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

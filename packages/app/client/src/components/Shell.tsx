@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router";
+import { NavLink, useLocation, useNavigate } from "react-router";
 import { ChevronDown, Settings2 } from "lucide-react";
 import type { Me } from "@kardboard/shared";
 import { useBoards } from "../lib/api";
@@ -52,7 +52,6 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
             <Settings2 className="size-4" strokeWidth={1.75} />
             <span className="hidden sm:inline">Settings</span>
           </NavLink>
-          {/* Who is signed in, by Tailscale. There is nothing to sign out of: Tailscale is the sign-in. */}
           <span className="ml-1 inline-flex p-0.5" title={me.user.name}>
             <Avatar name={me.user.name} url={me.user.avatarUrl} size={28} />
           </span>
@@ -60,11 +59,6 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
       </header>
       <main className="min-h-0 flex-1">{children}</main>
       <Toaster />
-      {me.authMode === "dev" ? (
-        <div className="pointer-events-none fixed bottom-3 left-3 z-40 hidden rounded-full sm:block border border-line bg-surface/90 px-2.5 py-1 font-mono text-[11px] text-ink-faint backdrop-blur">
-          dev auth as <Link to="/settings" className="pointer-events-auto text-ink-muted">{me.user.name}</Link>
-        </div>
-      ) : null}
     </div>
   );
 }

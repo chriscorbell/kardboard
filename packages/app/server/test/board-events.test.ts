@@ -5,10 +5,9 @@ import path from "node:path";
 import { after, afterEach, beforeEach, describe, it } from "node:test";
 
 // A Board's live event stream, read the way the browser reads it. It pings to stay open, every few
-// milliseconds in these tests instead of every 25 s. Dev authentication signs the tests in as the User.
+// milliseconds in these tests instead of every 25 s.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-board-events-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 process.env.KARDBOARD_EVENTS_PING_MS = "20";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");

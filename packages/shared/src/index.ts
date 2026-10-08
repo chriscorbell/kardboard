@@ -33,7 +33,7 @@ export type CardOutcome = (typeof CARD_OUTCOMES)[number];
 
 export type ActorKind = "user" | "agent" | "system";
 
-/** The one person who signs in. */
+/** The one person kardboard is for. */
 export interface User {
   id: string;
   email: string;
@@ -177,7 +177,6 @@ export interface CardDetail {
 export interface Me {
   user: User;
   agent: AgentProfile;
-  authMode: "dev" | "tailscale";
   /** When this User dismissed the board explainer. Null shows it on the next Board they open. */
   onboardedAt: string | null;
 }

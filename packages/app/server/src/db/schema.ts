@@ -2,8 +2,7 @@ import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core
 
 const now = () => new Date().toISOString();
 
-// One row: the User, created from KARDBOARD_ADMIN_EMAIL on first start, with the name and avatar of
-// their Tailscale profile.
+// One row: the User, created from KARDBOARD_ADMIN_EMAIL on first start.
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),

@@ -21,7 +21,7 @@ startLogFile(env.logDir, env.logKeepDays);
 const app = new Hono();
 // First, so every response carries them, the health check and redirects included. An authenticated
 // MCP call is the one exception: its transport writes to the socket itself, and only agents read it.
-app.use("*", securityHeaders({ production: env.isProduction, publicUrl: env.publicUrl }));
+app.use("*", securityHeaders());
 // Registered ahead of the request logger, so the container's health check, which calls it every 30
 // seconds, does not fill the log.
 //
@@ -69,7 +69,7 @@ await ensureSeed();
 startBackupScheduler();
 
 serve({ fetch: app.fetch, port: env.port }, (info) => {
-  console.log(`kardboard app listening on http://localhost:${info.port} (auth=${env.authMode})`);
+  console.log(`kardboard app listening on http://localhost:${info.port}`);
   // Only once the app answers: the copy goes to a network share, which can be slow or gone.
   if (preMigrate) void copySnapshotOffDisk(preMigrate.name);
 });

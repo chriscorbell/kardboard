@@ -8,10 +8,10 @@ Verified: 2026-10-07, running the command below on agent-pc
 Source: `packages/app/server/src/env.ts`, `packages/app/vite.config.ts`
 Recheck when: `env.ts` stops reading `PORT` or `.env`, or the Vite proxy target changes
 
-A `packages/app/.env`, where a checkout has one, may set `KARDBOARD_AUTH=tailscale`, which turns away every request that did not come through Tailscale Serve. Neither `process.loadEnvFile` nor Vite overwrites a variable already in the environment, so dev auth and a throwaway database come from the command line without touching `.env`:
+Neither `process.loadEnvFile` nor Vite overwrites a variable already in the environment, so a throwaway database comes from the command line without touching a `packages/app/.env`:
 
 ```bash
-cd packages/app && PORT=3070 KARDBOARD_AUTH=dev KARDBOARD_DATA_DIR=<scratch dir> pnpm dev
+cd packages/app && PORT=3070 KARDBOARD_DATA_DIR=<scratch dir> pnpm dev
 ```
 
 `PORT=3070` matters when the launcher exports `PORT` for the port it watches, as the Claude desktop app's browser pane does with 5173: the API server reads `PORT`, binds Vite's port, and every `/api` call through Vite's proxy to 3070 fails with `ECONNREFUSED` while the page stays blank.

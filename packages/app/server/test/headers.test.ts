@@ -7,10 +7,9 @@ import { after, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 
 // The headers every response carries, and the shell's per-request script nonce. The app is put
-// together the way `index.ts` does it, around the real API, and dev authentication signs the tests in.
+// together the way `index.ts` does it, around the real API.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-headers-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
@@ -22,16 +21,16 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 const template = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../client/index.html"), "utf8");
 const DEFAULT_POLICY = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
 
-function appFor(production: boolean, publicUrl: string) {
+function appFor() {
   const app = new Hono();
-  app.use("*", securityHeaders({ production, publicUrl }));
+  app.use("*", securityHeaders());
   app.route("/api", api);
   const shell = appShell(template);
   app.get("*", (c) => shell(c));
   return app;
 }
 
-const app = appFor(false, "http://localhost:5173");
+const app = appFor();
 
 beforeEach(async () => {
   for (const t of [schema.attachments, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
@@ -108,14 +107,8 @@ describe("an API response", () => {
 });
 
 describe("Strict-Transport-Security", () => {
-  it("is sent by a production app behind https, without preload", async () => {
-    const res = await appFor(true, "https://kardboard.cc").request("/");
-    assert.equal(res.headers.get("strict-transport-security"), "max-age=31536000; includeSubDomains");
-  });
-
-  it("is not sent outside production, or over plain http", async () => {
-    assert.equal((await app.request("/")).headers.get("strict-transport-security"), null);
-    assert.equal((await appFor(false, "https://kardboard.cc").request("/")).headers.get("strict-transport-security"), null);
-    assert.equal((await appFor(true, "http://localhost:3070").request("/")).headers.get("strict-transport-security"), null);
+  it("withdraws the HSTS kardboard once sent, and asks for none", async () => {
+    assert.equal((await app.request("/")).headers.get("strict-transport-security"), "max-age=0");
+    assert.equal((await app.request("/api/me")).headers.get("strict-transport-security"), "max-age=0");
   });
 });

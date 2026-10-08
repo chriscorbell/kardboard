@@ -4,9 +4,9 @@ kardboard is a kanban board for every project one person works on, kept up to da
 
 ## Actors
 
-The User is the one person who signs in: Chris. The Agent is one non-human identity, named "Milo" by default and renamed in Settings, under which every coding agent holding an Access token acts. The Board tells the User's own words from the Agent's: a Card or Comment the User wrote by hand carries their name, and one an agent wrote carries the Agent's, whichever machine or conversation it came from.
+The User is the one person kardboard is for: Chris. The Agent is one non-human identity, named "Milo" by default and renamed in Settings, under which every coding agent holding an Access token acts. The Board tells the User's own words from the Agent's: a Card or Comment the User wrote by hand carries their name, and one an agent wrote carries the Agent's, whichever machine or conversation it came from.
 
-kardboard is reached only over the User's tailnet, and Tailscale is its sign-in ([ADR 0013](adr/0013-tailscale-is-the-sign-in.md)): Tailscale Serve, the one way in, vouches for the tailnet login behind each request, and the app lets in the one login it is configured with, taking the User's name and avatar from their Tailscale profile. Another login sees a "not the one" page, and a request that did not come through Serve is told to open kardboard through Tailscale. There is no sign-out; leaving the tailnet is.
+kardboard has no sign-in. Like the User's other apps on minicore, it is a plain port reached from their home network and tailnet and never from the public internet, and every request that reaches it is the User ([ADR 0014](adr/0014-a-plain-port-like-the-other-apps.md)). Agents still present an Access token.
 
 ## Boards and Cards
 
@@ -57,21 +57,21 @@ The Board changes live: every open Board follows its changes over server-sent ev
 
 ## Infrastructure
 
-kardboard runs on minicore as one compose stack named `kardboard` in `chriscorbell/fleet` (`hosts/minicore/stacks/kardboard`), with data under `/home/chris/docker/data/kardboard`. It is one service, `app`: web, REST API, MCP server, and SQLite, on port 3070 of the host's loopback.
+kardboard runs on minicore as one compose stack named `kardboard` in `chriscorbell/fleet` (`hosts/minicore/stacks/kardboard`), with data under `/home/chris/docker/data/kardboard`. It is one service, `app`: web, REST API, MCP server, and SQLite, published on host port 3071.
 
-The app keeps its state in SQLite in WAL mode, see [ADR 0004](adr/0004-sqlite-in-a-single-server-process.md). Once a day it writes a snapshot with `VACUUM INTO` to `backups/` on the same bind mount, verifies it, and keeps the newest fourteen; when migrations are waiting at boot it takes one more first, named `kardboard-pre-migrate-<stamp>.db`. With `KARDBOARD_BACKUP_COPY_DIR` set it also copies each snapshot, and every attachment it does not hold yet, to that directory in the background, but only once the directory carries a `.kardboard-backup-target` marker, so a NAS share that failed to mount never receives a copy that reports success. Restoring one is an operator procedure with the app stopped, described in [the backups runbook](runbooks/backups.md). Attachments are stored on the data bind mount with content-addressed names and served through the app after sign-in; there are no public file URLs. An Attachment's type is stored as its bare lowercase `type/subtype`. Only PNG, JPEG, GIF, WebP, and AVIF are served for display; everything else is served as a download, under a sandbox policy. A file the app has fetched is shown or saved from a blob URL, which keeps none of the server's headers, so the app types each one again first: a picture as its raster type, anything else as one no browser renders. An uploaded SVG or HTML page therefore never opens as a page on the app's origin.
+The app keeps its state in SQLite in WAL mode, see [ADR 0004](adr/0004-sqlite-in-a-single-server-process.md). Once a day it writes a snapshot with `VACUUM INTO` to `backups/` on the same bind mount, verifies it, and keeps the newest fourteen; when migrations are waiting at boot it takes one more first, named `kardboard-pre-migrate-<stamp>.db`. With `KARDBOARD_BACKUP_COPY_DIR` set it also copies each snapshot, and every attachment it does not hold yet, to that directory in the background, but only once the directory carries a `.kardboard-backup-target` marker, so a NAS share that failed to mount never receives a copy that reports success. Restoring one is an operator procedure with the app stopped, described in [the backups runbook](runbooks/backups.md). Attachments are stored on the data bind mount with content-addressed names and served through the app; there are no public file URLs. An Attachment's type is stored as its bare lowercase `type/subtype`. Only PNG, JPEG, GIF, WebP, and AVIF are served for display; everything else is served as a download, under a sandbox policy. A file the app has fetched is shown or saved from a blob URL, which keeps none of the server's headers, so the app types each one again first: a picture as its raster type, anything else as one no browser renders. An uploaded SVG or HTML page therefore never opens as a page on the app's origin.
 
-Nothing is public. Tailscale Serve on minicore puts the app at `https://minicore.saanen-monitor.ts.net` with the tailnet's certificate and adds the identity headers that sign the User in; [the Tailscale runbook](runbooks/tailscale.md) has the details.
+Nothing is public. The app is reached at `http://minicore.saanen-monitor.ts.net:3071` from the tailnet, and at minicore's LAN address at home; [the access runbook](runbooks/access.md) has the details.
 
 This repository is a pnpm monorepo in TypeScript: `packages/app` (Vite + React front end, Node back end, Drizzle on SQLite) and `packages/shared`. One GitHub Actions workflow builds the image on every pull request and publishes it to GHCR on push to `main`, and Watchtower on minicore updates the app within a minute.
 
 ## Manual steps the User performs
 
-These need host or account access: Tailscale Serve on minicore and HTTPS Certificates in the tailnet, and the login in the stack's `.env` on minicore, as [the Tailscale runbook](runbooks/tailscale.md) describes. Connecting an agent is described in the README, and the `kardboard-onboard` skill in [chriscorbell/skills](https://github.com/chriscorbell/skills/tree/main/kardboard-onboard) walks an agent through it.
+These need host or account access: removing the Cloudflare routes that served `kardboard.cc`, as [the access runbook](runbooks/access.md) describes. Connecting an agent is described in the README, and the `kardboard-onboard` skill in [chriscorbell/skills](https://github.com/chriscorbell/skills/tree/main/kardboard-onboard) walks an agent through it.
 
 ## Status
 
-As of 2026-10-07 the app runs alone on minicore at `https://minicore.saanen-monitor.ts.net`, reached over Tailscale; Sessions, Approval, Previews, the services that ran them, and Members, Invitations, Mentions, and notifications are gone. Everything above is built, as of 2026-10-07; card 66ar6rp3 on the kardboard Board tracked the refocus.
+As of 2026-10-07 the app runs alone on minicore at `http://minicore.saanen-monitor.ts.net:3071`; Sessions, Approval, Previews, the services that ran them, and Members, Invitations, Mentions, and notifications are gone. Everything above is built, as of 2026-10-07; card 66ar6rp3 on the kardboard Board tracked the refocus.
 
 ## Out of scope
 

@@ -11,6 +11,7 @@ import { Markdown } from "../../components/Markdown";
 import { absoluteTime, relativeTime, shortId } from "../../lib/format";
 import { useFileDrop } from "../../lib/fileInput";
 import { toast } from "../../lib/toast";
+import { copyText } from "../../lib/clipboard";
 import { Composer, type ComposerHandle } from "./Composer";
 import { COLUMN_TONES } from "./columns";
 import { CARD_TYPE_LOOK, TypeLabel } from "./cardTypes";
@@ -591,7 +592,7 @@ function CopyLink({ slug, cardId }: { slug: string; cardId: string }) {
   }, [copied]);
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/b/${slug}/c/${cardId}`);
+      await copyText(`${window.location.origin}/b/${slug}/c/${cardId}`);
       setCopied(true);
     } catch {
       toast("The link was not copied. Copy it from the address bar instead.");

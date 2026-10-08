@@ -9,7 +9,6 @@ import { eq, getTableName } from "drizzle-orm";
 // authentication signs the API calls in.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-board-deletion-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

@@ -23,7 +23,7 @@ import { postComment, UploadFailed, type CommentRequests, type PostProgress } fr
 export { ApiError };
 
 // Every call to the API goes through here, or through uploadFile below. They carry no credential:
-// Tailscale Serve signs each request in on its way to the app.
+// kardboard has no sign-in, see ADR 0014.
 async function send(path: string, init: RequestInit): Promise<Response> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");

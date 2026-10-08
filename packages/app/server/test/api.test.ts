@@ -6,12 +6,10 @@ import { after, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import type { Board, Card } from "@kardboard/shared";
 
-// The database module opens its file at import time, so point it at a scratch directory first. Dev
-// authentication is what the tests sign in with: every request is the User.
+// The database module opens its file at import time, so point it at a scratch directory first.
+// Every request is the User.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-api-"));
 process.env.KARDBOARD_DATA_DIR = root;
-// These tests sign in with dev authentication, whatever a local .env chooses.
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");
