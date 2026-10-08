@@ -169,6 +169,13 @@
       "when": 1791419108531,
       "tag": "0023_card-types",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791422156340,
+      "tag": "0024_tailscale-sign-in",
+      "breakpoints": true
     }
   ]
 }

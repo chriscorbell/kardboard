@@ -13,22 +13,28 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 const { resolveAuthMode } = await import("../src/env.js");
 
 describe("which authentication the app runs", () => {
-  it("is dev outside production when nothing is set, so local work and tests need no keys", () => {
-    assert.equal(resolveAuthMode({ auth: "", production: false }), "dev");
+  const login = "chris@github";
+
+  it("is dev outside production when nothing is set, so local work and tests need no setup", () => {
+    assert.equal(resolveAuthMode({ auth: "", production: false, tailscaleLogin: "" }), "dev");
   });
 
-  it("is clerk when asked for, however it is written", () => {
-    assert.equal(resolveAuthMode({ auth: "clerk", production: true }), "clerk");
-    assert.equal(resolveAuthMode({ auth: " Clerk ", production: true }), "clerk");
+  it("is tailscale when asked for, however it is written", () => {
+    assert.equal(resolveAuthMode({ auth: "tailscale", production: true, tailscaleLogin: login }), "tailscale");
+    assert.equal(resolveAuthMode({ auth: " Tailscale ", production: true, tailscaleLogin: login }), "tailscale");
+  });
+
+  it("refuses tailscale without the one login it lets in", () => {
+    assert.throws(() => resolveAuthMode({ auth: "tailscale", production: true, tailscaleLogin: " " }), /KARDBOARD_TAILSCALE_LOGIN/);
   });
 
   it("refuses dev in production, whether it was left unset or asked for", () => {
-    assert.throws(() => resolveAuthMode({ auth: "", production: true }), /Refusing to start/);
-    assert.throws(() => resolveAuthMode({ auth: "dev", production: true }), /Refusing to start/);
+    assert.throws(() => resolveAuthMode({ auth: "", production: true, tailscaleLogin: login }), /Refusing to start/);
+    assert.throws(() => resolveAuthMode({ auth: "dev", production: true, tailscaleLogin: login }), /Refusing to start/);
   });
 
   it("refuses a value it does not know rather than falling back to dev", () => {
-    assert.throws(() => resolveAuthMode({ auth: "clerck", production: false }), /must be "clerk" or "dev"/);
+    assert.throws(() => resolveAuthMode({ auth: "clerk", production: false, tailscaleLogin: "" }), /must be "tailscale" or "dev"/);
   });
 });
 
@@ -47,9 +53,9 @@ describe("starting the app in production", () => {
     assert.match(run.stderr, /Refusing to start/);
   });
 
-  it("starts with Clerk", () => {
-    const run = start({ KARDBOARD_AUTH: "clerk" });
+  it("starts with Tailscale and the login it lets in", () => {
+    const run = start({ KARDBOARD_AUTH: "tailscale", KARDBOARD_TAILSCALE_LOGIN: "chris@github" });
     assert.equal(run.status, 0, run.stderr);
-    assert.equal(run.stdout.trim(), "clerk");
+    assert.equal(run.stdout.trim(), "tailscale");
   });
 });

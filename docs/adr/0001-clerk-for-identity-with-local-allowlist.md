@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0013 on 2026-10-07
 date: 2026-09-13
 amended: 2026-10-07 by ADR 0011, which leaves the allowlist one address and drops Members and Invitations
 ---

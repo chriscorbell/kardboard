@@ -27,7 +27,7 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { env } from "../env.js";
-import { refreshFromClerk, requireUser, type AuthVariables } from "../auth.js";
+import { requireUser, type AuthVariables } from "../auth.js";
 import { createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardPeople, updateBoard } from "../services/boards.js";
 import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, updateCard } from "../services/cards.js";
 import { addAttachment, createComment, deleteComment, getAttachment, getComment, listComments, underFileLock, updateComment } from "../services/comments.js";
@@ -79,8 +79,6 @@ async function meView(user: User): Promise<Me> {
 }
 
 api.get("/me", async (c) => c.json(await meView(c.get("user"))));
-
-api.post("/me/refresh", async (c) => c.json(await meView(await refreshFromClerk(c.get("user")))));
 
 // The User's own settings: whether they have seen the board explainer.
 api.patch("/me", json(updateMeSchema), async (c) => {

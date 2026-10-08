@@ -26,7 +26,7 @@ function appFor(production: boolean, publicUrl: string) {
   const app = new Hono();
   app.use("*", securityHeaders({ production, publicUrl }));
   app.route("/api", api);
-  const shell = appShell(template, { clerkPublishableKey: "" });
+  const shell = appShell(template);
   app.get("*", (c) => shell(c));
   return app;
 }
@@ -61,16 +61,14 @@ describe("the app shell", () => {
     assert.equal(res.headers.get("content-security-policy-report-only"), null);
   });
 
-  it("puts its nonce on every script tag and in the runtime config", async () => {
+  it("puts its nonce on every script tag", async () => {
     const res = await app.request("/");
     const nonce = nonceOf(res);
-    assert.equal(res.headers.get("content-security-policy"), `script-src 'nonce-${nonce}' 'strict-dynamic' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
+    assert.equal(res.headers.get("content-security-policy"), `script-src 'nonce-${nonce}' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`);
     const html = await res.text();
     const scripts = html.match(/<script\b[^>]*>/g) ?? [];
-    assert.equal(scripts.length, 2, "the runtime config and the client entry");
+    assert.ok(scripts.length > 0, "the client entry is a script");
     for (const tag of scripts) assert.ok(tag.includes(` nonce="${nonce}"`), tag);
-    const config = JSON.parse(/window\.__KARDBOARD_CONFIG__=(\{.*?\})<\/script>/.exec(html)![1]!) as { nonce: string };
-    assert.equal(config.nonce, nonce);
   });
 
   it("uses a new nonce for every request", async () => {

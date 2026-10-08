@@ -15,15 +15,20 @@ function str(name: string, fallback = ""): string {
 }
 
 /**
- * Dev authentication signs every request in as the User without a sign-in, so a missing or
- * mistyped setting must never produce it in production: a production process refuses to start.
+ * How a request is signed in. `tailscale`: by the identity Tailscale Serve puts on it, which is how
+ * the app runs in production. `dev`: every request is the seeded User, with no sign-in at all, so a
+ * missing or mistyped setting must never produce it in production: a production process refuses to
+ * start, and refuses `tailscale` without the one login it lets in.
  */
-export function resolveAuthMode(input: { auth: string; production: boolean }): "dev" | "clerk" {
+export function resolveAuthMode(input: { auth: string; production: boolean; tailscaleLogin: string }): "dev" | "tailscale" {
   const auth = input.auth.trim().toLowerCase();
-  if (auth === "clerk") return "clerk";
-  if (auth !== "" && auth !== "dev") throw new Error(`KARDBOARD_AUTH must be "clerk" or "dev", not ${JSON.stringify(input.auth)}.`);
+  if (auth === "tailscale") {
+    if (!input.tailscaleLogin.trim()) throw new Error("KARDBOARD_AUTH is tailscale, but KARDBOARD_TAILSCALE_LOGIN does not say which Tailscale login to let in.");
+    return "tailscale";
+  }
+  if (auth !== "" && auth !== "dev") throw new Error(`KARDBOARD_AUTH must be "tailscale" or "dev", not ${JSON.stringify(input.auth)}.`);
   if (input.production) {
-    throw new Error("Refusing to start: NODE_ENV is production and authentication would run in dev mode, which signs every request in as the User. Set KARDBOARD_AUTH=clerk with the Clerk keys.");
+    throw new Error("Refusing to start: NODE_ENV is production and authentication would run in dev mode, which signs every request in as the User. Set KARDBOARD_AUTH=tailscale with KARDBOARD_TAILSCALE_LOGIN.");
   }
   return "dev";
 }
@@ -47,15 +52,9 @@ export const env = {
   port: Number(str("PORT", "3070")),
   dataDir,
   publicUrl,
-  redirectHosts: str("KARDBOARD_REDIRECT_HOSTS").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
-  authMode: resolveAuthMode({ auth: str("KARDBOARD_AUTH"), production: isProduction }),
-  clerkSecretKey: str("CLERK_SECRET_KEY"),
-  // The Clerk instance's PEM public key, which lets session tokens be verified without asking Clerk.
-  // Optional. A PEM written on one line with `\n` escapes, as an env file often holds it, works too.
-  clerkJwtKey: str("CLERK_JWT_KEY").replace(/\\n/g, "\n"),
-  clerkPublishableKey: str("CLERK_PUBLISHABLE_KEY") || str("VITE_CLERK_PUBLISHABLE_KEY"),
-  resendApiKey: str("RESEND_API_KEY"),
-  emailFrom: str("KARDBOARD_EMAIL_FROM", "Milo <milo@example.com>"),
+  authMode: resolveAuthMode({ auth: str("KARDBOARD_AUTH"), production: isProduction, tailscaleLogin: str("KARDBOARD_TAILSCALE_LOGIN") }),
+  // The Tailscale login the app lets in, such as `chriscorbell@github`.
+  tailscaleLogin: str("KARDBOARD_TAILSCALE_LOGIN").trim(),
   // Snapshots live beside the database on the data bind mount. Set the hour to -1 to take none.
   backupDir: path.resolve(str("KARDBOARD_BACKUP_DIR", path.join(dataDir, "backups"))),
   backupHour: Number(str("KARDBOARD_BACKUP_HOUR", "4")),

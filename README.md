@@ -5,7 +5,7 @@
   <img src="docs/brand/kardboard-wordmark-on-light.svg" alt="kardboard" width="320">
 </picture>
 
-**A self-hosted kanban board for all your projects, kept by you and your coding agents.**
+**A self-hosted kanban board for all your projects, kept by you and your coding agents, on your tailnet.**
 
 </div>
 
@@ -34,7 +34,7 @@ The home page is an Overview of every board: what needs you, what's in progress,
 - **Questions you can see**: a card in Blocked pins the agent's question and says it needs your answer, and the agent sees which cards you have answered since it last looked.
 - **One agent identity** across all boards, with a configurable name and avatar (the default is Milo), so the board always tells your words from your agents'.
 - **An MCP server for your own agents**: one token reaches every board; an agent finds the board for its repository from the git remote, creates one for a new project when you say so, files side-findings in Backlog, and every change it makes is checked against the revision it last read.
-- **Live updates** over server-sent events, verified nightly database snapshots with an optional off-disk copy, and an email to you when a backup fails.
+- **Live updates** over server-sent events, verified nightly database snapshots with an optional off-disk copy, and a warning on the Overview when a backup fails.
 
 ## Architecture
 
@@ -69,23 +69,22 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 
 | Variable | Purpose |
 | --- | --- |
-| `KARDBOARD_PUBLIC_URL`, `KARDBOARD_REDIRECT_HOSTS` | Canonical app URL and comma-separated old hosts that redirect to it. |
-| `KARDBOARD_AUTH` | `clerk`, or `dev` for local work. Dev mode signs every request in as the seeded admin, so with `NODE_ENV=production` the app refuses to start unless this is `clerk`. |
-| `CLERK_SECRET_KEY`, `VITE_CLERK_PUBLISHABLE_KEY` | Clerk credentials for `clerk` mode. |
-| `CLERK_JWT_KEY` | Optional. The JWKS Public Key (PEM) from Clerk's API keys page, on one line with `\n` escapes. With it, session tokens are verified without a call to Clerk. |
-| `KARDBOARD_ADMIN_EMAIL` | The one address that can sign in. Its account is created on first start. |
-| `RESEND_API_KEY`, `KARDBOARD_EMAIL_FROM` | Email delivery. Without a key, emails are logged instead of sent. |
+| `KARDBOARD_AUTH` | `tailscale`, or `dev` for local work. Dev mode signs every request in as the seeded User, so with `NODE_ENV=production` the app refuses to start unless this is `tailscale`. |
+| `KARDBOARD_TAILSCALE_LOGIN` | The Tailscale login the app lets in, such as `you@github`. Required in `tailscale` mode. |
+| `KARDBOARD_PUBLIC_URL` | The address the app is reached at. With an `https://` address, production sends HSTS. |
+| `KARDBOARD_ADMIN_EMAIL` | The address the app's one account is created with on first start. |
 | `KARDBOARD_BACKUP_HOUR`, `KARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |
 | `KARDBOARD_BACKUP_COPY_DIR` | Optional off-disk copy of every snapshot and attachment, such as a NAS share. The directory needs a `.kardboard-backup-target` marker file. |
 
 ## Deploying
 
-kardboard is one Docker image, built by the included GitHub Actions workflow. [`deploy/compose.yaml`](deploy/compose.yaml) runs it on any Docker host with its data on a bind mount. Put the public hostname in front of the app's port with whatever reverse proxy or tunnel you already use.
+kardboard is one Docker image, built by the included GitHub Actions workflow, and it is meant to be reached only over [Tailscale](https://tailscale.com), which is also its sign-in. [`deploy/compose.yaml`](deploy/compose.yaml) runs it on any Docker host with its data on a bind mount, listening on the host's loopback only. Put it on your tailnet with Tailscale Serve on that host:
 
-External services you need to set up once:
+```bash
+sudo tailscale serve --bg 3070
+```
 
-- A **Clerk** application for sign-in.
-- A **Resend** domain for email.
+That serves it at `https://<host>.<tailnet>.ts.net` with your tailnet's certificate, once HTTPS Certificates is on in the tailnet's DNS settings. Serve tells the app which tailnet login each request comes from, and the app lets in the one in `KARDBOARD_TAILSCALE_LOGIN`. There is no other account to set up. [The Tailscale runbook](docs/runbooks/tailscale.md) has the details.
 
 ## Connecting your agents
 
@@ -97,7 +96,7 @@ One access token connects a coding agent to every board. Install it once per mac
    Claude Code, once, from anywhere:
 
    ```bash
-   claude mcp add --scope user --transport http kardboard https://your-kardboard-host/mcp --header "Authorization: Bearer kbat_..."
+   claude mcp add --scope user --transport http kardboard https://your-host.your-tailnet.ts.net/mcp --header "Authorization: Bearer kbat_..."
    ```
 
    So it doesn't ask before every board action, add `mcp__kardboard` to `permissions.allow` in `~/.claude/settings.json`.
@@ -106,7 +105,7 @@ One access token connects a coding agent to every board. Install it once per mac
 
    ```bash
    export KARDBOARD_TOKEN=kbat_...
-   codex mcp add kardboard --url https://your-kardboard-host/mcp --bearer-token-env-var KARDBOARD_TOKEN
+   codex mcp add kardboard --url https://your-host.your-tailnet.ts.net/mcp --bearer-token-env-var KARDBOARD_TOKEN
    ```
 
 3. Ask your agent what's on the board. It finds the board for the repository it is working in from `git remote get-url origin`, and when there is none it asks whether to create one, so onboarding a project is a single question. It moves cards as the work goes: In Progress when it starts, Blocked with a question when it needs you, Review once the pull request is open, and Done once it has merged it. When it notices something outside the task at hand, it files a card in Backlog and tells you in one line.

@@ -3,23 +3,18 @@ import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { BoardEvent, BoardView, CardDetail } from "@kardboard/shared";
 import { keys, upsertCardInBoard } from "./api";
-import { useAuth } from "./auth";
 import { reconnectDelay } from "./backoff";
 import { toast } from "./toast";
 
 const EVENT_TYPES = ["card.upserted", "card.removed", "comment.upserted", "comment.removed", "board.updated", "board.deleted"] as const;
 
-// Server-sent events keep the board query fresh without polling. Clerk mode cannot set headers on
-// EventSource, so it falls back to a token query parameter over the same origin.
-//
-// That token lives about a minute, and EventSource's own retry reuses the URL it was given, so after
-// a server restart (every deploy) it would come back with an expired token and give up on the 401.
-// Every error therefore closes the stream and reconnects with a fresh token after a backoff. The
-// stream carries no replay, so each `ready` refetches the board and any open card: that covers
-// whatever changed while it was down, and between the first fetch and the first subscription.
+// Server-sent events keep the board query fresh without polling. Every error closes the stream and
+// reconnects after a backoff, rather than leaving EventSource's own retry to give up after a server
+// restart (every deploy). The stream carries no replay, so each `ready` refetches the board and any
+// open card: that covers whatever changed while it was down, and between the first fetch and the
+// first subscription.
 export function useBoardEvents(slug: string | undefined) {
   const qc = useQueryClient();
-  const { mode, getToken } = useAuth();
   // Read through a ref, so a new navigate function never tears the stream down and reconnects it.
   const navigate = useNavigate();
   const navigateRef = useRef(navigate);
@@ -29,7 +24,6 @@ export function useBoardEvents(slug: string | undefined) {
   useEffect(() => {
     if (!slug) return;
     let source: EventSource | null = null;
-    let connecting = false;
     let stopped = false;
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -76,22 +70,12 @@ export function useBoardEvents(slug: string | undefined) {
     const retryLater = () => {
       if (stopped) return;
       clearTimeout(timer);
-      timer = setTimeout(() => void connect(), reconnectDelay(attempt++));
+      timer = setTimeout(connect, reconnectDelay(attempt++));
     };
 
-    const connect = async () => {
-      if (stopped || source || connecting) return;
-      connecting = true;
-      let token: string | null = null;
-      try {
-        token = mode === "clerk" ? await getToken() : null;
-      } catch {
-        token = null;
-      }
-      connecting = false;
-      if (stopped) return;
-      if (mode === "clerk" && !token) return retryLater();
-      const es = new EventSource(`/api/boards/${slug}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`);
+    const connect = () => {
+      if (stopped || source) return;
+      const es = new EventSource(`/api/boards/${slug}/events`);
       source = es;
       es.addEventListener("ready", () => {
         attempt = 0;
@@ -107,12 +91,12 @@ export function useBoardEvents(slug: string | undefined) {
 
     // Coming back online or to the tab should not wait out a long backoff.
     const wake = () => {
-      if (source || connecting || stopped || document.visibilityState !== "visible") return;
+      if (source || stopped || document.visibilityState !== "visible") return;
       clearTimeout(timer);
-      void connect();
+      connect();
     };
 
-    void connect();
+    connect();
     window.addEventListener("online", wake);
     document.addEventListener("visibilitychange", wake);
     return () => {
@@ -122,5 +106,5 @@ export function useBoardEvents(slug: string | undefined) {
       window.removeEventListener("online", wake);
       document.removeEventListener("visibilitychange", wake);
     };
-  }, [slug, qc, mode, getToken]);
+  }, [slug, qc]);
 }

@@ -20,7 +20,7 @@ The app writes a snapshot with SQLite's `VACUUM INTO`, which produces a consiste
 
 One snapshot is taken per day, at `KARDBOARD_BACKUP_HOUR` in the server's timezone. The schedule holds no state in memory: on every tick the app compares the newest daily snapshot on disk with the last time the scheduled hour passed, so a restart, a deploy, or hours of downtime still produce the missed snapshot as soon as the app is back. After a successful snapshot the oldest files beyond `KARDBOARD_BACKUP_KEEP` are removed, along with any `.partial` file left behind by an interrupted run. The snapshot just written is always kept. A run that has not finished after 15 minutes is abandoned and its partial file removed, so one stuck run cannot hold up every later snapshot; the scheduler tries again on its next tick.
 
-**Before migrations.** At boot, before it migrates the database, the app compares the migrations its image carries with the ones the database has had. When some are still to apply, it first writes `kardboard-pre-migrate-<stamp>.db`: the database exactly as the previous image left it. These are copied off the disk like the others and pruned apart from the daily snapshots, to the same keep count, so a run of deploys cannot push the daily ones out; the daily schedule ignores them when deciding whether today's snapshot is due. A failed pre-migration snapshot does not stop the boot: the migrations run anyway, and the Admin is emailed once the app is up.
+**Before migrations.** At boot, before it migrates the database, the app compares the migrations its image carries with the ones the database has had. When some are still to apply, it first writes `kardboard-pre-migrate-<stamp>.db`: the database exactly as the previous image left it. These are copied off the disk like the others and pruned apart from the daily snapshots, to the same keep count, so a run of deploys cannot push the daily ones out; the daily schedule ignores them when deciding whether today's snapshot is due. A failed pre-migration snapshot does not stop the boot: the migrations run anyway, and the failure is in the app's log.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ One snapshot is taken per day, at `KARDBOARD_BACKUP_HOUR` in the server's timezo
 
 **Settings → Backups** lists the snapshots with their size and age, marks the pre-migration ones, and takes one on demand with *Snapshot now*. Take one before any risky change. The same is available as `GET` and `POST /api/admin/backups`. Its `lastAttempt` says when the most recent daily or on-demand snapshot finished and, if it failed, why; `lastCopy` does the same for the copy off the disk. Both are kept in the database, so they survive a restart.
 
-**Alerts.** A failed scheduled snapshot, a failed copy, and a failed pre-migration snapshot each email every active Admin. The scheduler retries a failed snapshot every minute, but the same alert is sent at most once in six hours. Each failure is also in the app's log as `[backup] …`, and `[alert] backup.failed` marks every occurrence, sent or not.
+**Alerts.** Nothing is emailed. A failed scheduled snapshot or a failed copy shows at the top of the Overview until the next one succeeds, and survives a restart, since both are kept in the database. The scheduler retries a failed snapshot every minute. Every failure, a failed pre-migration snapshot included, is in the app's log as `[backup] …`, and `[alert] backup.failed`, `[alert] backup.copy_failed`, and `[alert] backup.pre_migrate_failed` mark each occurrence.
 
 ## The copy off the disk
 
@@ -41,11 +41,11 @@ Copies run one at a time in the background, after the snapshot they copy: *Snaps
 
 **The marker file.** The app copies only into a directory that holds a file named `.kardboard-backup-target`. A share that did not mount leaves an empty directory, or no directory, where it should be; without the marker the copy refuses rather than writing to the very disk it is meant to outlive and reporting success. The file's contents do not matter.
 
-A copy that fails, refuses, or does not finish within 15 minutes is reported on the Backups tab and by email. It never removes or changes a snapshot on the data disk, and the next snapshot tries again.
+A copy that fails, refuses, or does not finish within 15 minutes is reported on the Backups tab and at the top of the Overview. It never removes or changes a snapshot on the data disk, and the next snapshot tries again.
 
 On minicore the directory is `backup/minicore/kardboard` on `nas`'s `backup` share, which also holds Crafty's backups and other machines'. The host sees it at `/nas/backup/minicore/kardboard` through the whole share's automount, and the app at `/nas/kardboard` through a second automount of that folder alone. `nas` snapshots its pools daily and the `backup` machine replicates those snapshots nightly, so a copy there also outlives `nas` itself (see `~/Code/fleet/AGENTS.md`). The container runs as uid 1000, which must be able to write there.
 
-The app does not see the rest of the NAS. Since 2026-09-30 `/etc/fstab` automounts `//10.0.0.41/backup/minicore/kardboard` alone at `/srv/kardboard-nas/kardboard`, with the same credentials file and options as the `/nas/backup` line, and the Compose file binds `/srv/kardboard-nas`, a plain directory holding only that automount point, at `/nas` with `rslave` propagation. Before, it bound the host's whole `/nas`, which let a compromised app rewrite every machine's backups and the media share. It still binds the parent, not the automount point itself: on minicore on 2026-09-24, a container binding an automount point whose server was unreachable failed to start with "no such device", which would take the app down on any redeploy while the NAS is off. Binding the parent starts at once either way. Reading `/nas/kardboard` inside the container mounts the folder on the host when the NAS answers, and `rslave` brings it into the container; while it does not, the marker is missing, so the app copies nothing and alerts the Admin.
+The app does not see the rest of the NAS. Since 2026-09-30 `/etc/fstab` automounts `//10.0.0.41/backup/minicore/kardboard` alone at `/srv/kardboard-nas/kardboard`, with the same credentials file and options as the `/nas/backup` line, and the Compose file binds `/srv/kardboard-nas`, a plain directory holding only that automount point, at `/nas` with `rslave` propagation. Before, it bound the host's whole `/nas`, which let a compromised app rewrite every machine's backups and the media share. It still binds the parent, not the automount point itself: on minicore on 2026-09-24, a container binding an automount point whose server was unreachable failed to start with "no such device", which would take the app down on any redeploy while the NAS is off. Binding the parent starts at once either way. Reading `/nas/kardboard` inside the container mounts the folder on the host when the NAS answers, and `rslave` brings it into the container; while it does not, the marker is missing, so the app copies nothing and the Overview says so.
 
 To set it up, or to check it after a change to the mount:
 
@@ -118,7 +118,7 @@ KARDBOARD_DATA_DIR=/tmp/kardboard-drill KARDBOARD_AUTH=dev KARDBOARD_BACKUP_HOUR
   RESEND_API_KEY= KARDBOARD_RUNNER_URL= KARDBOARD_EGRESS_URL= KARDBOARD_BACKUP_COPY_DIR= pnpm dev:server
 ```
 
-The server migrates the copy and serves it on port 3999 in dev authentication, signed in as the Admin: `curl http://127.0.0.1:3999/healthz` answers `{"ok":true,"db":"ok",…}` and `curl http://127.0.0.1:3999/api/boards` lists the Boards. Stop it and delete `/tmp/kardboard-drill` afterwards.
+The server migrates the copy and serves it on port 3999 in dev authentication, signed in as the User: `curl http://127.0.0.1:3999/healthz` answers `{"ok":true,"db":"ok",…}` and `curl http://127.0.0.1:3999/api/boards` lists the Boards. Stop it and delete `/tmp/kardboard-drill` afterwards.
 
 ## What this does not cover
 

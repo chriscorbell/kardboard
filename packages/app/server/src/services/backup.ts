@@ -5,7 +5,6 @@ import path from "node:path";
 import type { BackupAttempt, BackupCopy, BackupSnapshot, BackupsView } from "@kardboard/shared";
 import { client as liveClient, dbFile, pendingMigrations } from "../db/index.js";
 import { env } from "../env.js";
-import { alertAdmin, type AdminAlert } from "./alerts.js";
 import { getSettingValue, setSettingValue } from "./settings.js";
 
 // A snapshot is one self-contained file written by `VACUUM INTO`, never a copy of the live database
@@ -171,8 +170,6 @@ const ATTEMPT_KEY = "backup:lastAttempt";
 const COPY_KEY = "backup:lastCopy";
 const state: { lastAttempt: BackupAttempt | null; lastCopy: BackupCopy | null } = { lastAttempt: null, lastCopy: null };
 let persistent = false;
-// Alerts raised before the database was ready, sent once it is.
-const deferred: AdminAlert[] = [];
 
 function parseState<T>(raw: string | null): T | null {
   if (!raw) return null;
@@ -195,9 +192,8 @@ async function saveState(): Promise<void> {
 
 /**
  * Reads the last attempt and copy back after a restart, and from then on writes each one through.
- * Persistence is switched on and the waiting alerts go out even when the read fails: a database
- * that cannot be read now may be writable a minute later, and an alert about a failed backup is
- * worth more than the Backups tab's memory of the last one.
+ * Persistence is switched on even when the read fails: a database that cannot be read now may be
+ * writable a minute later.
  */
 export async function restoreBackupState(): Promise<void> {
   try {
@@ -208,16 +204,23 @@ export async function restoreBackupState(): Promise<void> {
   } finally {
     persistent = true;
     await saveState();
-    for (const alert of deferred.splice(0)) raise(alert);
   }
 }
 
-function raise(alert: AdminAlert): void {
-  if (!persistent) {
-    deferred.push(alert);
-    return;
-  }
-  void alertAdmin({ path: "/settings/backups", ...alert }).catch((err) => console.error("[backup] could not send an alert", err));
+/**
+ * What the Overview warns about: the last snapshot or its copy off the disk failed, until the next one
+ * succeeds. Both are kept across restarts, so a failure in the night is still there in the morning.
+ */
+export function backupProblem(): string | null {
+  if (state.lastAttempt && !state.lastAttempt.ok) return `The last backup failed: ${state.lastAttempt.error ?? "no reason given"}`;
+  if (state.lastCopy && !state.lastCopy.ok) return `The last backup could not be copied off the disk: ${state.lastCopy.error ?? "no reason given"}`;
+  return null;
+}
+
+// Something gone wrong with a backup where no one is looking. Logged under `[alert]` and the key, so
+// the kept app log can be searched for every occurrence; the Overview shows the ones still current.
+function raise(alert: { key: string; subject: string; body: string }): void {
+  console.warn(`[alert] ${alert.key}: ${alert.subject}. ${alert.body}`);
 }
 
 // ---- the copy off the disk ----
@@ -429,8 +432,8 @@ async function writeSnapshot(options: SnapshotOptions): Promise<SnapshotResult> 
 
 /**
  * Takes a snapshot at boot when the database has migrations still to apply, so the state from before
- * a new image changed the schema can be restored with the image before it. A failure is logged and
- * alerted once the app is up, and the migrations run anyway: refusing to start would take the whole
+ * a new image changed the schema can be restored with the image before it. A failure is logged, and
+ * the migrations run anyway: refusing to start would take the whole
  * site down over a backup the daily ones already cover up to a day. Nothing is copied off the disk
  * here, so the boot never waits on the share; the caller copies it with `copySnapshotOffDisk` once
  * the app is serving.
@@ -492,7 +495,7 @@ export function startBackupScheduler(): void {
       const tick = () =>
         void runDueBackup().catch((err) => {
           console.error("[backup] snapshot failed", err);
-          // The next tick tries again a minute later; the alert goes out once in six hours.
+          // The next tick tries again a minute later.
           raise({
             key: "backup.failed",
             subject: "The daily backup failed",

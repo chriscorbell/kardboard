@@ -16,10 +16,11 @@ Read this index and [the protocol](protocol.md) when starting or resuming a sess
 
 - [CONTEXT.md](../../CONTEXT.md): the glossary. Terms are used with these meanings everywhere.
 - [Design](../design.md): the agreed design after the 2026-10-07 refocus on one person's Boards, with links to the decision records and a Status section of what is not built yet.
-- [Decision records](../adr/): twelve ADRs. 0011 (kardboard is one person's Board, worked by their own agents; no Sessions) and 0012 (one Access token reaches every Board) are current and supersede 0002, 0003, and 0005 to 0010; 0001 (identity) and 0004 (SQLite) still hold.
+- [Decision records](../adr/): thirteen ADRs. 0011 (kardboard is one person's Board, worked by their own agents; no Sessions), 0012 (one Access token reaches every Board), and 0013 (reached over Tailscale, which is the sign-in) are current and supersede 0001 to 0003 and 0005 to 0010; 0004 (SQLite) still holds.
 - [Design review](../design-review.md): eight findings against the v1 design, dated 2026-09-13, all about Sessions; superseded by ADR 0011 and kept as history.
 - The [kardboard-onboard skill](https://github.com/chriscorbell/skills/tree/main/kardboard-onboard): how an agent is connected to kardboard and a project onboarded.
-- [README](../../README.md): how to run, build, and deploy; the Status section says what is not built.
+- [README](../../README.md): how to run, build, deploy, and connect agents.
+- [Tailscale runbook](../runbooks/tailscale.md): how the app is reached and signed in to.
 
 ## Review record
 

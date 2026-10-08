@@ -2,14 +2,13 @@ import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core
 
 const now = () => new Date().toISOString();
 
-// One row: the User, created from KARDBOARD_ADMIN_EMAIL on first start and linked to a Clerk identity
-// on first sign-in.
+// One row: the User, created from KARDBOARD_ADMIN_EMAIL on first start, with the name and avatar of
+// their Tailscale profile.
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   avatarUrl: text("avatar_url"),
-  clerkUserId: text("clerk_user_id").unique(),
   // When the User dismissed the board explainer. Kept here rather than in the browser, since they
   // move between a laptop and a phone.
   onboardedAt: text("onboarded_at"),
@@ -114,15 +113,4 @@ export const accessTokens = sqliteTable("access_tokens", {
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
-});
-
-export const outboundEmails = sqliteTable("outbound_emails", {
-  id: text("id").primaryKey(),
-  toUserId: text("to_user_id").notNull(),
-  subject: text("subject").notNull(),
-  html: text("html").notNull(),
-  status: text("status", { enum: ["pending", "sent", "failed", "logged"] }).notNull().default("pending"),
-  error: text("error"),
-  createdAt: text("created_at").notNull().$defaultFn(now),
-  sentAt: text("sent_at"),
 });

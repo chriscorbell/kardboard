@@ -37,21 +37,8 @@ app.get("/healthz", async (c) => {
   }
   return c.json({ ok: true, db: "ok" });
 });
-// The board event stream authenticates with `?token=`, a Clerk session token, which must not sit in
-// a log for two weeks. The rest of the query stays: it says which page or offset was asked for.
+// Any `token=` in a query is kept out of the log, which lasts two weeks.
 app.use("*", logger((msg) => console.log(redactTokens(msg))));
-// Keep bookmarked pages working after a domain move. The destination is deployment config,
-// never a request-supplied origin; API mutations remain on the origin that received them.
-app.use("*", async (c, next) => {
-  const incoming = new URL(c.req.url);
-  if (["GET", "HEAD"].includes(c.req.method) && env.redirectHosts.includes(incoming.hostname)) {
-    const destination = new URL(env.publicUrl);
-    destination.pathname = incoming.pathname;
-    destination.search = incoming.search;
-    return c.redirect(destination.href, 308);
-  }
-  await next();
-});
 app.route("/api", api);
 app.route("/mcp", mcp);
 
@@ -59,9 +46,7 @@ app.route("/mcp", mcp);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.resolve(here, "../client");
 if (fs.existsSync(path.join(clientDir, "index.html"))) {
-  const shell = appShell(fs.readFileSync(path.join(clientDir, "index.html"), "utf8"), {
-    clerkPublishableKey: env.authMode === "clerk" ? env.clerkPublishableKey : "",
-  });
+  const shell = appShell(fs.readFileSync(path.join(clientDir, "index.html"), "utf8"));
   app.use("/assets/*", serveStatic({ root: path.relative(process.cwd(), clientDir) }));
   app.use("/brand/*", serveStatic({ root: path.relative(process.cwd(), clientDir) }));
   app.get("*", async (c) => {

@@ -163,6 +163,8 @@ export interface OverviewView {
   inProgress: Card[];
   backlog: Card[];
   backlogTotal: number;
+  /** Set while the last backup, or its copy off the disk, failed: what went wrong. */
+  backupProblem: string | null;
 }
 
 export interface CardDetail {
@@ -175,7 +177,7 @@ export interface CardDetail {
 export interface Me {
   user: User;
   agent: AgentProfile;
-  authMode: "dev" | "clerk";
+  authMode: "dev" | "tailscale";
   /** When this User dismissed the board explainer. Null shows it on the next Board they open. */
   onboardedAt: string | null;
 }
