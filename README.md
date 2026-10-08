@@ -5,7 +5,7 @@
   <img src="docs/brand/kardboard-wordmark-on-light.svg" alt="kardboard" width="320">
 </picture>
 
-**A self-hosted kanban board for all your projects, kept by you and your coding agents, on your tailnet.**
+**A self-hosted kanban board for all your projects, kept by you and your coding agents, on your own network.**
 
 </div>
 
@@ -69,22 +69,15 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 
 | Variable | Purpose |
 | --- | --- |
-| `KARDBOARD_AUTH` | `tailscale`, or `dev` for local work. Dev mode signs every request in as the seeded User, so with `NODE_ENV=production` the app refuses to start unless this is `tailscale`. |
-| `KARDBOARD_TAILSCALE_LOGIN` | The Tailscale login the app lets in, such as `you@github`. Required in `tailscale` mode. |
-| `KARDBOARD_PUBLIC_URL` | The address the app is reached at. With an `https://` address, production sends HSTS. |
 | `KARDBOARD_ADMIN_EMAIL` | The address the app's one account is created with on first start. |
 | `KARDBOARD_BACKUP_HOUR`, `KARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |
 | `KARDBOARD_BACKUP_COPY_DIR` | Optional off-disk copy of every snapshot and attachment, such as a NAS share. The directory needs a `.kardboard-backup-target` marker file. |
 
 ## Deploying
 
-kardboard is one Docker image, built by the included GitHub Actions workflow, and it is meant to be reached only over [Tailscale](https://tailscale.com), which is also its sign-in. [`deploy/compose.yaml`](deploy/compose.yaml) runs it on any Docker host with its data on a bind mount, listening on the host's loopback only. Put it on your tailnet with Tailscale Serve on that host:
+kardboard is one Docker image, built by the included GitHub Actions workflow. [`deploy/compose.yaml`](deploy/compose.yaml) runs it on any Docker host, with its data on a bind mount, published on host port 3071.
 
-```bash
-sudo tailscale serve --bg 3070
-```
-
-That serves it at `https://<host>.<tailnet>.ts.net` with your tailnet's certificate, once HTTPS Certificates is on in the tailnet's DNS settings. Serve tells the app which tailnet login each request comes from, and the app lets in the one in `KARDBOARD_TAILSCALE_LOGIN`. There is no other account to set up. [The Tailscale runbook](docs/runbooks/tailscale.md) has the details.
+kardboard has no sign-in: everyone who can reach the port is you. Run it like any other app on your home server, reached from your home network or over [Tailscale](https://tailscale.com), and never put it on the public internet. [The access runbook](docs/runbooks/access.md) describes how it runs here.
 
 ## Connecting your agents
 
@@ -96,7 +89,7 @@ One access token connects a coding agent to every board. Install it once per mac
    Claude Code, once, from anywhere:
 
    ```bash
-   claude mcp add --scope user --transport http kardboard https://your-host.your-tailnet.ts.net/mcp --header "Authorization: Bearer kbat_..."
+   claude mcp add --scope user --transport http kardboard http://your-server:3071/mcp --header "Authorization: Bearer kbat_..."
    ```
 
    So it doesn't ask before every board action, add `mcp__kardboard` to `permissions.allow` in `~/.claude/settings.json`.
@@ -105,7 +98,7 @@ One access token connects a coding agent to every board. Install it once per mac
 
    ```bash
    export KARDBOARD_TOKEN=kbat_...
-   codex mcp add kardboard --url https://your-host.your-tailnet.ts.net/mcp --bearer-token-env-var KARDBOARD_TOKEN
+   codex mcp add kardboard --url http://your-server:3071/mcp --bearer-token-env-var KARDBOARD_TOKEN
    ```
 
 3. Ask your agent what's on the board. It finds the board for the repository it is working in from `git remote get-url origin`, and when there is none it asks whether to create one, so onboarding a project is a single question. It moves cards as the work goes: In Progress when it starts, Blocked with a question when it needs you, Review once the pull request is open, and Done once it has merged it. When it notices something outside the task at hand, it files a card in Backlog and tells you in one line.

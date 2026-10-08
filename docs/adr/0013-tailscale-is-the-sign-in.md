@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0014 on 2026-10-07
 date: 2026-10-07
 ---
 # kardboard is reached over Tailscale, and Tailscale is the sign-in

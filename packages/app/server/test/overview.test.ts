@@ -6,10 +6,9 @@ import { after, beforeEach, describe, it } from "node:test";
 import type { OverviewView } from "@kardboard/shared";
 
 // The Overview: every Board at once. The database module opens its file at import time, so point it
-// at a scratch directory first, and sign in with dev authentication as the one User.
+// at a scratch directory first.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-overview-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

@@ -15,7 +15,6 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 // authentication signs the User in.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-mcp-tools-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

@@ -8,10 +8,9 @@ import { serve } from "@hono/node-server";
 
 // How large a body the JSON API and the MCP server will read: 1 MB, except an Attachment upload,
 // which keeps its own 25 MB limit. The MCP route needs the raw Node request, so it is served on a
-// real port. Dev authentication signs the API calls in as the User.
+// real port.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-body-limits-"));
 process.env.KARDBOARD_DATA_DIR = root;
-process.env.KARDBOARD_AUTH = "dev";
 
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 const { api } = await import("../src/routes/api.js");

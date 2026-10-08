@@ -1,9 +1,9 @@
 import { Navigate, Route, Routes } from "react-router";
-import { ApiError, useMe } from "./lib/api";
+import { useMe } from "./lib/api";
 import { OverviewPage } from "./routes/OverviewPage";
 import { BoardPage } from "./routes/BoardPage";
 import { SettingsPage } from "./routes/settings/SettingsPage";
-import { NotInvitedPage } from "./routes/NotInvitedPage";
+import { UnreachablePage } from "./routes/UnreachablePage";
 import { Shell } from "./components/Shell";
 import { Skeleton } from "./components/ui";
 
@@ -17,12 +17,8 @@ export function App() {
     );
   }
   // A failed background refetch keeps the page: unmounting it would throw away whatever is being
-  // typed. Only a 403 overrides loaded data, because it means this Tailscale account is not the one.
-  const err = me.error;
-  if (!me.data || (err instanceof ApiError && err.status === 403)) {
-    if (err instanceof ApiError && (err.status === 403 || err.status === 401)) return <NotInvitedPage reason={err.status === 401 ? "unauthenticated" : "not_allowed"} />;
-    return <NotInvitedPage reason="error" />;
-  }
+  // typed.
+  if (!me.data) return <UnreachablePage />;
   return (
     <Shell me={me.data}>
       <Routes>

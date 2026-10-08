@@ -21,8 +21,6 @@ export function errorCode(data: unknown, status: number): string {
 
 const CODES: Record<string, string> = {
   network: "Could not reach kardboard. Check your connection and try again.",
-  unauthenticated: "Open kardboard through Tailscale to sign in.",
-  not_allowed: "This Tailscale account can't open this kardboard.",
   forbidden: "You do not have access to that.",
   not_found: "That no longer exists.",
   conflict: "Someone else changed this first.",
@@ -32,7 +30,6 @@ const CODES: Record<string, string> = {
 
 const STATUSES: Record<number, string> = {
   400: CODES.invalid!,
-  401: CODES.unauthenticated!,
   403: CODES.forbidden!,
   404: CODES.not_found!,
   409: CODES.conflict!,

@@ -1,11 +1,9 @@
 # kardboard stack for minicore. Copy this directory to hosts/minicore/stacks/kardboard in chriscorbell/fleet and run
 # `docker compose up -d`. Watchtower updates the app on each push to main.
 #
-# The app is reached only over Tailscale. It listens on the host's loopback alone, and Tailscale
-# Serve on the host puts it at https://<host>.<tailnet>.ts.net with the tailnet's certificate:
-#   sudo tailscale serve --bg 3070
-# Serve adds the identity of the tailnet user behind each request, which is the app's sign-in; see
-# docs/adr/0013-tailscale-is-the-sign-in.md and docs/runbooks/tailscale.md.
+# Like the other apps on minicore, the app is a plain port on the host, reached from the home network
+# and the tailnet at http://minicore.saanen-monitor.ts.net:3071, with no sign-in of its own. Nothing
+# routes the public internet to it; see docs/adr/0014-a-plain-port-like-the-other-apps.md.
 
 name: kardboard
 
@@ -23,15 +21,12 @@ services:
     image: ghcr.io/chriscorbell/kardboard-app:latest
     restart: unless-stopped
     init: true
-    # Loopback only: Tailscale Serve is the one way in, so nothing can reach the app without the
-    # identity headers Serve adds, and nothing on the LAN can reach it at all.
+    # 3071 on the host, not 3070: the Cloudflare tunnel that served kardboard.cc until 2026-10-07 may
+    # still route to 10.0.0.20:3070, and an app with no sign-in must never be behind it.
     ports:
-      - "127.0.0.1:3070:3070"
+      - "3071:3070"
     environment:
       TZ: America/New_York
-      KARDBOARD_AUTH: tailscale
-      KARDBOARD_TAILSCALE_LOGIN: ${KARDBOARD_TAILSCALE_LOGIN:?set KARDBOARD_TAILSCALE_LOGIN in .env}
-      KARDBOARD_PUBLIC_URL: https://minicore.saanen-monitor.ts.net
       KARDBOARD_ADMIN_EMAIL: ${KARDBOARD_ADMIN_EMAIL}
       # Each verified snapshot, and every new attachment, is copied here as well: the NAS share,
       # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.

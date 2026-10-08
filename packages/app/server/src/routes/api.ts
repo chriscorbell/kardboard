@@ -75,7 +75,7 @@ function actorOf(c: { get: (k: "user") => { id: string } }) {
 }
 
 async function meView(user: User): Promise<Me> {
-  return { user, agent: await getAgentProfile(), authMode: env.authMode, ...(await getPreferences(user.id)) };
+  return { user, agent: await getAgentProfile(), ...(await getPreferences(user.id)) };
 }
 
 api.get("/me", async (c) => c.json(await meView(c.get("user"))));

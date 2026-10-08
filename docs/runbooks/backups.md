@@ -113,12 +113,11 @@ Every snapshot is verified when it is written, but only restoring one shows the 
 ```bash
 mkdir -p /tmp/kardboard-drill && scp minicore:/nas/backup/minicore/kardboard/kardboard-<newest stamp>.db /tmp/kardboard-drill/kardboard.db
 cd ~/Code/kardboard/packages/app
-# Everything that could reach the outside is blanked, whatever packages/app/.env says.
-KARDBOARD_DATA_DIR=/tmp/kardboard-drill KARDBOARD_AUTH=dev KARDBOARD_BACKUP_HOUR=-1 PORT=3999 \
-  RESEND_API_KEY= KARDBOARD_RUNNER_URL= KARDBOARD_EGRESS_URL= KARDBOARD_BACKUP_COPY_DIR= pnpm dev:server
+# No snapshot is taken or copied off disk, whatever packages/app/.env says.
+KARDBOARD_DATA_DIR=/tmp/kardboard-drill KARDBOARD_BACKUP_HOUR=-1 KARDBOARD_BACKUP_COPY_DIR= PORT=3999 pnpm dev:server
 ```
 
-The server migrates the copy and serves it on port 3999 in dev authentication, signed in as the User: `curl http://127.0.0.1:3999/healthz` answers `{"ok":true,"db":"ok",…}` and `curl http://127.0.0.1:3999/api/boards` lists the Boards. Stop it and delete `/tmp/kardboard-drill` afterwards.
+The server migrates the copy and serves it on port 3999: `curl http://127.0.0.1:3999/healthz` answers `{"ok":true,"db":"ok",…}` and `curl http://127.0.0.1:3999/api/boards` lists the Boards. Stop it and delete `/tmp/kardboard-drill` afterwards.
 
 ## What this does not cover
 

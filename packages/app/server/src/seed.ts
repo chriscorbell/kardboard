@@ -6,7 +6,7 @@ import { newId } from "./ids.js";
 const ADMIN_EMAIL = process.env.KARDBOARD_ADMIN_EMAIL ?? "hi@chriscorbell.com";
 const ADMIN_NAME = process.env.KARDBOARD_ADMIN_NAME ?? "Chris Corbell";
 
-// The User is created from env so a fresh deployment can sign in. Demo content only appears in dev auth mode.
+// The User is created from env on first start. Demo content only appears outside production.
 export async function ensureSeed(): Promise<void> {
   const userCount = Number((await db.select({ n: sql<number>`count(*)` }).from(schema.users).get())?.n ?? 0);
   if (userCount === 0) {
@@ -14,7 +14,7 @@ export async function ensureSeed(): Promise<void> {
     console.log(`[seed] created ${ADMIN_EMAIL}`);
   }
   const boardCount = Number((await db.select({ n: sql<number>`count(*)` }).from(schema.boards).get())?.n ?? 0);
-  if (boardCount === 0 && env.authMode === "dev") await seedDemo();
+  if (boardCount === 0 && !env.isProduction) await seedDemo();
 }
 
 // A few of one person's projects, worked by them and their agent: what a board looks like a few weeks in.
