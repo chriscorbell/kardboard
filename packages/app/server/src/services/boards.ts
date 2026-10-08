@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import type { Board, Person } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
@@ -16,7 +16,8 @@ export function toBoard(row: typeof schema.boards.$inferSelect): Board {
 }
 
 export async function listAllBoards(): Promise<Board[]> {
-  const rows = await db.select().from(schema.boards).orderBy(schema.boards.name);
+  // By name as a person reads it: "kardboard" between "Homelab" and "Recipes", not after every capital.
+  const rows = await db.select().from(schema.boards).orderBy(sql`${schema.boards.name} collate nocase`);
   return rows.map(toBoard);
 }
 

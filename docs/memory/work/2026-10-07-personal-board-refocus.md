@@ -20,5 +20,8 @@ Done:
 
 - Step 5, one Access token for every Board (migrations 0021 and 0022): the three production tokens, each made for one Board, reach every Board after it deploys. A revoked token keeps its row with `revoked_at`, since `events.board_id` is required and token lifecycle no longer has a Board to record an event on.
 
-Next action: step 6, Card types (card cpk59hfh), started in the worktree `/home/milo/Code/kardboard-card-types` on branch `card-types`, cut from step 5's first commit; rebase it onto `main` once step 5 merges. The session that did steps 1 to 4 holds the kardboard MCP tools as they were at its start; after step 5 deploys, `get_board` and `create_card` need a `board` argument its cached schema lacks, so it calls the MCP endpoint with curl instead.
+- Step 6, Card types (PR 91, migration 0023): every existing Card became a task.
+- Step 7, the Overview at `/`: it polls `/api/overview` every twenty seconds rather than following a global event stream, which nothing else needs. Boards now sort case-insensitively.
+
+Next action: step 8, the README screenshots and the kardboard-onboard skill in `chriscorbell/skills` (card u9e5595f), then the memory review and closing this note. `/tmp/kb-cdp/shot.mjs` drives headless Chrome over the DevTools protocol for screenshots that wait for the app to load; it does not survive a reboot.
 Close when: every step's card is in Done, the README and design describe the new scope, and minicore runs the app alone.

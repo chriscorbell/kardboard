@@ -146,6 +146,25 @@ export interface BoardView {
   agent: AgentProfile;
 }
 
+/** A Board as the Overview lists it: how many of its Cards are open in each Column, and how many wait on the User. */
+export interface BoardSummary {
+  board: Board;
+  open: Record<Exclude<Column, "done">, number>;
+  needsYou: number;
+}
+
+/**
+ * Every Board at once: what waits on the User (the Agent's questions in Blocked and pull requests in
+ * Review), what is In Progress, and the newest Cards in Backlog, of which there are `backlogTotal`.
+ */
+export interface OverviewView {
+  boards: BoardSummary[];
+  needsYou: Card[];
+  inProgress: Card[];
+  backlog: Card[];
+  backlogTotal: number;
+}
+
 export interface CardDetail {
   card: Card;
   comments: Comment[];

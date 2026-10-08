@@ -35,6 +35,7 @@ import { getAgentProfile, getSettings, updateSettings } from "../services/settin
 import { getPreferences, updatePreferences } from "../services/users.js";
 import { subscribe } from "../services/realtime.js";
 import { backupsView, takeSnapshot } from "../services/backup.js";
+import { overview } from "../services/overview.js";
 import { BoardDeletionRefused, boardDeletionImpact, deleteBoard } from "../services/board-deletion.js";
 import { createAccessToken, listAccessTokens, revokeAccessToken } from "../services/access-tokens.js";
 import { deleteCard } from "../services/card-deletion.js";
@@ -88,6 +89,8 @@ api.patch("/me", json(updateMeSchema), async (c) => {
 });
 
 api.get("/boards", async (c) => c.json(await listAllBoards()));
+
+api.get("/overview", async (c) => c.json(await overview()));
 
 api.get("/boards/:slug", async (c) => {
   const board = await getBoardBySlug(c.req.param("slug"));

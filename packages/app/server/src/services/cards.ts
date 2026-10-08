@@ -74,6 +74,12 @@ export async function getCard(id: string): Promise<Card | null> {
   return (await hydrate([row]))[0]!;
 }
 
+/** Every Card not in Done, on every Board: what the Overview is made of. */
+export async function listOpenCards(): Promise<Card[]> {
+  const rows = await db.select().from(schema.cards).where(ne(schema.cards.column, "done")).orderBy(asc(schema.cards.position), asc(schema.cards.createdAt));
+  return hydrate(rows);
+}
+
 export async function listChildren(cardId: string): Promise<Card[]> {
   const rows = await db
     .select()
