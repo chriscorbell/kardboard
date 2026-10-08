@@ -5,13 +5,13 @@ Read when: checking a client change in a browser, especially from an agent's bro
 Status: verified
 Scope: component, `packages/app`, local development
 Verified: 2026-10-07, running the command below on agent-pc
-Source: `packages/app/server/src/env.ts`, `packages/app/vite.config.ts`, `packages/app/client/src/lib/auth.tsx`
-Recheck when: `env.ts` stops reading `PORT` or `.env`, the Vite proxy target changes, or `packages/app/.env` stops setting `KARDBOARD_AUTH=clerk`
+Source: `packages/app/server/src/env.ts`, `packages/app/vite.config.ts`
+Recheck when: `env.ts` stops reading `PORT` or `.env`, or the Vite proxy target changes
 
-The checked-out `packages/app/.env` sets `KARDBOARD_AUTH=clerk` with real Clerk keys, so a plain `pnpm dev` asks for a Clerk sign-in. Neither `process.loadEnvFile` nor Vite overwrites a variable already in the environment, so dev auth and a throwaway database come from the command line without touching `.env`:
+A `packages/app/.env`, where a checkout has one, may set `KARDBOARD_AUTH=tailscale`, which turns away every request that did not come through Tailscale Serve. Neither `process.loadEnvFile` nor Vite overwrites a variable already in the environment, so dev auth and a throwaway database come from the command line without touching `.env`:
 
 ```bash
-cd packages/app && PORT=3070 KARDBOARD_AUTH=dev CLERK_SECRET_KEY= VITE_CLERK_PUBLISHABLE_KEY= KARDBOARD_DATA_DIR=<scratch dir> pnpm dev
+cd packages/app && PORT=3070 KARDBOARD_AUTH=dev KARDBOARD_DATA_DIR=<scratch dir> pnpm dev
 ```
 
 `PORT=3070` matters when the launcher exports `PORT` for the port it watches, as the Claude desktop app's browser pane does with 5173: the API server reads `PORT`, binds Vite's port, and every `/api` call through Vite's proxy to 3070 fails with `ECONNREFUSED` while the page stays blank.

@@ -1,6 +1,7 @@
 import { COLUMNS, type Card, type Column, type OverviewView } from "@kardboard/shared";
 import { listAllBoards } from "./boards.js";
 import { listOpenCards } from "./cards.js";
+import { backupProblem } from "./backup.js";
 
 // How many of the newest Backlog Cards the Overview shows. The rest are counted, and wait on their
 // Boards.
@@ -33,5 +34,6 @@ export async function overview(): Promise<OverviewView> {
     inProgress: cards.filter((c) => c.column === "in_progress").sort(newestFirst((c) => c.updatedAt)),
     backlog: backlog.slice(0, OVERVIEW_BACKLOG_SHOWN),
     backlogTotal: backlog.length,
+    backupProblem: backupProblem(),
   };
 }

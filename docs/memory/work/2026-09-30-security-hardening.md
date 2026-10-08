@@ -18,7 +18,7 @@ Production changes on minicore, made on 2026-09-30 at the Admin's word ("make an
 - #82: the Claude review is skipped on Dependabot's pull requests.
 - The Admin declined turning off SSH password logins on minicore.
 
-Unverified in production: a real Clerk sign-in under `CLERK_JWT_KEY`. The per-Session caps, the cooldown, the runner, egress, and preview-router fixes, and the `cbn*` firewall rule went away with Sessions on 2026-10-07 ([ADR 0011](../../adr/0011-one-persons-board-worked-by-their-own-agents.md)), so nothing is left to verify about them; the card's list was cut down to match the same day.
+Moot since 2026-10-07, when kardboard moved off `kardboard.cc` to Tailscale and dropped Clerk and Resend ([ADR 0013](../../adr/0013-tailscale-is-the-sign-in.md)): the Clerk sign-in check, `CLERK_JWT_KEY`, and blocking `/api/internal/*` at Cloudflare. The per-Session caps, the cooldown, the runner, egress, and preview-router fixes, and the `cbn*` firewall rule went away with Sessions on 2026-10-07 ([ADR 0011](../../adr/0011-one-persons-board-worked-by-their-own-agents.md)), so nothing is left to verify about them; the card's list was cut down to match the same day.
 
 Next action: the GitHub, Cloudflare, and token changes on the card only the Admin can make; then close this note.
 Close when: every item on the card is applied or explicitly declined by the Admin.

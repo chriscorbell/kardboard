@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router";
-import { ChevronDown, LogOut, Settings2, UserRound } from "lucide-react";
+import { ChevronDown, Settings2 } from "lucide-react";
 import type { Me } from "@kardboard/shared";
 import { useBoards } from "../lib/api";
-import { useAuth } from "../lib/auth";
 import { Avatar, cx } from "./ui";
 import { Wordmark } from "./Wordmark";
 import { Menu } from "./Menu";
@@ -14,7 +13,6 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const slug = /^\/b\/([^/]+)/.exec(location.pathname)?.[1];
-  const { signOut, mode, openProfile } = useAuth();
   const current = boards.data?.find((b) => b.slug === slug);
   const inSettings = location.pathname.startsWith("/settings");
 
@@ -54,24 +52,15 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
             <Settings2 className="size-4" strokeWidth={1.75} />
             <span className="hidden sm:inline">Settings</span>
           </NavLink>
-          <Menu
-            align="right"
-            trigger={
-              <button className="ml-1 inline-flex items-center gap-2 rounded-full p-0.5 transition-colors hover:bg-raised" aria-label="Account">
-                <Avatar name={me.user.name} url={me.user.avatarUrl} size={28} />
-              </button>
-            }
-            items={[
-              { label: me.user.email, disabled: true },
-              ...(mode === "clerk" && openProfile ? [{ label: "Manage account", icon: <UserRound className="size-4" strokeWidth={1.75} />, onSelect: () => openProfile(), separator: true }] : []),
-              ...(mode === "clerk" ? [{ label: "Sign out", icon: <LogOut className="size-4" strokeWidth={1.75} />, onSelect: () => void signOut() }] : []),
-            ]}
-          />
+          {/* Who is signed in, by Tailscale. There is nothing to sign out of: Tailscale is the sign-in. */}
+          <span className="ml-1 inline-flex p-0.5" title={me.user.name}>
+            <Avatar name={me.user.name} url={me.user.avatarUrl} size={28} />
+          </span>
         </div>
       </header>
       <main className="min-h-0 flex-1">{children}</main>
       <Toaster />
-      {mode === "dev" ? (
+      {me.authMode === "dev" ? (
         <div className="pointer-events-none fixed bottom-3 left-3 z-40 hidden rounded-full sm:block border border-line bg-surface/90 px-2.5 py-1 font-mono text-[11px] text-ink-faint backdrop-blur">
           dev auth as <Link to="/settings" className="pointer-events-auto text-ink-muted">{me.user.name}</Link>
         </div>

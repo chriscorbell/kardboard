@@ -20,20 +20,12 @@ import { useRef } from "react";
 import { ApiError, errorCode, NO_RESPONSE, shouldRetry } from "./errors";
 import { postComment, UploadFailed, type CommentRequests, type PostProgress } from "./commentPost";
 
-let tokenProvider: () => Promise<string | null> = async () => null;
-export function setTokenProvider(fn: () => Promise<string | null>) {
-  tokenProvider = fn;
-}
-
 export { ApiError };
 
-// Every call to the API goes through here, or through uploadFile below, which sets the same header:
-// the server authenticates the bearer token and nothing else, so a plain <img src> or <a href> to
-// /api is refused in production.
+// Every call to the API goes through here, or through uploadFile below. They carry no credential:
+// Tailscale Serve signs each request in on its way to the app.
 async function send(path: string, init: RequestInit): Promise<Response> {
-  const token = await tokenProvider();
   const headers = new Headers(init.headers);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   try {
     return await fetch(`/api${path}`, { ...init, headers });
@@ -58,13 +50,11 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 // An upload that reports how far it has got. fetch cannot say how much of a body it has sent, and a
 // 25 MB video over a phone connection is long enough that someone should see it moving.
 export async function uploadFile<T>(path: string, file: File, onProgress?: (fraction: number) => void): Promise<T> {
-  const token = await tokenProvider();
   const form = new FormData();
   form.append("file", file);
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `/api${path}`);
-    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && e.total > 0) onProgress?.(e.loaded / e.total);
     };

@@ -1,5 +1,11 @@
 # kardboard stack for minicore. Copy this directory to hosts/minicore/stacks/kardboard in chriscorbell/fleet and run
 # `docker compose up -d`. Watchtower updates the app on each push to main.
+#
+# The app is reached only over Tailscale. It listens on the host's loopback alone, and Tailscale
+# Serve on the host puts it at https://<host>.<tailnet>.ts.net with the tailnet's certificate:
+#   sudo tailscale serve --bg 3070
+# Serve adds the identity of the tailnet user behind each request, which is the app's sign-in; see
+# docs/adr/0013-tailscale-is-the-sign-in.md and docs/runbooks/tailscale.md.
 
 name: kardboard
 
@@ -17,19 +23,16 @@ services:
     image: ghcr.io/chriscorbell/kardboard-app:latest
     restart: unless-stopped
     init: true
+    # Loopback only: Tailscale Serve is the one way in, so nothing can reach the app without the
+    # identity headers Serve adds, and nothing on the LAN can reach it at all.
     ports:
-      - "3070:3070"
+      - "127.0.0.1:3070:3070"
     environment:
       TZ: America/New_York
-      KARDBOARD_AUTH: clerk
-      KARDBOARD_PUBLIC_URL: https://kardboard.cc
-      KARDBOARD_REDIRECT_HOSTS: cardboard.xode.cc,app.kardboard.cc
+      KARDBOARD_AUTH: tailscale
+      KARDBOARD_TAILSCALE_LOGIN: ${KARDBOARD_TAILSCALE_LOGIN:?set KARDBOARD_TAILSCALE_LOGIN in .env}
+      KARDBOARD_PUBLIC_URL: https://minicore.saanen-monitor.ts.net
       KARDBOARD_ADMIN_EMAIL: ${KARDBOARD_ADMIN_EMAIL}
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
-      CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
-      CLERK_JWT_KEY: ${CLERK_JWT_KEY:-}
-      RESEND_API_KEY: ${RESEND_API_KEY}
-      KARDBOARD_EMAIL_FROM: "Milo <milo@kardboard.cc>"
       # Each verified snapshot, and every new attachment, is copied here as well: the NAS share,
       # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.
       KARDBOARD_BACKUP_COPY_DIR: /nas/kardboard

@@ -21,8 +21,8 @@ export function errorCode(data: unknown, status: number): string {
 
 const CODES: Record<string, string> = {
   network: "Could not reach kardboard. Check your connection and try again.",
-  unauthenticated: "Your session has ended. Sign in again.",
-  not_invited: "This account can't open this kardboard.",
+  unauthenticated: "Open kardboard through Tailscale to sign in.",
+  not_allowed: "This Tailscale account can't open this kardboard.",
   forbidden: "You do not have access to that.",
   not_found: "That no longer exists.",
   conflict: "Someone else changed this first.",

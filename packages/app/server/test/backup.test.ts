@@ -11,7 +11,6 @@ process.env.KARDBOARD_DATA_DIR = path.join(root, "data");
 // Zero would have the prune step remove the snapshot it had just written.
 process.env.KARDBOARD_BACKUP_KEEP = "0";
 
-process.env.RESEND_API_KEY = "";
 
 const {
   backupsView,
@@ -28,12 +27,13 @@ const {
   snapshotFilename,
   takeSnapshot,
   verifySnapshot,
+  backupProblem,
 } = await import("../src/services/backup.js");
 const { atLeastOne } = await import("../src/env.js");
 const { db, schema, runMigrations } = await import("../src/db/index.js");
 
-// The app's own database, for what the service keeps between restarts and the alerts it sends. The
-// snapshots themselves are taken of throwaway databases below.
+// The app's own database, for what the service keeps between restarts. The snapshots themselves are
+// taken of throwaway databases below.
 await runMigrations();
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -436,11 +436,9 @@ describe("copying off the disk", () => {
 });
 
 describe("what is kept across a restart", () => {
-  it("writes the last attempt and copy through once restored, and sends the alerts raised before then", async () => {
-    await db.delete(schema.users);
-    await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
-    // The failed copies above raised an alert before the app's database was declared ready. The read
-    // back fails here, once, and the alert still goes out.
+  it("writes the last attempt and copy through once restored, even when the read back fails", async () => {
+    // The failed copies above happened before the app's database was declared ready. The read back
+    // fails here, once, and what happened since the boot is still written through.
     const select = db.select.bind(db);
     let reads = 0;
     (db as { select: unknown }).select = ((...args: Parameters<typeof select>) => {
@@ -452,13 +450,8 @@ describe("what is kept across a restart", () => {
     } finally {
       (db as { select: unknown }).select = select;
     }
-    for (let i = 0; i < 50 && (await db.select().from(schema.outboundEmails)).length === 0; i++) await new Promise((r) => setTimeout(r, 10));
-    const emails = await db.select().from(schema.outboundEmails);
-    assert.deepEqual(
-      emails.map((e) => e.subject),
-      ["kardboard: A backup could not be copied off the disk"],
-    );
-    assert.match(emails[0]!.html, /href="[^"]*\/settings\/backups"/, "the alert opens the Backups tab");
+    // The last copy above failed, so the Overview says so until a copy succeeds.
+    assert.match(backupProblem() ?? "", /could not be copied off the disk/);
 
     const { client, dir } = await sourceDb();
     await takeSnapshot({ client, dir, keep: 10, copyDir: null });

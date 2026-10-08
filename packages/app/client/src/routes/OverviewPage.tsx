@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { GitBranch, GitPullRequest, MessageCircleQuestion, Plus } from "lucide-react";
+import { DatabaseBackup, GitBranch, GitPullRequest, MessageCircleQuestion, Plus } from "lucide-react";
 import { COLUMN_LABELS, type AgentProfile, type Board, type BoardSummary, type Card, type Column } from "@kardboard/shared";
 import { useMe, useOverview } from "../lib/api";
 import { useDocumentTitle } from "../lib/documentTitle";
@@ -24,13 +24,14 @@ export function OverviewPage() {
       </div>
     );
   }
-  const { boards, needsYou, inProgress, backlog, backlogTotal } = overview.data;
+  const { boards, needsYou, inProgress, backlog, backlogTotal, backupProblem } = overview.data;
   const boardOf = new Map(boards.map((b) => [b.board.id, b.board]));
   if (boards.length === 0) return <NoBoards />;
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-x-12 gap-y-10 px-4 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex min-w-0 flex-col gap-10">
+          {backupProblem ? <BackupProblem message={backupProblem} /> : null}
           <Section title="Needs you" count={needsYou.length} empty="Nothing waits on you. Questions and pull requests show up here.">
             {needsYou.map((card) => (
               <CardRow key={card.id} card={card} board={boardOf.get(card.boardId)} agent={agent} why={card.column === "review" ? "review" : "question"} />
@@ -54,6 +55,22 @@ export function OverviewPage() {
         </div>
         <BoardList boards={boards} />
       </div>
+    </div>
+  );
+}
+
+// Backups fail where no one is looking, and nothing emails about it, so the page every visit starts on
+// says so until the next one succeeds.
+function BackupProblem({ message }: { message: string }) {
+  return (
+    <div role="alert" className="flex items-start gap-3 rounded-card border border-warn/30 bg-[rgba(217,178,108,0.07)] px-3.5 py-3 text-[13px] leading-relaxed">
+      <DatabaseBackup className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+      <p className="min-w-0 flex-1 text-ink">
+        {message}{" "}
+        <Link to="/settings/backups" className="whitespace-nowrap text-accent">
+          Open Backups
+        </Link>
+      </p>
     </div>
   );
 }
