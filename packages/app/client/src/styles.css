@@ -6,33 +6,39 @@
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
-  --color-bg: #121110;
-  --color-surface: #191816;
-  --color-raised: #201e1b;
-  --color-overlay: #262421;
-  --color-line: #2b2925;
-  --color-line-strong: #3b3833;
-  --color-ink: #ece7de;
-  --color-ink-muted: #a69f93;
-  --color-ink-faint: #6f695f;
-  --color-accent: #d9a05b;
-  --color-accent-ink: #1b1710;
-  --color-accent-soft: rgba(217, 160, 91, 0.14);
-  --color-ok: #8fbb87;
-  --color-warn: #d9b26c;
-  --color-danger: #d98274;
-  --color-info: #86abc9;
+  /*
+    The palette and shapes follow Strike (github.com/chriscorbell/strike): near-black neutral grays,
+    hairlines of white, and one lime accent, which is the Agent's. Status and Card type colors are data
+    colors, kept off the accent. Shape rule: controls are rounded-control (12px), cards rounded-card
+    (14px), dialogs and sheets rounded-panel (16px), and chips, pills, and badges rounded-full.
+  */
+  --color-bg: #101113;
+  --color-surface: #17181b;
+  --color-raised: #1f2124;
+  --color-overlay: #27292d;
+  --color-line: rgb(255 255 255 / 0.07);
+  --color-line-strong: rgb(255 255 255 / 0.13);
+  --color-line-hover: rgb(255 255 255 / 0.22);
+  --color-ink: #ededee;
+  --color-ink-muted: #a6a7ad;
+  --color-ink-faint: #8b8c93;
+  --color-accent: #c6e35f;
+  --color-accent-ink: #15170f;
+  --color-accent-soft: rgb(198 227 95 / 0.12);
+  --color-ok: #4fc3a1;
+  --color-warn: #f0ad2e;
+  --color-danger: #ef6b6b;
+  --color-info: #5b9cf0;
 
-  /* Card types. Muted like the rest of the palette, and kept off the accent, which is the Agent's. */
-  --color-type-task: #86abc9;
-  --color-type-bug: #d98274;
-  --color-type-feature: #ab9ad6;
-  --color-type-idea: #d9b26c;
-  --color-type-chore: #9a9387;
+  --color-type-task: #5b9cf0;
+  --color-type-bug: #ef6b6b;
+  --color-type-feature: #a78bfa;
+  --color-type-idea: #f0ad2e;
+  --color-type-chore: #8b8c93;
 
-  --radius-control: 8px;
-  --radius-card: 10px;
-  --radius-panel: 14px;
+  --radius-control: 12px;
+  --radius-card: 14px;
+  --radius-panel: 16px;
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -49,14 +55,16 @@
     font-family: var(--font-sans);
     font-size: 14px;
     line-height: 1.5;
+    font-feature-settings: "ss01" on;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
   * {
     border-color: var(--color-line);
   }
   ::selection {
-    background: rgba(217, 160, 91, 0.3);
+    background: rgb(198 227 95 / 0.3);
   }
   button, input, textarea, select {
     font: inherit;
@@ -90,7 +98,7 @@
   }
   .prose-cb p { margin: 0 0 0.75em; }
   .prose-cb p:last-child { margin-bottom: 0; }
-  .prose-cb a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(217,160,91,.4); }
+  .prose-cb a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgb(198 227 95 / 0.4); }
   .prose-cb a:hover { text-decoration-color: var(--color-accent); }
   .prose-cb ul, .prose-cb ol { margin: 0 0 0.75em; padding-left: 1.4em; }
   .prose-cb ul { list-style: disc; }

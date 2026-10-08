@@ -63,7 +63,7 @@ export function OverviewPage() {
 // says so until the next one succeeds.
 function BackupProblem({ message }: { message: string }) {
   return (
-    <div role="alert" className="flex items-start gap-3 rounded-card border border-warn/30 bg-[rgba(217,178,108,0.07)] px-3.5 py-3 text-[13px] leading-relaxed">
+    <div role="alert" className="flex items-start gap-3 rounded-card border border-warn/30 bg-raised px-3.5 py-3 text-[13px] leading-relaxed">
       <DatabaseBackup className="mt-0.5 size-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
       <p className="min-w-0 flex-1 text-ink">
         {message}{" "}
@@ -163,7 +163,7 @@ function BoardList({ boards }: { boards: BoardSummary[] }) {
                 <span className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-ink">{board.name}</span>
                   {needsYou > 0 ? (
-                    <span className="shrink-0 rounded-full bg-[rgba(217,178,108,0.14)] px-1.5 font-mono text-[11px] leading-5 text-warn" title={`${needsYou} waiting on you`}>
+                    <span className="shrink-0 rounded-full bg-warn/14 px-1.5 font-mono text-[11px] leading-5 text-warn" title={`${needsYou} waiting on you`}>
                       {needsYou}
                     </span>
                   ) : null}

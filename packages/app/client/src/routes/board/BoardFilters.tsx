@@ -29,7 +29,7 @@ export const BoardSearch = forwardRef<HTMLInputElement, { value: string; onChang
         placeholder="Search cards"
         aria-label="Search cards"
         aria-keyshortcuts="/"
-        className="h-7 w-full rounded-control border border-line-strong bg-surface pl-8 pr-7 text-[13px] text-ink placeholder:text-ink-faint transition-colors duration-150 hover:border-[#4a463f] focus:border-accent focus:outline-none"
+        className="h-7 w-full rounded-control border border-line-strong bg-raised pl-8 pr-7 text-[13px] text-ink placeholder:text-ink-faint transition-colors duration-150 hover:border-line-hover focus:border-accent/60 focus:outline-none"
       />
       {value ? (
         <button type="button" aria-label="Clear search" onClick={() => onChange("")} className="absolute right-1 top-1/2 -translate-y-1/2 rounded-[6px] p-1 text-ink-faint transition-colors hover:bg-overlay hover:text-ink">

@@ -48,7 +48,7 @@ export function ImageViewer({ images, index, onIndex, onClose }: { images: Attac
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: reduce ? 0 : 0.18 }}
-          className="fixed inset-0 z-[60] flex flex-col bg-[rgba(12,11,10,0.94)] backdrop-blur-sm focus:outline-none"
+          className="fixed inset-0 z-[60] flex flex-col bg-bg/94 backdrop-blur-sm focus:outline-none"
         >
           <Shown key={image.id} image={image} index={index} count={images.length} onIndex={onIndex} onClose={onClose} />
         </motion.div>
