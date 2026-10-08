@@ -11,6 +11,7 @@ function card(over: Partial<Card> = {}): Card {
     boardId: "b",
     title: `Card ${n}`,
     description: "",
+    type: "task",
     priority: "none",
     column: "inbox",
     position: n * 1000,
@@ -35,9 +36,9 @@ const filter = (over: Partial<BoardFilter>): BoardFilter => ({ ...NO_FILTER, ...
 
 describe("the filter in the URL", () => {
   it("reads what it wrote, and drops what it does not know", () => {
-    const f: BoardFilter = { q: "login page", mine: true, needsMe: true, priority: "high" };
+    const f: BoardFilter = { q: "login page", mine: true, needsMe: true, type: "bug", priority: "high" };
     assert.deepEqual(readFilter(writeFilter(f, new URLSearchParams())), f);
-    assert.deepEqual(readFilter(new URLSearchParams("priority=urgent&mine=yes")), NO_FILTER);
+    assert.deepEqual(readFilter(new URLSearchParams("priority=urgent&type=epic&mine=yes")), NO_FILTER);
   });
 
   it("keeps other parameters and removes cleared filters", () => {
@@ -52,6 +53,7 @@ describe("the filter in the URL", () => {
     assert.equal(filterActive(filter({ q: "   " })), false);
     assert.equal(filterActive(filter({ q: "a" })), true);
     assert.equal(filterActive(filter({ priority: "none" })), true);
+    assert.equal(filterActive(filter({ type: "task" })), true);
   });
 });
 
@@ -97,6 +99,12 @@ describe("matchesFilter", () => {
 
   it("never counts a card the Agent created as mine", () => {
     assert.equal(matchesFilter(card({ creatorKind: "agent", creatorId: null }), filter({ mine: true }), ada), false);
+  });
+
+  it("keeps only the chosen type", () => {
+    const bug = card({ type: "bug" });
+    const idea = card({ type: "idea" });
+    assert.deepEqual([bug, idea].filter((c) => matchesFilter(c, filter({ type: "bug" }), ada)), [bug]);
   });
 });
 

@@ -31,6 +31,7 @@ export const cards = sqliteTable(
     boardId: text("board_id").notNull().references(() => boards.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     description: text("description").notNull().default(""),
+    type: text("type", { enum: ["task", "bug", "feature", "idea", "chore"] }).notNull().default("task"),
     priority: text("priority", { enum: ["none", "low", "medium", "high"] }).notNull().default("none"),
     column: text("column", { enum: ["inbox", "blocked", "ready", "in_progress", "review", "done"] })
       .notNull()

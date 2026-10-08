@@ -23,6 +23,13 @@
   --color-danger: #d98274;
   --color-info: #86abc9;
 
+  /* Card types. Muted like the rest of the palette, and kept off the accent, which is the Agent's. */
+  --color-type-task: #86abc9;
+  --color-type-bug: #d98274;
+  --color-type-feature: #ab9ad6;
+  --color-type-idea: #d9b26c;
+  --color-type-chore: #9a9387;
+
   --radius-control: 8px;
   --radius-card: 10px;
   --radius-panel: 14px;

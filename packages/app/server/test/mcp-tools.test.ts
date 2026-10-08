@@ -85,6 +85,7 @@ describe("the server's instructions", () => {
     assert.match(instructions, /list_boards/);
     assert.match(instructions, /create_board/);
     assert.match(instructions, /File side-findings without asking[^]*in Backlog/);
+    assert.match(instructions, /the type that fits/);
   });
 });
 
@@ -93,7 +94,7 @@ describe("update_card", () => {
     const { client } = await agent();
     const result = await call(client, "update_card", { card_id: CARD, title: "Export invoices as CSV", priority: "high", revision: 0 });
     assert.notEqual(result.isError, true, text(result));
-    assert.deepEqual(json(result), { cardId: CARD, revision: 1, title: "Export invoices as CSV", priority: "high" });
+    assert.deepEqual(json(result), { cardId: CARD, revision: 1, title: "Export invoices as CSV", type: "task", priority: "high" });
 
     const events = await db.select().from(schema.events).where(and(eq(schema.events.cardId, CARD), eq(schema.events.type, "card.edited")));
     assert.equal(events.length, 1);
@@ -117,6 +118,23 @@ describe("update_card", () => {
     assert.equal(result.isError, true);
     assert.match(text(result), /changed after revision 2: it is now at revision 3/);
     assert.equal((await row(CARD)).title, `Card ${CARD}`);
+  });
+
+  it("changes a card's type, keeping the one it replaced", async () => {
+    const { client } = await agent();
+    const result = await call(client, "update_card", { card_id: CARD, type: "bug", revision: 0 });
+    assert.notEqual(result.isError, true, text(result));
+    assert.equal(json(result).type, "bug");
+    assert.equal((await row(CARD)).type, "bug");
+    const [edited] = await db.select().from(schema.events).where(and(eq(schema.events.cardId, CARD), eq(schema.events.type, "card.edited")));
+    assert.deepEqual((edited!.payload as { previous: unknown }).previous, { type: "task" });
+  });
+
+  it("refuses a type outside the fixed set", async () => {
+    const { client } = await agent();
+    const result = await call(client, "update_card", { card_id: CARD, type: "epic", revision: 0 });
+    assert.equal(result.isError, true);
+    assert.equal((await row(CARD)).type, "task");
   });
 
   it("refuses a call that changes nothing", async () => {
@@ -270,6 +288,16 @@ describe("naming a board", () => {
     await db.update(schema.boards).set({ repoUrl: "https://github.com/Acme/Widgets.git" }).where(eq(schema.boards.id, BOARD));
     const { client } = await agent();
     assert.equal((json(await call(client, "get_board", { board: "git@github.com:acme/widgets" })).board as { slug: string }).slug, "board-one");
+  });
+
+  it("files a card as a task unless the agent gives its type", async () => {
+    const { client } = await agent();
+    const plain = json(await call(client, "create_card", { board: "board-one", title: "Update the readme" }));
+    const bug = json(await call(client, "create_card", { board: "board-one", title: "Search drops accents", type: "bug" }));
+    assert.equal((await row(plain.cardId as string)).type, "task");
+    assert.equal((await row(bug.cardId as string)).type, "bug");
+    const board = json(await call(client, "get_board", { board: "board-one" })) as { cards: Record<string, { id: string; type: string }[]> };
+    assert.equal(board.cards.inbox!.find((c) => c.id === bug.cardId)!.type, "bug");
   });
 
   it("files a card on the board named, by slug or by repository", async () => {

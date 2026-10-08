@@ -15,6 +15,13 @@ export const COLUMN_LABELS: Record<Column, string> = {
   done: "Done",
 };
 
+// What kind of work a Card is: exactly one per Card, from a fixed set, so every Board reads the same
+// way and agents cannot grow a sprawl of near-duplicates. Task is what a Card is unless said otherwise.
+export const CARD_TYPES = ["task", "bug", "feature", "idea", "chore"] as const;
+export type CardType = (typeof CARD_TYPES)[number];
+export const cardTypeSchema = z.enum(CARD_TYPES);
+export const CARD_TYPE_LABELS: Record<CardType, string> = { task: "Task", bug: "Bug", feature: "Feature", idea: "Idea", chore: "Chore" };
+
 export const PRIORITIES = ["none", "low", "medium", "high"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 export const prioritySchema = z.enum(PRIORITIES);
@@ -54,6 +61,7 @@ export interface Card {
   boardId: string;
   title: string;
   description: string;
+  type: CardType;
   priority: Priority;
   column: Column;
   position: number;
@@ -158,6 +166,7 @@ export interface Me {
 export const createCardSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().max(20_000).default(""),
+  type: cardTypeSchema.default("task"),
   priority: prioritySchema.default("none"),
   column: columnSchema.default("inbox"),
 });
@@ -166,6 +175,7 @@ export type CreateCardInput = z.infer<typeof createCardSchema>;
 export const updateCardSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   description: z.string().max(20_000).optional(),
+  type: cardTypeSchema.optional(),
   priority: prioritySchema.optional(),
   revision: z.number().int().nonnegative(),
 });

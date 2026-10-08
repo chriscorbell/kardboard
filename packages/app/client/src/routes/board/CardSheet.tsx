@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, ChevronDown, GitBranch, GitPullRequest, History, Link2, Pencil, Reply, Trash2, Upload, X } from "lucide-react";
-import { COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Person, type Priority } from "@kardboard/shared";
+import { CARD_TYPES, CARD_TYPE_LABELS, COLUMNS, COLUMN_LABELS, PRIORITIES, type ActivityEntry, type AgentProfile, type BoardView, type Card, type Column, type Comment, type Person, type Priority } from "@kardboard/shared";
 import { useCard, useCreateComment, useDeleteCard, useDeleteComment, useMe, useMoveCard, useUpdateCard, useUpdateComment } from "../../lib/api";
 import { useNavigate } from "react-router";
 import { Avatar, Button, Chip, cx, ErrorState, IconButton, Input, Skeleton, Textarea } from "../../components/ui";
@@ -13,6 +13,7 @@ import { useFileDrop } from "../../lib/fileInput";
 import { toast } from "../../lib/toast";
 import { Composer, type ComposerHandle } from "./Composer";
 import { COLUMN_TONES } from "./columns";
+import { CARD_TYPE_LOOK, TypeLabel } from "./cardTypes";
 import { ApiError } from "../../lib/errors";
 import { Attachments } from "./AttachmentView";
 import { EditConflict, resolveRefusedSave, type EditableField, type EditBase } from "./cardEdits";
@@ -130,6 +131,23 @@ function SheetBody({ slug, cardId, titleId, view, onClose }: { slug: string; car
             active: c === card.column,
             onSelect: () => c !== card.column && move.mutate({ id: card.id, column: c, position: Number.MAX_SAFE_INTEGER / 2, revision: card.revision }, { onError: (err) => toast(`The card was not moved to ${COLUMN_LABELS[c]}. ${err.message}`) }),
           }))}
+        />
+        <Menu
+          trigger={
+            <button aria-label={`Type: ${CARD_TYPE_LABELS[card.type]}`} className="inline-flex h-7 items-center gap-1 rounded-control px-1.5 text-[12.5px] transition-colors hover:bg-raised">
+              <TypeLabel type={card.type} />
+              <ChevronDown className="size-3.5 text-ink-faint" strokeWidth={1.75} />
+            </button>
+          }
+          items={CARD_TYPES.map((t) => {
+            const Icon = CARD_TYPE_LOOK[t].icon;
+            return {
+              label: CARD_TYPE_LABELS[t],
+              icon: <Icon className={cx("size-4", CARD_TYPE_LOOK[t].text)} strokeWidth={1.75} />,
+              active: t === card.type,
+              onSelect: () => t !== card.type && update.mutate({ id: card.id, type: t, revision: card.revision }, { onError: (err) => toast(`The type was not changed. ${err.message}`) }),
+            };
+          })}
         />
         <span className="font-mono text-[11.5px] text-ink-faint">{shortId(card.id)}</span>
         <span className="ml-auto" />

@@ -1,7 +1,7 @@
 import { forwardRef, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChevronDown, Search, X } from "lucide-react";
-import { PRIORITIES, type Priority } from "@kardboard/shared";
+import { CARD_TYPES, CARD_TYPE_LABELS, PRIORITIES, type CardType, type Priority } from "@kardboard/shared";
 import { cx, Kbd } from "../../components/ui";
 import { useCoarsePointer } from "../../lib/pointer";
 import { filterActive, NO_FILTER, type BoardFilter } from "./boardFilter";
@@ -56,8 +56,9 @@ function Toggle({ pressed, onClick, children }: { pressed: boolean; onClick: () 
   );
 }
 
-// Mine, Needs me, and Priority. Priority is a native select dressed as a chip: its list opens as the
-// phone's own picker, and is not clipped by the chip row scrolling sideways on a narrow screen.
+// Mine, Needs me, Type, and Priority. Type and Priority are native selects dressed as chips: each list
+// opens as the phone's own picker, and is not clipped by the chip row scrolling sideways on a narrow
+// screen.
 export function FilterChips({ filter, onChange, waiting, className }: { filter: BoardFilter; onChange: (f: BoardFilter) => void; waiting: number; className?: string }) {
   const reduce = useReducedMotion();
   return (
@@ -73,6 +74,22 @@ export function FilterChips({ filter, onChange, waiting, className }: { filter: 
           </span>
         ) : null}
       </Toggle>
+      <label className={cx(chip, "relative pr-1.5", filter.type ? chipOn : chipOff)}>
+        <span className="sr-only">Type</span>
+        <select
+          value={filter.type ?? ""}
+          onChange={(e) => onChange({ ...filter, type: (e.target.value || null) as CardType | null })}
+          className="h-full cursor-pointer appearance-none bg-transparent pr-4 focus:outline-none"
+        >
+          <option value="">Any type</option>
+          {CARD_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {CARD_TYPE_LABELS[t]}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2 size-3.5" strokeWidth={1.75} aria-hidden="true" />
+      </label>
       <label className={cx(chip, "relative pr-1.5", filter.priority ? chipOn : chipOff)}>
         <span className="sr-only">Priority</span>
         <select
