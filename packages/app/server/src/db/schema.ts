@@ -98,20 +98,17 @@ export const events = sqliteTable(
   (t) => [index("events_card_idx").on(t.cardId), index("events_board_idx").on(t.boardId)],
 );
 
-// The User's credentials for their own coding agent, each good for one Board, where whoever holds
-// it acts as the Agent. Only the hash is kept; the token is shown once.
-export const accessTokens = sqliteTable(
-  "access_tokens",
-  {
-    id: text("id").primaryKey(),
-    boardId: text("board_id").notNull().references(() => boards.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    tokenHash: text("token_hash").notNull().unique(),
-    lastUsedAt: text("last_used_at"),
-    createdAt: text("created_at").notNull().$defaultFn(now),
-  },
-  (t) => [index("access_tokens_board_idx").on(t.boardId)],
-);
+// The User's credentials for their own coding agents, each good for every Board, where whoever holds
+// it acts as the Agent (ADR 0012). Only the hash is kept; the token is shown once. A revoked token
+// keeps its row, so the events it signed still name it.
+export const accessTokens = sqliteTable("access_tokens", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  lastUsedAt: text("last_used_at"),
+  revokedAt: text("revoked_at"),
+  createdAt: text("created_at").notNull().$defaultFn(now),
+});
 
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),

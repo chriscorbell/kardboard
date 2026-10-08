@@ -81,25 +81,28 @@ External services you need to set up once:
 - A **Clerk** application for sign-in.
 - A **Resend** domain for email.
 
-## Working a board from your own agent
+## Connecting your agents
 
-Your own coding agent can read a board and create, edit, move, and comment on cards, as the board's agent.
+One access token connects a coding agent to every board. Install it once per machine, and the agent has kardboard in every project.
 
-1. In Settings, open the board. Under **Access tokens**, name a token after where it will run and create it.
-2. Copy the command shown with the token and run it in the project's folder. It adds the board to Claude Code as an MCP server for that project:
+1. In **Settings → Agent**, under **Connect an agent**, name a token after where it will run and create it. The token is shown once.
+2. Install it in your agent.
+
+   Claude Code, once, from anywhere:
 
    ```bash
-   claude mcp add --transport http kardboard https://your-kardboard-host/mcp --header "Authorization: Bearer kbat_..."
+   claude mcp add --scope user --transport http kardboard https://your-kardboard-host/mcp --header "Authorization: Bearer kbat_..."
    ```
 
-3. So Claude Code doesn't ask before every board action, allow the server's tools in the project's `.claude/settings.json`:
+   So it doesn't ask before every board action, add `mcp__kardboard` to `permissions.allow` in `~/.claude/settings.json`.
 
-   ```json
-   { "permissions": { "allow": ["mcp__kardboard"] } }
+   Codex reads the token from an environment variable. Export it from your shell profile, then add the server:
+
+   ```bash
+   export KARDBOARD_TOKEN=kbat_...
+   codex mcp add kardboard --url https://your-kardboard-host/mcp --bearer-token-env-var KARDBOARD_TOKEN
    ```
 
-4. Ask your agent to read the board. It is told how the columns are meant to be used: In Progress when it starts a card, Blocked with a question when it needs you, Review once the pull request is open, and Done once it has merged it.
+3. Ask your agent what's on the board. It finds the board for the repository it is working in from `git remote get-url origin`, and when there is none it asks whether to create one, so onboarding a project is a single question. It moves cards as the work goes: In Progress when it starts, Blocked with a question when it needs you, Review once the pull request is open, and Done once it has merged it. When it notices something outside the task at hand, it files a card in Backlog and tells you in one line.
 
-The token is shown once. Revoke it from the same place. kardboard never reads or merges pull requests, so the repository needs nothing from kardboard, and your agent merges with your own credentials.
-
-To prepare a repository with your coding agent, run the `kardboard-onboard` skill from [chriscorbell/skills](https://github.com/chriscorbell/skills) in it.
+Revoke a token from the same place. kardboard never reads or merges pull requests, so a repository needs nothing from kardboard, and your agent merges with your own credentials.

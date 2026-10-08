@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import type { Board, BoardDeletionImpact } from "@kardboard/shared";
-import { keys, request, useBoards, useMe } from "../../lib/api";
+import { keys, request, useAdminBoards } from "../../lib/api";
 import { Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { TabHeader } from "./SettingsPage";
-import { AccessTokensPanel } from "./AccessTokensPanel";
 import { slugDraft, slugify } from "./slug";
 import { canDelete, deletionContents } from "./boardDeletion";
 import { toast } from "../../lib/toast";
@@ -24,8 +23,7 @@ function fromBoard(b: Board): Draft {
 }
 
 export function BoardsTab() {
-  const boards = useBoards();
-  const agentName = useMe().data?.agent.name ?? "The agent";
+  const boards = useAdminBoards();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Board | "new" | null>(null);
   const [deleting, setDeleting] = useState<Board | null>(null);
@@ -112,16 +110,9 @@ export function BoardsTab() {
               />
             </Field>
           </div>
-          <Field label="Repository URL" hint="GitHub only. Optional.">
+          <Field label="Repository URL" hint="GitHub only. Optional, but it is how an agent working in the repository finds this board.">
             <Input type="url" value={draft.repoUrl} onChange={(e) => setDraft({ ...draft, repoUrl: e.target.value })} placeholder="https://github.com/org/repo" />
           </Field>
-          <div>
-            {editing && editing !== "new" ? (
-              <AccessTokensPanel boardId={editing.id} agentName={agentName} />
-            ) : (
-              <p className="text-[12.5px] text-ink-faint">Once the board exists, its settings can make an access token for your own agent.</p>
-            )}
-          </div>
           {save.isError ? <p className="text-[13px] text-danger">{save.error.message}</p> : null}
           <div className="flex items-center gap-2 pt-1">
             {editing && editing !== "new" ? (

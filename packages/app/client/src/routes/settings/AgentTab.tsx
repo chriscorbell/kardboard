@@ -4,6 +4,7 @@ import type { Settings } from "@kardboard/shared";
 import { keys, request, useAdminSettings } from "../../lib/api";
 import { Avatar, Button, ErrorState, Field, Input, Skeleton } from "../../components/ui";
 import { TabHeader } from "./SettingsPage";
+import { AccessTokensPanel } from "./AccessTokensPanel";
 
 export function AgentTab() {
   const settings = useAdminSettings();
@@ -53,6 +54,7 @@ export function AgentTab() {
           {save.isSuccess ? <span className="ml-3 text-[12.5px] text-ink-muted">Saved.</span> : null}
         </div>
       </form>
+      <AccessTokensPanel agentName={draft.agentName} />
     </>
   );
 }

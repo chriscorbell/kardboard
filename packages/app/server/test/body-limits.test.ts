@@ -39,7 +39,7 @@ beforeEach(async () => {
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
   await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
   await db.insert(schema.cards).values({ id: "card-1", boardId: BOARD, title: "A card", column: "ready", creatorKind: "user", creatorId: "user" });
-  const made = await call("POST", `/admin/boards/${BOARD}/tokens`, { name: "Laptop" });
+  const made = await call("POST", "/admin/tokens", { name: "Laptop" });
   assert.equal(made.status, 201);
   token = ((await made.json()) as { secret: string }).secret;
 });

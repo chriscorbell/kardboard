@@ -21,7 +21,8 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const ACTOR = { kind: "user" as const, id: "user" };
 
-// Every table that holds a Board's rows, children first, and the User.
+// Every table that holds a Board's rows, children first, then the User and the Access tokens, which
+// belong to no Board.
 const TABLES = [
   schema.attachments,
   schema.commentRevisions,
@@ -38,6 +39,7 @@ beforeEach(async () => {
   fs.rmSync(path.join(root, "uploads"), { recursive: true, force: true });
   fs.rmSync(path.join(root, "backups"), { recursive: true, force: true });
   await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.accessTokens).values({ id: "token", name: "Laptop", tokenHash: "hash" });
   await fill("doomed", "Doomed", ["only-here", "shared"]);
   await fill("kept", "Kept", ["shared"]);
 });
@@ -52,7 +54,6 @@ async function fill(id: string, name: string, hashes: string[]) {
   const card = `${id}-card`;
   const comment = `${id}-comment`;
   await db.insert(schema.boards).values({ id, slug: `${id}-board`, name });
-  await db.insert(schema.accessTokens).values({ id: `${id}-token`, boardId: id, name: "Laptop", tokenHash: `${id}-hash` });
   await db.insert(schema.cards).values({ id: card, boardId: id, title: "A card" });
   await db.insert(schema.comments).values({ id: comment, cardId: card, authorKind: "user", authorId: "user", body: "hello" });
   await db.insert(schema.commentRevisions).values({ id: `${id}-revision`, commentId: comment, body: "hullo" });
@@ -91,7 +92,6 @@ describe("deleting a board", () => {
       [schema.comments, eq(schema.comments.cardId, "doomed-card")],
       [schema.commentRevisions, eq(schema.commentRevisions.commentId, "doomed-comment")],
       [schema.attachments, eq(schema.attachments.commentId, "doomed-comment")],
-      [schema.accessTokens, eq(schema.accessTokens.boardId, "doomed")],
     ] as const) {
       assert.deepEqual(await db.select().from(table).where(where), [], `${getTableName(table)} kept the deleted board's rows`);
     }
@@ -100,7 +100,16 @@ describe("deleting a board", () => {
     const kept = await call("GET", "/admin/boards/kept/deletion");
     assert.deepEqual(await kept.json(), { cards: 1, comments: 1, attachments: 1 });
     assert.equal((await db.select().from(schema.events).where(eq(schema.events.boardId, "kept"))).length, 1);
-    assert.equal((await db.select().from(schema.accessTokens).where(eq(schema.accessTokens.boardId, "kept"))).length, 1);
+  });
+
+  // An Access token reaches every Board (ADR 0012), so it outlives any one of them.
+  it("leaves the access tokens alone", async () => {
+    assert.equal((await call("DELETE", "/admin/boards/doomed", { slug: "doomed-board" })).status, 200);
+    const tokens = await db.select().from(schema.accessTokens);
+    assert.deepEqual(
+      tokens.map((t) => [t.id, t.revokedAt]),
+      [["token", null]],
+    );
   });
 
   it("takes a snapshot first and leaves one event naming it", async () => {

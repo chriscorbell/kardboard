@@ -148,6 +148,20 @@
       "when": 1791417686681,
       "tag": "0020_single-user",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1791418696373,
+      "tag": "0021_tokens-for-every-board",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1791418697309,
+      "tag": "0022_token-revoked-at",
+      "breakpoints": true
     }
   ]
 }

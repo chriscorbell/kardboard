@@ -3,6 +3,7 @@ import type { Board, Person } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
 import { newId } from "../ids.js";
 import { publish } from "./realtime.js";
+import { repositoryKey } from "./repository.js";
 
 export function toBoard(row: typeof schema.boards.$inferSelect): Board {
   return {
@@ -22,6 +23,18 @@ export async function listAllBoards(): Promise<Board[]> {
 export async function getBoardBySlug(slug: string): Promise<Board | null> {
   const row = await db.select().from(schema.boards).where(eq(schema.boards.slug, slug)).get();
   return row ? toBoard(row) : null;
+}
+
+/**
+ * The Board an agent names: by slug, or by its repository's address in any form git writes one, such
+ * as the output of `git remote get-url origin`. Null when none matches.
+ */
+export async function findBoard(ref: string): Promise<Board | null> {
+  const bySlug = await getBoardBySlug(ref.trim().toLowerCase());
+  if (bySlug) return bySlug;
+  const key = repositoryKey(ref);
+  if (!key) return null;
+  return (await listAllBoards()).find((b) => repositoryKey(b.repoUrl) === key) ?? null;
 }
 
 export async function getBoardById(id: string): Promise<Board | null> {
