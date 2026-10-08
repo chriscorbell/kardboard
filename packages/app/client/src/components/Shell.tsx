@@ -31,13 +31,13 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
               <Menu
                 trigger={
                   <button className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-control px-2 text-sm font-medium text-ink transition-colors hover:bg-raised">
-                    <span className="truncate">{current?.name ?? (inSettings ? "Settings" : "Boards")}</span>
+                    <span className="truncate">{current?.name ?? (inSettings ? "Settings" : "Overview")}</span>
                     <ChevronDown className="size-4 shrink-0 text-ink-faint" strokeWidth={1.75} />
                   </button>
                 }
                 items={[
                   ...boards.data.map((b) => ({ label: b.name, onSelect: () => navigate(`/b/${b.slug}`), active: b.id === current?.id })),
-                  { label: "All boards", onSelect: () => navigate("/"), separator: true },
+                  { label: "Overview", onSelect: () => navigate("/"), separator: true },
                 ]}
               />
             </div>

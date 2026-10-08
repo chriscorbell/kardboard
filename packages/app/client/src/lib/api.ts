@@ -11,6 +11,7 @@ import type {
   CreatedAccessToken,
   Me,
   MoveCardInput,
+  OverviewView,
   Settings,
   UpdateCardInput,
   UpdateMeInput,
@@ -95,6 +96,7 @@ export async function requestBlob(path: string, init: RequestInit = {}): Promise
 export const keys = {
   me: ["me"] as const,
   boards: ["boards"] as const,
+  overview: ["overview"] as const,
   board: (slug: string) => ["board", slug] as const,
   card: (id: string) => ["card", id] as const,
   adminBoards: ["admin", "boards"] as const,
@@ -109,6 +111,11 @@ export function useMe() {
 }
 export function useBoards() {
   return useQuery({ queryKey: keys.boards, queryFn: () => request<Board[]>("/boards") });
+}
+// Every Board at once. Read again every twenty seconds and whenever the tab comes back, since it
+// follows no single Board's event stream.
+export function useOverview() {
+  return useQuery({ queryKey: keys.overview, queryFn: () => request<OverviewView>("/overview"), refetchInterval: 20_000 });
 }
 export function useBoard(slug: string) {
   return useQuery({ queryKey: keys.board(slug), queryFn: () => request<BoardView>(`/boards/${slug}`) });

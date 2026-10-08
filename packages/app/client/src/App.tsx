@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from "react-router";
 import { ApiError, useMe } from "./lib/api";
-import { BoardsPage } from "./routes/BoardsPage";
+import { OverviewPage } from "./routes/OverviewPage";
 import { BoardPage } from "./routes/BoardPage";
 import { SettingsPage } from "./routes/settings/SettingsPage";
 import { NotInvitedPage } from "./routes/NotInvitedPage";
@@ -26,7 +26,7 @@ export function App() {
   return (
     <Shell me={me.data}>
       <Routes>
-        <Route path="/" element={<BoardsPage />} />
+        <Route path="/" element={<OverviewPage />} />
         <Route path="/b/:slug" element={<BoardPage />} />
         <Route path="/b/:slug/c/:cardId" element={<BoardPage />} />
         <Route path="/settings/*" element={<SettingsPage />} />

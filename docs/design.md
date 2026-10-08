@@ -29,7 +29,7 @@ Cards move by hand or by an agent, anywhere. Every Card carries a revision numbe
 
 ## The Overview
 
-The home page shows every Board at once, so nothing is lost across projects: the Cards waiting on the User (a question in Blocked, a pull request in Review), the Cards In Progress, and what reached Backlog recently, each with its Board, type, and age. Each Board is one click away from it.
+The home page shows every Board at once, so nothing is lost across projects: the Cards waiting on the User (a question in Blocked, a pull request in Review), the Cards In Progress, and the eight newest in Backlog with a count of the rest, each with its type, Board, and age, and a mark on the ones an agent filed. Beside them, each Board with what is open on it and how much waits on the User, one click away.
 
 ## Working a Board from an agent
 
@@ -47,7 +47,7 @@ kardboard does not read a pull request, check that it exists, or merge it; it ch
 
 ## Notifications and alerts
 
-The Board changes live: every open Board follows its changes over server-sent events, and so does the Overview. kardboard sends the User no notifications for Board activity, since the Board, the Overview, and `replyWaiting` already say what needs them. It emails the User only about kardboard itself: a daily snapshot or its off-disk copy that failed, at most once every six hours for the same problem. Resend sends from `milo@kardboard.cc` with the Agent's name as the sender.
+The Board changes live: every open Board follows its changes over server-sent events, and the Overview reads every Board again every twenty seconds and whenever its tab comes back into view. kardboard sends the User no notifications for Board activity, since the Board, the Overview, and `replyWaiting` already say what needs them. It emails the User only about kardboard itself: a daily snapshot or its off-disk copy that failed, at most once every six hours for the same problem. Resend sends from `milo@kardboard.cc` with the Agent's name as the sender.
 
 ## Settings
 
@@ -71,7 +71,7 @@ These need host or vendor account access: configuring the Cloudflare tunnel rout
 
 ## Status
 
-As of 2026-10-07 the app runs alone on minicore at `https://kardboard.cc`; Sessions, Approval, Previews, the services that ran them, and Members, Invitations, Mentions, and notifications are gone. Still being built on card 66ar6rp3 of the kardboard Board: the Overview, whose place the plain list of Boards holds for now.
+As of 2026-10-07 the app runs alone on minicore at `https://kardboard.cc`; Sessions, Approval, Previews, the services that ran them, and Members, Invitations, Mentions, and notifications are gone. Everything above is built, as of 2026-10-07; card 66ar6rp3 on the kardboard Board tracked the refocus.
 
 ## Out of scope
 
