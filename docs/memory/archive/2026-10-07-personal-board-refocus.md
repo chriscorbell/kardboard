@@ -1,6 +1,6 @@
 # Personal-board refocus
 
-Status: active
+Status: complete, archived 2026-10-07. Every step shipped (PRs 86 to 92, and chriscorbell/skills#4) and is deployed; what only the Admin can do is on card vfkfpnrx and in [the hardening note](../work/2026-09-30-security-hardening.md).
 Objective: turn kardboard from a board that starts Sessions into one person's agent-native kanban across all their projects, per [ADR 0011](../../adr/0011-one-persons-board-worked-by-their-own-agents.md) and [ADR 0012](../../adr/0012-one-access-token-reaches-every-board.md).
 Plan: card 66ar6rp3 on the kardboard board, "Refocus kardboard as a personal, agent-native board", which lists the decisions of 2026-10-07 and the pull requests in order; each step has its own card in Ready.
 Branch: one branch per step, merged once green, as the Admin chose on 2026-10-07.
@@ -17,11 +17,9 @@ Done:
 - Step 2, Sessions, Approval, and Previews out of the app (PR 87, migration 0019). A verified snapshot was taken on minicore first, `backups/kardboard-before-sessions-removal-20261007T233833Z.db`, also copied to the NAS; production had 92 cards and 69 Session rows.
 - Step 3, the runner, egress proxy, preview router, and agent image out of the repository (PR 88), and off minicore: fleet `8108a35`, the old containers, networks, volumes, and images removed, the `cbn*` firewall rule and its unit removed, 14 Session lines out of `.env` after a dated copy, the Codex sign-in file shredded, and the runner's logs archived under `~/.local/state/kardboard/`. What only the Admin can do (GitHub Apps, provider tokens, the Cloudflare wildcard route) is on card vfkfpnrx.
 - Step 4, single-user (migration 0020): production had one admin and one removed Member who wrote nothing, so deleting non-admin users lost no authorship. The Admin panel became Settings at `/settings`, with `/admin` redirecting; the API paths stay under `/api/admin`.
-
-- Step 5, one Access token for every Board (migrations 0021 and 0022): the three production tokens, each made for one Board, reach every Board after it deploys. A revoked token keeps its row with `revoked_at`, since `events.board_id` is required and token lifecycle no longer has a Board to record an event on.
-
+- Step 5, one Access token for every Board (migrations 0021 and 0022): the three production tokens, each made for one Board, reach every Board after it deploys. A revoked token keeps its row with `revoked_at`, since `events.board_id` is required and token lifecycle no longer has a Board to record an event on (PR 90).
 - Step 6, Card types (PR 91, migration 0023): every existing Card became a task.
-- Step 7, the Overview at `/`: it polls `/api/overview` every twenty seconds rather than following a global event stream, which nothing else needs. Boards now sort case-insensitively.
+- Step 7, the Overview at `/`: it polls `/api/overview` every twenty seconds rather than following a global event stream, which nothing else needs. Boards now sort case-insensitively (PR 92).
+- Step 8, the README screenshots retaken against the dev seed, and the kardboard-onboard skill rewritten for one token at user scope (chriscorbell/skills#4).
 
-Next action: step 8, the README screenshots and the kardboard-onboard skill in `chriscorbell/skills` (card u9e5595f), then the memory review and closing this note. `/tmp/kb-cdp/shot.mjs` drives headless Chrome over the DevTools protocol for screenshots that wait for the app to load; it does not survive a reboot.
 Close when: every step's card is in Done, the README and design describe the new scope, and minicore runs the app alone.
