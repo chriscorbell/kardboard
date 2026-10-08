@@ -15,6 +15,7 @@ import {
   settingsSchema,
   updateCardSchema,
   updateCommentSchema,
+  createMeSchema,
   updateMeSchema,
   upsertBoardSchema,
   isDisplayableImage,
@@ -32,7 +33,7 @@ import { createBoard, getBoardById, getBoardBySlug, listAllBoards, listBoardPeop
 import { ConflictError, createCard, getCard, listCards, listChildren, moveCard, updateCard } from "../services/cards.js";
 import { addAttachment, createComment, deleteComment, getAttachment, getComment, listComments, underFileLock, updateComment } from "../services/comments.js";
 import { getAgentProfile, getSettings, updateSettings } from "../services/settings.js";
-import { getPreferences, updatePreferences } from "../services/users.js";
+import { createUser, currentUser, getPreferences, renameUser, updatePreferences } from "../services/users.js";
 import { subscribe } from "../services/realtime.js";
 import { backupsView, takeSnapshot } from "../services/backup.js";
 import { overview } from "../services/overview.js";
@@ -48,8 +49,6 @@ const MAX_JSON_BYTES = 1024 * 1024;
 const EVENTS_PING_MS = Number(process.env.KARDBOARD_EVENTS_PING_MS ?? "25000");
 
 export const api = new Hono<{ Variables: AuthVariables }>();
-
-api.use("*", requireUser);
 
 // A body is read into memory, so one larger than any the API takes is refused as it streams in. An
 // Attachment upload is left out: its route has a larger limit of its own, and a limit on the whole
@@ -74,16 +73,28 @@ function actorOf(c: { get: (k: "user") => { id: string } }) {
   return { kind: "user" as const, id: c.get("user").id };
 }
 
-async function meView(user: User): Promise<Me> {
-  return { user, agent: await getAgentProfile(), ...(await getPreferences(user.id)) };
+async function meView(user: User | null): Promise<Me> {
+  return { user, agent: await getAgentProfile(), onboardedAt: user ? (await getPreferences(user.id)).onboardedAt : null };
 }
 
-api.get("/me", async (c) => c.json(await meView(c.get("user"))));
+// Before the User has given their name there is nobody to act as, so these two come ahead of
+// `requireUser`: `/me` says whether the first-run screen is needed, and POST creates the User from it.
+api.get("/me", async (c) => c.json(await meView(await currentUser())));
 
-// The User's own settings: whether they have seen the board explainer.
+api.post("/me", json(createMeSchema), async (c) => {
+  if (await currentUser()) return c.json({ error: "conflict" }, 409);
+  return c.json(await meView(await createUser(c.req.valid("json").name)), 201);
+});
+
+api.use("*", requireUser);
+
+// The User's own settings: their name, and whether they have seen the board explainer.
 api.patch("/me", json(updateMeSchema), async (c) => {
-  await updatePreferences(c.get("user").id, c.req.valid("json"));
-  return c.json(await meView(c.get("user")));
+  const { name, onboarded } = c.req.valid("json");
+  const user = c.get("user");
+  if (name !== undefined) await renameUser(user.id, name);
+  await updatePreferences(user.id, { onboarded });
+  return c.json(await meView(name !== undefined ? { ...user, name } : user));
 });
 
 api.get("/boards", async (c) => c.json(await listAllBoards()));

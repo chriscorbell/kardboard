@@ -14,6 +14,7 @@ import type {
   OverviewView,
   Settings,
   UpdateCardInput,
+  CreateMeInput,
   UpdateMeInput,
 } from "@kardboard/shared";
 import { useRef } from "react";
@@ -222,12 +223,25 @@ export function useDeleteCard(slug: string) {
   });
 }
 
-// The caller's own settings: whether the board explainer has been dismissed.
+// The first-run screen's one question: the name kardboard knows the User by.
+export function useCreateMe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateMeInput) => request<Me>("/me", { method: "POST", body: JSON.stringify(input) }),
+    onSuccess: (me) => qc.setQueryData(keys.me, me),
+  });
+}
+
+// The User's own settings: their name, and whether the board explainer has been dismissed. A new name
+// shows on everything they wrote, so whatever is open is read again.
 export function useUpdateMe() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdateMeInput) => request<Me>("/me", { method: "PATCH", body: JSON.stringify(input) }),
-    onSuccess: (me) => qc.setQueryData(keys.me, me),
+    onSuccess: (me, input) => {
+      qc.setQueryData(keys.me, me);
+      if (input.name !== undefined) void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== keys.me[0] });
+    },
   });
 }
 

@@ -7,7 +7,7 @@ import { and, eq } from "drizzle-orm";
 import type { BoardView, Card, Comment, Me } from "@kardboard/shared";
 
 // What the User sees of a Board and of themselves: who the Board names, which Cards are waiting on
-// an answer, deleting a Comment, and their own settings.
+// an answer, deleting a Comment, giving their name on first run, and their own settings.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "kardboard-user-view-"));
 process.env.KARDBOARD_DATA_DIR = root;
 
@@ -25,7 +25,7 @@ const AGENT = { kind: "agent" as const, id: null };
 beforeEach(async () => {
   for (const t of [schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root", avatarUrl: "https://img.example/root.png" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
 });
 
 function call(method: string, url: string, body?: unknown) {
@@ -112,9 +112,9 @@ describe("deleting a comment", () => {
 });
 
 describe("the people a Board names", () => {
-  it("is the User, by name and face, without their email", async () => {
+  it("is the User, by name", async () => {
     const view = await boardView();
-    assert.deepEqual(view.people, [{ id: "user", name: "Root", avatarUrl: "https://img.example/root.png" }]);
+    assert.deepEqual(view.people, [{ id: "user", name: "Root" }]);
   });
 });
 
@@ -158,7 +158,7 @@ describe("a card waiting on an answer", () => {
 describe("the User's own settings", () => {
   it("start with an unseen explainer", async () => {
     const me = (await (await call("GET", "/me")).json()) as Me;
-    assert.equal(me.user.id, "user");
+    assert.equal(me.user?.id, "user");
     assert.equal(me.onboardedAt, null);
   });
 
@@ -177,5 +177,42 @@ describe("the User's own settings", () => {
 
   it("refuses a value that is not true or false", async () => {
     assert.equal((await call("PATCH", "/me", { onboarded: "yes" })).status, 400);
+  });
+
+  it("change the User's name, which every Board then shows", async () => {
+    const me = (await (await call("PATCH", "/me", { name: "  Sam  " })).json()) as Me;
+    assert.equal(me.user?.name, "Sam");
+    assert.deepEqual((await boardView()).people, [{ id: "user", name: "Sam" }]);
+    assert.equal((await call("PATCH", "/me", { name: " " })).status, 400);
+  });
+});
+
+describe("first run", () => {
+  beforeEach(async () => {
+    await db.delete(schema.users);
+  });
+
+  it("has nobody to act as until the User gives their name", async () => {
+    const me = (await (await call("GET", "/me")).json()) as Me;
+    assert.equal(me.user, null);
+    assert.equal(me.onboardedAt, null);
+    const boards = await call("GET", "/boards");
+    assert.equal(boards.status, 409);
+    assert.deepEqual(await boards.json(), { error: "no_user" });
+  });
+
+  it("creates the User from the name, once", async () => {
+    const res = await call("POST", "/me", { name: "  Sam  " });
+    assert.equal(res.status, 201);
+    const me = (await res.json()) as Me;
+    assert.equal(me.user?.name, "Sam");
+    assert.equal((await call("GET", "/boards")).status, 200);
+    assert.equal((await call("POST", "/me", { name: "Someone else" })).status, 409);
+    assert.equal((await db.select().from(schema.users)).length, 1);
+  });
+
+  it("refuses a blank name", async () => {
+    assert.equal((await call("POST", "/me", { name: "   " })).status, 400);
+    assert.equal((await db.select().from(schema.users)).length, 0);
   });
 });

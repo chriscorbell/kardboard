@@ -52,7 +52,7 @@ pnpm install
 pnpm dev
 ```
 
-Open http://localhost:5173. With no `.env` present, authentication runs in **dev mode**, which is refused in production: every request is the seeded admin, and a demo board with cards and comments is created on first start.
+Open http://localhost:5173. Outside production, a data directory with no boards gets a few demo boards with cards and comments on first start.
 
 Other commands:
 
@@ -69,7 +69,6 @@ Copy `packages/app/.env.example` to `packages/app/.env`. The variables that matt
 
 | Variable | Purpose |
 | --- | --- |
-| `KARDBOARD_ADMIN_EMAIL` | The address the app's one account is created with on first start. |
 | `KARDBOARD_BACKUP_HOUR`, `KARDBOARD_BACKUP_KEEP` | Daily snapshot hour and how many to keep. |
 | `KARDBOARD_BACKUP_COPY_DIR` | Optional off-disk copy of every snapshot and attachment, such as a NAS share. The directory needs a `.kardboard-backup-target` marker file. |
 
@@ -81,7 +80,7 @@ kardboard is one Docker image, built by the included GitHub Actions workflow. [`
 sudo tailscale serve --bg --https=3071 http://127.0.0.1:3071
 ```
 
-That serves it at `https://<host>.<tailnet>.ts.net:3071` with your tailnet's certificate, once HTTPS Certificates is on in the tailnet's DNS settings. kardboard has no sign-in: everyone on your tailnet is you, so never put it on the public internet. [The access runbook](docs/runbooks/access.md) describes how it runs here.
+That serves it at `https://<host>.<tailnet>.ts.net:3071` with your tailnet's certificate, once HTTPS Certificates is on in the tailnet's DNS settings. kardboard has no sign-in: everyone on your tailnet is you, so never put it on the public internet. The first time you open it, it asks your name, which signs your cards and comments. [The access runbook](docs/runbooks/access.md) describes how it runs here.
 
 ## Connecting your agents
 

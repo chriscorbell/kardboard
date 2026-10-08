@@ -37,7 +37,7 @@ beforeEach(async () => {
   for (const t of TABLES) await db.delete(t);
   fs.rmSync(path.join(root, "uploads"), { recursive: true, force: true });
   fs.rmSync(path.join(root, "backups"), { recursive: true, force: true });
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
   await db.insert(schema.accessTokens).values({ id: "token", name: "Laptop", tokenHash: "hash" });
   await fill("doomed", "Doomed", ["only-here", "shared"]);
   await fill("kept", "Kept", ["shared"]);

@@ -2,10 +2,12 @@ import { NavLink, Navigate, Route, Routes } from "react-router";
 import { cx } from "../../components/ui";
 import { BoardsTab } from "./BoardsTab";
 import { AgentTab } from "./AgentTab";
+import { YouTab } from "./YouTab";
 import { BackupsTab } from "./BackupsTab";
 
 const TABS = [
   { to: "/settings/boards", label: "Boards" },
+  { to: "/settings/you", label: "You" },
   { to: "/settings/agent", label: "Agent" },
   { to: "/settings/backups", label: "Backups" },
 ];
@@ -36,6 +38,7 @@ export function SettingsPage() {
           <Routes>
             <Route index element={<Navigate to="boards" replace />} />
             <Route path="boards" element={<BoardsTab />} />
+            <Route path="you" element={<YouTab />} />
             <Route path="agent" element={<AgentTab />} />
             <Route path="backups" element={<BackupsTab />} />
           </Routes>

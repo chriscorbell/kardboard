@@ -35,7 +35,7 @@ const app = appFor();
 beforeEach(async () => {
   for (const t of [schema.attachments, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: "board-1", slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
 });
 
 function assertCommonHeaders(res: Response) {

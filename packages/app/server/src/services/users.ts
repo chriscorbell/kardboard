@@ -1,15 +1,27 @@
 import { eq, inArray } from "drizzle-orm";
 import type { User } from "@kardboard/shared";
 import { db, schema } from "../db/index.js";
+import { newId } from "../ids.js";
 
 export function toUser(row: typeof schema.users.$inferSelect): User {
-  return {
-    id: row.id,
-    email: row.email,
-    name: row.name,
-    avatarUrl: row.avatarUrl,
-    createdAt: row.createdAt,
-  };
+  return { id: row.id, name: row.name, createdAt: row.createdAt };
+}
+
+/** The User, or null before they have given their name on first run. */
+export async function currentUser(): Promise<User | null> {
+  const row = await db.select().from(schema.users).get();
+  return row ? toUser(row) : null;
+}
+
+/** Creates the User from the name they give on first run. */
+export async function createUser(name: string): Promise<User> {
+  const row = { id: newId(), name, createdAt: new Date().toISOString() };
+  await db.insert(schema.users).values(row);
+  return toUser({ ...row, onboardedAt: null });
+}
+
+export async function renameUser(id: string, name: string): Promise<void> {
+  await db.update(schema.users).set({ name }).where(eq(schema.users.id, id));
 }
 
 export async function getUser(id: string): Promise<User | null> {

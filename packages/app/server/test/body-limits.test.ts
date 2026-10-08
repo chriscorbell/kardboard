@@ -36,7 +36,7 @@ let token = "";
 beforeEach(async () => {
   for (const t of [schema.accessTokens, schema.attachments, schema.events, schema.comments, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
   await db.insert(schema.cards).values({ id: "card-1", boardId: BOARD, title: "A card", column: "ready", creatorKind: "user", creatorId: "user" });
   const made = await call("POST", "/admin/tokens", { name: "Laptop" });
   assert.equal(made.status, 201);

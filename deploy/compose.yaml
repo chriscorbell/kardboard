@@ -28,7 +28,6 @@ services:
       - "127.0.0.1:3071:3070"
     environment:
       TZ: America/New_York
-      KARDBOARD_ADMIN_EMAIL: ${KARDBOARD_ADMIN_EMAIL}
       # Each verified snapshot, and every new attachment, is copied here as well: the NAS share,
       # so a lost data disk does not take the backups with it. See docs/runbooks/backups.md.
       KARDBOARD_BACKUP_COPY_DIR: /nas/kardboard

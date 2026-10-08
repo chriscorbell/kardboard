@@ -2,24 +2,19 @@ import { sql } from "drizzle-orm";
 import { db, schema } from "./db/index.js";
 import { env } from "./env.js";
 import { newId } from "./ids.js";
+import { createUser, currentUser } from "./services/users.js";
 
-const ADMIN_EMAIL = process.env.KARDBOARD_ADMIN_EMAIL ?? "hi@chriscorbell.com";
-const ADMIN_NAME = process.env.KARDBOARD_ADMIN_NAME ?? "Chris Corbell";
-
-// The User is created from env on first start. Demo content only appears outside production.
+// A fresh install starts empty and asks for the User's name on first run. Outside production, a data
+// directory with no Boards gets a few demo ones instead, written by a demo User.
 export async function ensureSeed(): Promise<void> {
-  const userCount = Number((await db.select({ n: sql<number>`count(*)` }).from(schema.users).get())?.n ?? 0);
-  if (userCount === 0) {
-    await db.insert(schema.users).values({ id: newId(), email: ADMIN_EMAIL.toLowerCase(), name: ADMIN_NAME });
-    console.log(`[seed] created ${ADMIN_EMAIL}`);
-  }
+  if (env.isProduction) return;
   const boardCount = Number((await db.select({ n: sql<number>`count(*)` }).from(schema.boards).get())?.n ?? 0);
-  if (boardCount === 0 && !env.isProduction) await seedDemo();
+  if (boardCount === 0) await seedDemo();
 }
 
 // A few of one person's projects, worked by them and their agent: what a board looks like a few weeks in.
 async function seedDemo(): Promise<void> {
-  const me = (await db.select().from(schema.users).get())!;
+  const me = (await currentUser()) ?? (await createUser("Chris Corbell"));
   const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
   const site = { id: newId(), slug: "portfolio", name: "Portfolio site", repoUrl: "https://github.com/chriscorbell/portfolio" };

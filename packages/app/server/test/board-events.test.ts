@@ -21,7 +21,7 @@ const BOARD = "board-1";
 beforeEach(async () => {
   for (const t of [schema.events, schema.cards, schema.users, schema.boards]) await db.delete(t);
   await db.insert(schema.boards).values({ id: BOARD, slug: "board-one", name: "Board one" });
-  await db.insert(schema.users).values({ id: "user", email: "root@example.com", name: "Root" });
+  await db.insert(schema.users).values({ id: "user", name: "Root" });
 });
 
 // A stream left open would keep pinging, and the test run would never exit.

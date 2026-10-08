@@ -55,7 +55,7 @@ export const CardTile = forwardRef<HTMLDivElement, Props>(function CardTile({ ca
           </span>
         ) : null}
         <span className="ml-auto flex items-center gap-2">
-          {creator ? <Avatar name={creator.name} url={creator.avatarUrl} size={20} /> : card.creatorKind === "agent" ? <Avatar name={agent.name} url={agent.avatarUrl} size={20} tone="agent" /> : null}
+          {creator ? <Avatar name={creator.name} size={20} /> : card.creatorKind === "agent" ? <Avatar name={agent.name} url={agent.avatarUrl} size={20} tone="agent" /> : null}
         </span>
       </div>
     </div>
